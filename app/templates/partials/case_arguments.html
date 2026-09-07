@@ -1,0 +1,45 @@
+{# Case Arguments Panel - Supporting and Opposing Arguments #}
+{% if case.arguments %}
+<div class="case-arguments-panel">
+    <div class="argument-section argument-supporting">
+        <p class="panel-kicker argument-label">支持论点</p>
+        {% if case.arguments.supporting %}
+        <ul class="argument-list">
+            {% for arg in case.arguments.supporting %}
+            <li class="argument-item supporting">
+                <span class="argument-strength strength-{{ arg.strength or 'moderate' }}"></span>
+                <div class="argument-content">
+                    <strong>{{ arg.point }}</strong>
+                    {% if arg.citation %}
+                    <span class="argument-citation">{{ arg.citation }}</span>
+                    {% endif %}
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">暂无支持论点分析</p>
+        {% endif %}
+    </div>
+    <div class="argument-section argument-opposing">
+        <p class="panel-kicker argument-label">反对论点</p>
+        {% if case.arguments.opposing %}
+        <ul class="argument-list">
+            {% for arg in case.arguments.opposing %}
+            <li class="argument-item opposing">
+                <span class="argument-strength strength-{{ arg.strength or 'moderate' }}"></span>
+                <div class="argument-content">
+                    <strong>{{ arg.point }}</strong>
+                    {% if arg.citation %}
+                    <span class="argument-citation">{{ arg.citation }}</span>
+                    {% endif %}
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">暂无反对论点分析</p>
+        {% endif %}
+    </div>
+</div>
+{% endif %}

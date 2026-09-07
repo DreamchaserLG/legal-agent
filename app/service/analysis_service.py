@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import json
 import re
@@ -9,18 +11,21 @@ from app.core.config import settings
 from app.core.database import engine, fetch_all
 from app.service.bilingual_service import build_bilingual_analysis_pack
 from app.service.common_service import repair_text
+from app.service.data_quality_service import build_data_readiness
 from app.service.llm_service import (
     LLMServiceError,
     create_structured_response,
     get_llm_provider,
     is_llm_configured,
 )
+from app.service.legal_skill_service import enhance_legal_retrieval_keywords
 from app.service.module_service import (
     build_module_packet,
     get_module_definition,
     normalize_module,
     resolve_source_for_module,
 )
+from app.service.rag_service import build_rag_context
 from app.service.search_service import search_with_remote_hydration
 
 EN_STOPWORDS = {
@@ -30,9 +35,58 @@ EN_STOPWORDS = {
     "might", "of", "on", "or", "our", "should", "that", "the", "their",
     "them", "they", "this", "to", "was", "were", "what", "when", "where",
     "which", "who", "why", "will", "with", "would", "you", "your",
-    "about", "against", "case", "claim", "claims", "concern", "concerns",
-    "dispute", "event", "events", "fact", "facts", "issue", "issues",
-    "matter", "related",
+    "about", "against", "concern", "concerns",
+    "event", "events", "fact",
+}
+
+LEGAL_CONCEPT_EXPANSIONS = {
+    "fraud": {"fraud", "deceit", "dishonesty", "misrepresentation", "fraudulent", "deceive", "defraud", "s. 380", "section 380", "criminal code"},
+    "breach": {"breach", "violation", "contravention", "non-compliance", "infringement", "default"},
+    "negligence": {"negligence", "carelessness", "duty of care", "reasonable standard", "tort"},
+    "contract": {"contract", "agreement", "covenant", "obligation", "consideration", "terms"},
+    "property": {"property", "real estate", "land", "title", "ownership", "conveyance", "mortgage"},
+    "trust": {"trust", "fiduciary", "trustee", "beneficiary", "estate", "equity"},
+    "employment": {"employment", "labour", "labor", "wrongful dismissal", "termination", "severance"},
+    "criminal": {"criminal", "crime", "offence", "offense", "prosecution", "sentencing", "conviction"},
+    "sanctions": {"sanctions", "ofac", "designated", "blacklist", "embargo", "restricted party"},
+    "insurance": {"insurance", "coverage", "claim", "policy", "indemnity", "bad faith"},
+    "securities": {"securities", "stock", "share", "investor", "disclosure", "insider trading", "market manipulation"},
+    "intellectual_property": {"trademark", "patent", "copyright", "trade secret", "infringement", "ip"},
+    "constitutional": {"charter", "constitutional", "rights", "freedom", "section 1", "section 7", "section 15"},
+    "immigration": {"immigration", "refugee", "deportation", "visa", "citizenship", "asylum"},
+    "family": {"family", "divorce", "custody", "support", "marriage", "spousal", "child"},
+    "bankruptcy": {"bankruptcy", "insolvency", "creditor", "debtor", "receivership", "restructuring"},
+    "environmental": {"environmental", "pollution", "contamination", "remediation", "emissions"},
+    "privacy": {"privacy", "data protection", "personal information", "pipeda", "consent"},
+    "consumer": {"consumer", "warranty", "product liability", "unfair practice", "lemon"},
+    "tax": {"tax", "taxation", "cra", "assessment", "deduction", "income tax"},
+}
+
+LEGAL_CONCEPT_WEIGHTS = {
+    "fraud": 1.0, "deceit": 0.95, "dishonesty": 0.9, "misrepresentation": 0.95, "fraudulent": 0.95,
+    "breach": 0.9, "violation": 0.85, "contravention": 0.85, "default": 0.8,
+    "negligence": 0.9, "carelessness": 0.8, "duty of care": 0.95,
+    "contract": 0.7, "agreement": 0.65, "obligation": 0.7,
+    "property": 0.6, "real estate": 0.7, "title": 0.6, "ownership": 0.65,
+    "trust": 0.8, "fiduciary": 0.9, "trustee": 0.75, "beneficiary": 0.7,
+    "employment": 0.7, "wrongful dismissal": 0.9, "termination": 0.7, "severance": 0.7,
+    "criminal": 0.85, "offence": 0.8, "prosecution": 0.8, "sentencing": 0.75,
+    "sanctions": 0.9, "ofac": 0.95, "designated": 0.7,
+    "insurance": 0.7, "coverage": 0.6, "bad faith": 0.85,
+    "securities": 0.8, "insider trading": 0.95, "disclosure": 0.7,
+    "trademark": 0.8, "patent": 0.8, "copyright": 0.8, "infringement": 0.85,
+    "charter": 0.85, "constitutional": 0.85, "rights": 0.7,
+    "immigration": 0.8, "refugee": 0.85, "deportation": 0.85,
+    "family": 0.6, "divorce": 0.7, "custody": 0.8, "support": 0.6,
+    "bankruptcy": 0.8, "insolvency": 0.8, "creditor": 0.65,
+    "privacy": 0.75, "data protection": 0.85, "consent": 0.6,
+    "consumer": 0.65, "warranty": 0.7, "product liability": 0.85,
+    "tax": 0.7, "taxation": 0.7, "assessment": 0.6,
+    "company": 0.3, "business": 0.3, "corporation": 0.35, "director": 0.5,
+    "court": 0.2, "judge": 0.2, "trial": 0.3, "appeal": 0.4,
+    "damage": 0.6, "damages": 0.7, "compensation": 0.7, "loss": 0.5,
+    "claim": 0.5, "claims": 0.5, "issue": 0.4, "issues": 0.4,
+    "matter": 0.3, "related": 0.2, "case": 0.3,
 }
 
 RELIEF_MARKERS = {
@@ -52,6 +106,18 @@ ISSUE_MARKERS = {
 
 RETRYABLE_ERROR_CATEGORIES = {"timeout", "network", "invalid_json", "provider_busy"}
 _ANALYSIS_CACHE: dict[tuple, tuple[float, dict]] = {}
+
+KEYWORD_EXTRACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "search_keywords": {"type": "array", "items": {"type": "string"}},
+        "case_citations": {"type": "array", "items": {"type": "string"}},
+        "statute_references": {"type": "array", "items": {"type": "string"}},
+        "legal_concepts": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["search_keywords", "legal_concepts"],
+    "additionalProperties": False,
+}
 
 ANALYSIS_SCHEMA = {
     "type": "object",
@@ -130,10 +196,27 @@ def _safe_excerpt(text: str, limit: int = 140) -> str:
     return raw[:limit] + "..."
 
 
-def extract_search_keywords(text: str, max_keywords: int = 8) -> list[str]:
+def _expand_legal_concepts(keywords: list[str]) -> tuple[list[str], dict[str, float]]:
+    expanded = set()
+    weights = {}
+    for kw in keywords:
+        kw_lower = kw.lower().strip()
+        expanded.add(kw_lower)
+        weights[kw_lower] = LEGAL_CONCEPT_WEIGHTS.get(kw_lower, 0.5)
+        for concept_key, synonyms in LEGAL_CONCEPT_EXPANSIONS.items():
+            if kw_lower in synonyms or kw_lower == concept_key:
+                for syn in synonyms:
+                    expanded.add(syn)
+                    weights[syn] = LEGAL_CONCEPT_WEIGHTS.get(syn, 0.6)
+                weights[concept_key] = LEGAL_CONCEPT_WEIGHTS.get(concept_key, 0.8)
+                expanded.add(concept_key)
+    return list(expanded), weights
+
+
+def extract_search_keywords(text: str, max_keywords: int = 8) -> tuple[list[str], dict[str, float]]:
     source_text = repair_text(text)
     if not source_text:
-        return []
+        return [], {}
 
     english_tokens = re.findall(r"[A-Za-z][A-Za-z'-]{2,}", source_text.lower())
     chinese_tokens = re.findall(r"[\u4e00-\u9fff]{2,}", source_text)
@@ -159,7 +242,8 @@ def extract_search_keywords(text: str, max_keywords: int = 8) -> list[str]:
         if len(result) >= max_keywords:
             break
 
-    return result
+    expanded_keywords, weights = _expand_legal_concepts(result)
+    return result, weights
 
 
 def _split_clauses(text: str) -> list[str]:
@@ -222,10 +306,35 @@ def build_intake_outline(analysis: dict) -> dict:
     }
 
 
+def _apply_retrieval_skills_to_analysis(analysis: dict, source_text: str, module: str) -> dict:
+    base_keywords = _normalize_string_list(analysis.get("search_keywords"), limit=12)
+    skill_profile = enhance_legal_retrieval_keywords(
+        source_text or base_keywords,
+        module=module,
+        base_keywords=base_keywords,
+        keyword_weights=analysis.get("keyword_weights") or {},
+        max_keywords=14,
+    )
+    if skill_profile.get("keywords"):
+        analysis["search_keywords"] = skill_profile["keywords"]
+        analysis["keyword_weights"] = skill_profile.get("keyword_weights") or {}
+    analysis["legal_skill_profile"] = skill_profile
+    return skill_profile
+
+
 def build_local_analysis(text: str, module: str = "canada") -> dict:
     cleaned = repair_text(text)
     normalized_module = normalize_module(module)
-    keywords = extract_search_keywords(cleaned)
+    keywords, keyword_weights = extract_search_keywords(cleaned)
+    skill_profile = enhance_legal_retrieval_keywords(
+        cleaned,
+        module=normalized_module,
+        base_keywords=keywords,
+        keyword_weights=keyword_weights,
+        max_keywords=14,
+    )
+    keywords = skill_profile.get("keywords") or keywords
+    keyword_weights = skill_profile.get("keyword_weights") or keyword_weights
     clauses = _split_clauses(cleaned)
     requested_relief = _build_fallback_relief(clauses)
 
@@ -257,11 +366,13 @@ def build_local_analysis(text: str, module: str = "canada") -> dict:
         "disputed_issues": disputed_issues,
         "requested_relief": requested_relief,
         "search_keywords": keywords,
+        "keyword_weights": keyword_weights,
         "summary": cleaned[:240],
         "jurisdiction": jurisdiction,
         "legal_topics": legal_topics,
         "claims": disputed_issues[:4],
         "risk_flags": risk_flags,
+        "legal_skill_profile": skill_profile,
     }
 
 
@@ -347,6 +458,192 @@ def _call_analysis_model(cleaned: str, instructions: str) -> dict:
     }
 
 
+def extract_keywords_with_llm(text: str, max_keywords: int = 8) -> tuple[list[str], dict[str, float]]:
+    """多Agent协作关键词提取 - 分3个维度提取更精准的关键词"""
+    if not is_llm_configured() or not getattr(settings, "keyword_extraction_use_llm", True):
+        return extract_search_keywords(text, max_keywords)
+
+    cleaned = repair_text(text)
+    if not cleaned or len(cleaned) < 20:
+        return extract_search_keywords(text, max_keywords)
+
+    all_keywords = []
+
+    # Agent 1: 法律问题分析 - 提取核心法律概念和争议焦点
+    try:
+        response1 = create_structured_response(
+            schema_name="legal_issue_extraction",
+            schema={
+                "type": "object",
+                "properties": {
+                    "legal_issues": {"type": "array", "items": {"type": "string"}},
+                    "legal_claims": {"type": "array", "items": {"type": "string"}},
+                    "party_roles": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["legal_issues", "legal_claims"],
+            },
+            instructions=(
+                "Analyze this legal case and extract:\n"
+                "1. legal_issues: The specific legal issues in dispute (e.g., 'failure to disclose latent defects', 'breach of fiduciary duty')\n"
+                "2. legal_claims: The legal claims being made (e.g., 'fraudulent misrepresentation', 'negligent misrepresentation', 'breach of warranty')\n"
+                "3. party_roles: The roles of the parties (e.g., 'vendor', 'purchaser', 'real estate agent', 'broker')\n"
+                "Be SPECIFIC to this case. Do NOT use generic terms like 'fraud' alone - use 'real estate fraud', 'vendor disclosure fraud', etc.\n"
+                "For Chinese input, translate to English legal terminology."
+            ),
+            user_input=cleaned,
+        )
+        data1 = response1.get("data", {})
+        all_keywords.extend(_normalize_string_list(data1.get("legal_issues"), limit=4))
+        all_keywords.extend(_normalize_string_list(data1.get("legal_claims"), limit=4))
+        all_keywords.extend(_normalize_string_list(data1.get("party_roles"), limit=3))
+    except Exception:
+        pass
+
+    # Agent 2: CanLII搜索优化 - 生成针对CanLII的搜索关键词
+    try:
+        response2 = create_structured_response(
+            schema_name="canlii_search_keywords",
+            schema={
+                "type": "object",
+                "properties": {
+                    "search_terms": {"type": "array", "items": {"type": "string"}},
+                    "canlii_tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["search_terms"],
+            },
+            instructions=(
+                "Generate search keywords optimized for CanLII (Canadian Legal Information Institute) search.\n"
+                "Return:\n"
+                "1. search_terms: 4-6 English search terms that would find similar cases on CanLII. "
+                "Use terms that appear in case headnotes and legal digests.\n"
+                "2. canlii_tags: Legal topic tags used in CanLII case digests (e.g., 'Property — Real estate — Disclosure obligations', 'Civil liability — Fraud — Misrepresentation')\n"
+                "Example for a real estate fraud case:\n"
+                "- search_terms: ['vendor disclosure', 'latent defect', 'misrepresentation property', 'real estate agent duty']\n"
+                "- canlii_tags: ['Property — Sale of land — Disclosure', 'Civil liability — Fraud — Non-disclosure']"
+            ),
+            user_input=cleaned,
+        )
+        data2 = response2.get("data", {})
+        all_keywords.extend(_normalize_string_list(data2.get("search_terms"), limit=6))
+        all_keywords.extend(_normalize_string_list(data2.get("canlii_tags"), limit=3))
+    except Exception:
+        pass
+
+    # Agent 3: 法规引用提取 - 找出相关法规
+    try:
+        response3 = create_structured_response(
+            schema_name="statute_extraction",
+            schema={
+                "type": "object",
+                "properties": {
+                    "statutes": {"type": "array", "items": {"type": "string"}},
+                    "regulations": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["statutes"],
+            },
+            instructions=(
+                "Identify Canadian statutes and regulations relevant to this case.\n"
+                "Return:\n"
+                "1. statutes: Full names of relevant Acts (e.g., 'Real Estate and Business Brokers Act', 'Sale of Goods Act', 'Fraudulent Conveyances Act')\n"
+                "2. regulations: Relevant regulations (e.g., 'Real Estate Council of Ontario')\n"
+                "Be specific. For real estate cases, consider: 'Real Estate and Business Brokers Act', 'Land Titles Act', 'Conveyancing and Law of Property Act', 'Statute of Frauds'.\n"
+                "For fraud cases, consider: 'Criminal Code', 'Fraudulent Conveyances Act'."
+            ),
+            user_input=cleaned,
+        )
+        data3 = response3.get("data", {})
+        all_keywords.extend(_normalize_string_list(data3.get("statutes"), limit=5))
+        all_keywords.extend(_normalize_string_list(data3.get("regulations"), limit=3))
+    except Exception:
+        pass
+
+    # 合并所有关键词
+    if not all_keywords:
+        return extract_search_keywords(text, max_keywords)
+
+    # 去重并限制数量
+    final_keywords = _normalize_string_list(all_keywords, limit=max_keywords + 6)
+    _, weights = _expand_legal_concepts(final_keywords)
+    return final_keywords, weights
+
+
+def rerank_search_results_with_llm(query_text: str, results: list[dict], limit: int = 10) -> list[dict]:
+    """用LLM重排序搜索结果，筛选最相关的案例"""
+    if not is_llm_configured() or len(results) <= limit:
+        return results[:limit]
+
+    # 构建结果列表供LLM评估
+    result_summaries = []
+    for i, r in enumerate(results[:30]):  # 最多评估30条
+        result_summaries.append({
+            "index": i,
+            "title": repair_text(r.get("title", ""))[:80],
+            "summary": repair_text(r.get("summary", ""))[:120],
+            "source": r.get("source_code", ""),
+        })
+
+    try:
+        response = create_structured_response(
+            schema_name="search_result_reranking",
+            schema={
+                "type": "object",
+                "properties": {
+                    "ranked_indices": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Indices of results sorted by relevance to the query, most relevant first"
+                    },
+                    "relevance_reasons": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Brief reason for each result's relevance ranking"
+                    }
+                },
+                "required": ["ranked_indices"],
+            },
+            instructions=(
+                "You are a legal research assistant. Given a user's legal question and search results, "
+                "rank the results by relevance to the question.\n\n"
+                "Consider:\n"
+                "1. Does the case involve similar legal issues? (e.g., real estate fraud, disclosure obligations)\n"
+                "2. Does the case involve similar parties? (e.g., vendor, purchaser, agent)\n"
+                "3. Does the case involve similar facts? (e.g., non-disclosure, misrepresentation)\n"
+                "4. Is the case from a relevant jurisdiction?\n\n"
+                "Return the indices of results sorted by relevance (most relevant first). "
+                "Only include results that are genuinely relevant to the query. "
+                "Skip results that are only tangentially related."
+            ),
+            user_input=f"User query: {query_text}\n\nSearch results:\n" + "\n".join(
+                f"[{r['index']}] {r['title']} - {r['summary']}" for r in result_summaries
+            ),
+        )
+        data = response.get("data", {})
+        ranked_indices = data.get("ranked_indices", [])
+
+        # 按LLM排序返回结果
+        reranked = []
+        seen = set()
+        for idx in ranked_indices:
+            if isinstance(idx, int) and 0 <= idx < len(results) and idx not in seen:
+                reranked.append(results[idx])
+                seen.add(idx)
+            if len(reranked) >= limit:
+                break
+
+        # 如果LLM返回的结果不够，补充剩余的
+        if len(reranked) < limit:
+            for i, r in enumerate(results):
+                if i not in seen:
+                    reranked.append(r)
+                    seen.add(i)
+                if len(reranked) >= limit:
+                    break
+
+        return reranked
+    except Exception:
+        return results[:limit]
+
+
 def _history_similarity_threshold() -> float:
     return 0.3
 
@@ -355,30 +652,57 @@ def _fetch_history_candidates(text_input: str, module_code: str, limit: int = 4)
     cleaned = repair_text(text_input)
     if not cleaned:
         return []
-    sql = """
-    SELECT
-        id,
-        input_text,
-        module_code,
-        source_filter,
-        sort_mode,
-        extracted_keywords,
-        structured_analysis,
-        result_count,
-        created_at,
-        similarity(LOWER(input_text), LOWER(:input_text)) AS similarity_score
-    FROM agent_runs
-    WHERE module_code = :module_code
-      AND (
-            LOWER(input_text) = LOWER(:input_text)
-         OR similarity(LOWER(input_text), LOWER(:input_text)) >= :threshold
-      )
-    ORDER BY
-        CASE WHEN LOWER(input_text) = LOWER(:input_text) THEN 1 ELSE 0 END DESC,
-        similarity_score DESC,
-        created_at DESC
-    LIMIT :limit
-    """
+    from app.core.database import is_sqlite
+    if is_sqlite():
+        # SQLite: 不支持 similarity()，用 LIKE 匹配
+        sql = """
+        SELECT
+            id,
+            input_text,
+            module_code,
+            source_filter,
+            sort_mode,
+            extracted_keywords,
+            structured_analysis,
+            result_count,
+            created_at,
+            0 AS similarity_score
+        FROM agent_runs
+        WHERE module_code = :module_code
+          AND (
+                LOWER(input_text) = LOWER(:input_text)
+             OR LOWER(input_text) LIKE '%' || LOWER(:input_text) || '%'
+          )
+        ORDER BY
+            CASE WHEN LOWER(input_text) = LOWER(:input_text) THEN 1 ELSE 0 END DESC,
+            created_at DESC
+        LIMIT :limit
+        """
+    else:
+        sql = """
+        SELECT
+            id,
+            input_text,
+            module_code,
+            source_filter,
+            sort_mode,
+            extracted_keywords,
+            structured_analysis,
+            result_count,
+            created_at,
+            similarity(LOWER(input_text), LOWER(:input_text)) AS similarity_score
+        FROM agent_runs
+        WHERE module_code = :module_code
+          AND (
+                LOWER(input_text) = LOWER(:input_text)
+             OR similarity(LOWER(input_text), LOWER(:input_text)) >= :threshold
+          )
+        ORDER BY
+            CASE WHEN LOWER(input_text) = LOWER(:input_text) THEN 1 ELSE 0 END DESC,
+            similarity_score DESC,
+            created_at DESC
+        LIMIT :limit
+        """
     try:
         return fetch_all(
             sql,
@@ -470,6 +794,39 @@ def _reuse_structured_analysis_from_history(text_input: str, rows: list[dict], m
 
 
 def _persist_analysis_run(payload: dict):
+    module_packet = payload.get("module_packet", {})
+
+    # 从 module_packet 构建 supporting_case_groups 和 linked_laws
+    supporting_case_groups = []
+    linked_laws = []
+
+    # 构建 linked_laws 从 relevant_laws
+    for law in module_packet.get("relevant_laws", [])[:6]:
+        linked_laws.append({
+            "rule_id": law.get("rule_id"),
+            "title": law.get("title", ""),
+            "article_no": law.get("article_no", ""),
+            "article_summary": law.get("article_summary", ""),
+            "detail_url": law.get("detail_url", ""),
+            "source_url": law.get("source_url", ""),
+            "legal_type": law.get("legal_type", ""),
+            "country": law.get("country", ""),
+            "linked_case_count": len(law.get("related_cases", [])),
+        })
+
+    # 构建 supporting_case_groups 从 case_law_rows
+    for case in module_packet.get("case_law_rows", [])[:5]:
+        supporting_case_groups.append({
+            "case_id": case.get("case_id"),
+            "title": case.get("title", ""),
+            "court_level": case.get("court_level", ""),
+            "summary": case.get("summary", ""),
+            "source_url": case.get("source_url", ""),
+            "match_score": case.get("match_score", 0),
+            "match_reason": case.get("match_reason", ""),
+            "linked_law_titles": [rule.get("title", "") for rule in case.get("rules", [])[:2]],
+        })
+
     structured_analysis = {
         "analysis": payload.get("analysis", {}),
         "intake_outline": payload.get("intake_outline", {}),
@@ -479,10 +836,13 @@ def _persist_analysis_run(payload: dict):
         "analysis_attempt_log": payload.get("analysis_attempt_log", []),
         "coverage_note": payload.get("coverage_note", ""),
         "history_matches": payload.get("history_matches", []),
-        "module_packet": payload.get("module_packet", {}),
+        "module_packet": module_packet,
         "bilingual_context": payload.get("bilingual_context", {}),
         "query_language": payload.get("query_language", "zh"),
         "source_effective": payload.get("source", "all"),
+        "supporting_case_groups": supporting_case_groups,
+        "supporting_case_rows": module_packet.get("case_law_rows", []) or [],
+        "linked_laws": linked_laws,
     }
 
     try:
@@ -524,6 +884,40 @@ def _persist_analysis_run(payload: dict):
         return
 
 
+def _postprocess_analysis(analysis: dict, input_text: str) -> dict:
+    """后处理: 检测并修复模型只是复制原文的问题"""
+    input_lower = input_text.lower().strip()
+    input_tokens = set(re.findall(r"[\w一-鿿]+", input_lower))
+
+    # 检测 facts 是否只是复制了原文
+    facts = repair_text(analysis.get("facts") or "")
+    facts_lower = facts.lower().strip()
+    if facts_lower and input_lower:
+        facts_tokens = set(re.findall(r"[\w一-鿿]+", facts_lower))
+        if facts_tokens and input_tokens:
+            overlap = len(facts_tokens & input_tokens) / max(len(facts_tokens), 1)
+            if overlap > 0.7:
+                # facts 和原文高度重叠，用规则重新生成
+                clauses = _split_clauses(input_text)
+                relief = _build_fallback_relief(clauses)
+                relief_parts = {part.strip() for part in relief.split(";") if part.strip()}
+                fact_clauses = [c for c in clauses if c not in relief_parts]
+                analysis["facts"] = _join_clauses(fact_clauses, limit=3) or input_text[:240]
+
+    # 检测 summary 是否只是复制了原文
+    summary = repair_text(analysis.get("summary") or "")
+    if summary.lower().strip() == input_lower[:len(summary)]:
+        analysis["summary"] = analysis["facts"][:240]
+
+    # 检测 disputed_issues 是否太泛化
+    issues = analysis.get("disputed_issues") or []
+    generic_issues = [i for i in issues if len(i) < 10 or i.lower() in {"the facts", "the case", "the law"}]
+    if len(generic_issues) == len(issues) and issues:
+        analysis["disputed_issues"] = _build_fallback_issues(_split_clauses(input_text), analysis.get("search_keywords", []))
+
+    return analysis
+
+
 def build_structured_analysis(text: str, module: str = "canada") -> dict:
     cleaned = repair_text(text)
     normalized_module = normalize_module(module)
@@ -536,6 +930,7 @@ def build_structured_analysis(text: str, module: str = "canada") -> dict:
             "intake_outline": build_intake_outline(fallback),
             "bilingual_context": bilingual_context,
             "retrieval_keywords": bilingual_context.get("retrieval_keywords") or fallback.get("search_keywords", []),
+            "legal_skill_profile": fallback.get("legal_skill_profile", {}),
             "query_language": bilingual_context.get("query_language", "zh"),
             "analysis_mode": "empty",
             "analysis_error": "",
@@ -547,12 +942,25 @@ def build_structured_analysis(text: str, module: str = "canada") -> dict:
         }
 
     if bool(getattr(settings, "analysis_local_fast_mode", True)):
+        # Try LLM keyword extraction even in fast mode for better keywords
+        llm_keywords, llm_weights = extract_keywords_with_llm(cleaned)
+        if llm_keywords and llm_keywords != fallback.get("search_keywords", []):
+            fallback["search_keywords"] = llm_keywords
+            fallback["keyword_weights"] = llm_weights
+            fallback["legal_topics"] = _normalize_string_list(
+                llm_keywords[:4] + fallback.get("legal_topics", []), limit=6
+            )
+            fallback["claims"] = _normalize_string_list(
+                llm_keywords[:3] + fallback.get("claims", []), limit=6
+            )
+        skill_profile = _apply_retrieval_skills_to_analysis(fallback, cleaned, normalized_module)
         bilingual_context = build_bilingual_analysis_pack(cleaned, fallback, normalized_module)
         return {
             "analysis": fallback,
             "intake_outline": build_intake_outline(fallback),
             "bilingual_context": bilingual_context,
             "retrieval_keywords": bilingual_context.get("retrieval_keywords") or fallback.get("search_keywords", []),
+            "legal_skill_profile": skill_profile,
             "query_language": bilingual_context.get("query_language", "zh"),
             "analysis_mode": "local_fast",
             "analysis_error": "",
@@ -564,12 +972,14 @@ def build_structured_analysis(text: str, module: str = "canada") -> dict:
         }
 
     if not is_llm_configured():
+        skill_profile = _apply_retrieval_skills_to_analysis(fallback, cleaned, normalized_module)
         bilingual_context = build_bilingual_analysis_pack(cleaned, fallback, normalized_module)
         return {
             "analysis": fallback,
             "intake_outline": build_intake_outline(fallback),
             "bilingual_context": bilingual_context,
             "retrieval_keywords": bilingual_context.get("retrieval_keywords") or fallback.get("search_keywords", []),
+            "legal_skill_profile": skill_profile,
             "query_language": bilingual_context.get("query_language", "zh"),
             "analysis_mode": "heuristic",
             "analysis_error": f"LLM credentials are not configured for provider={get_llm_provider()}.",
@@ -590,20 +1000,29 @@ def build_structured_analysis(text: str, module: str = "canada") -> dict:
         )
     else:
         instructions = (
-            "You are a Canadian legal intake analyst. Split the user's event into four core parts before retrieval: "
-            "facts, disputed issues, requested relief, and 4 to 8 search keywords. "
-            "Also provide a concise summary, likely jurisdiction, legal topics, claims, and risk flags. "
-            "Keep close to the user's facts. Do not invent case citations, statutes, or outcomes."
+            "Analyze this Canadian legal event. Return JSON with:\n"
+            "1. facts: Key facts in 2-3 sentences (rewrite, don't copy)\n"
+            "2. disputed_issues: 2-4 specific legal issues\n"
+            "3. requested_relief: What remedy is sought\n"
+            "4. search_keywords: 4-8 English legal terms for Canadian law\n"
+            "5. summary: 1-2 sentence legal summary\n"
+            "6. jurisdiction: Canadian jurisdiction (Ontario/Federal/etc)\n"
+            "7. legal_topics: Areas of law involved\n"
+            "8. claims: Specific legal claims\n"
+            "9. risk_flags: 2-3 risk factors\n"
+            "For Chinese input, translate legal concepts to English (欺诈→fraud, 房产→property)."
         )
 
     model_call = _call_analysis_model(cleaned, instructions)
     if not model_call["ok"]:
+        skill_profile = _apply_retrieval_skills_to_analysis(fallback, cleaned, normalized_module)
         bilingual_context = build_bilingual_analysis_pack(cleaned, fallback, normalized_module)
         return {
             "analysis": fallback,
             "intake_outline": build_intake_outline(fallback),
             "bilingual_context": bilingual_context,
             "retrieval_keywords": bilingual_context.get("retrieval_keywords") or fallback.get("search_keywords", []),
+            "legal_skill_profile": skill_profile,
             "query_language": bilingual_context.get("query_language", "zh"),
             "analysis_mode": "heuristic_fallback",
             "analysis_error": model_call["error_message"],
@@ -626,12 +1045,20 @@ def build_structured_analysis(text: str, module: str = "canada") -> dict:
     analysis["summary"] = repair_text(analysis.get("summary") or analysis["facts"][:240])
     analysis["jurisdiction"] = repair_text(analysis.get("jurisdiction") or fallback["jurisdiction"])
 
+    # 后处理: 检测模型是否只是复制了原文
+    analysis = _postprocess_analysis(analysis, cleaned)
+
+    _, keyword_weights = _expand_legal_concepts(analysis["search_keywords"])
+    analysis["keyword_weights"] = keyword_weights
+    skill_profile = _apply_retrieval_skills_to_analysis(analysis, cleaned, normalized_module)
+
     bilingual_context = build_bilingual_analysis_pack(cleaned, analysis, normalized_module)
     return {
         "analysis": analysis,
         "intake_outline": build_intake_outline(analysis),
         "bilingual_context": bilingual_context,
         "retrieval_keywords": bilingual_context.get("retrieval_keywords") or analysis.get("search_keywords", []),
+        "legal_skill_profile": skill_profile,
         "query_language": bilingual_context.get("query_language", "zh"),
         "analysis_mode": "model",
         "analysis_error": "",
@@ -719,11 +1146,56 @@ def analyze_sentence_search(
     retrieval_keywords = structured.get("retrieval_keywords") or extracted_keywords
 
     if local_only and bool(getattr(settings, "analysis_local_fast_mode", True)):
+        # In fast mode, still try real-time CanLII search if enabled
+        canlii_realtime_data = {"items": [], "method": "none", "count": 0}
+        use_realtime_in_fast = (
+            getattr(settings, "canlii_realtime_search_enabled", True)
+            and normalized_module in ("canada", "all")
+            and effective_source in ("all", "canlii", "canada")
+            and retrieval_keywords
+        )
+        if use_realtime_in_fast:
+            try:
+                from app.service.canlii_service import search_canlii_by_keywords_realtime
+                max_rt = max(5, int(getattr(settings, "canlii_realtime_search_max_items", 20)))
+                canlii_realtime_data = search_canlii_by_keywords_realtime(
+                    retrieval_keywords,
+                    max_items=max_rt,
+                    use_api=bool(settings.canlii_api_key),
+                    use_rss=True,
+                )
+            except Exception:
+                canlii_realtime_data = {"items": [], "method": "error", "count": 0}
+
+        rt_items = canlii_realtime_data.get("items") or []
+        rt_canlii_cards = []
+        for item in rt_items:
+            url = (item.get("url") or "").rstrip("/")
+            rt_canlii_cards.append({
+                "id": f"rt_{hash(url) % 10**8}",
+                "source_code": "canlii",
+                "source_label": "Case (Real-time)",
+                "title": repair_text(item.get("title", "")),
+                "title_primary": repair_text(item.get("title", "")),
+                "title_secondary": "",
+                "subtitle": repair_text(item.get("citation", "")),
+                "published_at": str(item.get("date", "")),
+                "summary": _safe_excerpt(item.get("summary", ""), limit=260),
+                "summary_primary": _safe_excerpt(item.get("summary", ""), limit=260),
+                "summary_secondary": "",
+                "excerpt": "",
+                "url": item.get("url", ""),
+                "source_url": item.get("database", ""),
+                "score": 0.5,
+                "fields": [],
+                "realtime_source": item.get("source", "canlii"),
+            })
+
         result = {
             "input_text": cleaned_text,
             "keywords": retrieval_keywords,
-            "total": 0,
-            "page_count": 0,
+            "total": len(rt_canlii_cards),
+            "page_count": len(rt_canlii_cards),
             "offset": offset,
             "source": effective_source,
             "sort": sort,
@@ -731,9 +1203,9 @@ def analyze_sentence_search(
             "module_profile": get_module_definition(normalized_module),
             "query_language": query_language,
             "bilingual_query": {},
-            "results": [],
-            "grouped_results": {"legislation": [], "canlii": [], "ofac": [], "other": []},
-            "source_counts": {"legislation": 0, "canlii": 0, "ofac": 0, "other": 0},
+            "results": rt_canlii_cards,
+            "grouped_results": {"legislation": [], "canlii": rt_canlii_cards, "ofac": [], "other": []},
+            "source_counts": {"legislation": 0, "canlii": len(rt_canlii_cards), "ofac": 0, "other": 0},
             "has_previous": False,
             "has_next": False,
             "previous_offset": 0,
@@ -743,29 +1215,61 @@ def analyze_sentence_search(
                 "status": "local_only",
                 "processed": 0,
                 "sources": {},
-                "message": "当前分析仅使用本地数据库匹配，不会实时访问远程网页。",
+                "message": "当前分析使用本地快速模式，但已通过CanLII实时搜索补充结果。",
             },
-            "search_strategy": "local_only_fast",
+            "search_strategy": "fast_plus_realtime" if rt_canlii_cards else "local_only_fast",
             "hydration_target_count": limit,
             "force_hydration": False,
             "hydration_reason": "",
+            "canlii_realtime": {
+                "method": canlii_realtime_data.get("method", "none"),
+                "count": canlii_realtime_data.get("count", 0),
+            },
         }
     else:
-        result = search_with_remote_hydration(
-            retrieval_keywords,
-            limit=limit,
-            offset=offset,
-            source=effective_source,
-            sort=sort,
-            module=normalized_module,
-            refresh=True,
-            origin_page=origin_page,
-            force_hydration=is_new_case and new_case_hydration_enabled,
-            hydration_target_count=new_case_target_count if is_new_case and new_case_hydration_enabled else limit,
-            hydration_reason="new_case_enrichment" if is_new_case and new_case_hydration_enabled else "",
-            display_language=query_language,
-            local_only=local_only,
+        keyword_weights = analysis.get("keyword_weights") or {}
+        use_realtime_search = (
+            getattr(settings, "canlii_realtime_search_enabled", True)
+            and normalized_module in ("canada", "all")
+            and effective_source in ("all", "canlii", "canada")
         )
+        if use_realtime_search:
+            from app.service.search_service import search_with_canlii_realtime
+            result = search_with_canlii_realtime(
+                retrieval_keywords,
+                limit=limit,
+                offset=offset,
+                source=effective_source,
+                sort=sort,
+                module=normalized_module,
+                refresh=True,
+                display_language=query_language,
+                keyword_weights=keyword_weights,
+            )
+            # 用LLM重排序搜索结果，筛选最相关的案例（暂时禁用，避免超时）
+            # if is_llm_configured() and result.get("results"):
+            #     reranked = rerank_search_results_with_llm(cleaned_text, result["results"], limit=limit)
+            #     result["results"] = reranked
+            #     # 重建grouped_results
+            #     from app.service.search_service import _prepare_cards
+            #     result["grouped_results"] = _prepare_cards(reranked, query_language)
+        else:
+            result = search_with_remote_hydration(
+                retrieval_keywords,
+                limit=limit,
+                offset=offset,
+                source=effective_source,
+                sort=sort,
+                module=normalized_module,
+                refresh=True,
+                origin_page=origin_page,
+                force_hydration=is_new_case and new_case_hydration_enabled,
+                hydration_target_count=new_case_target_count if is_new_case and new_case_hydration_enabled else limit,
+                hydration_reason="new_case_enrichment" if is_new_case and new_case_hydration_enabled else "",
+                display_language=query_language,
+                local_only=local_only,
+                keyword_weights=keyword_weights,
+            )
 
     coverage_note = ""
     if not result["total"]:
@@ -801,6 +1305,7 @@ def analyze_sentence_search(
         "new_case_hydration_target_count": new_case_target_count if is_new_case and new_case_hydration_enabled else 0,
         "extracted_keywords": extracted_keywords,
         "retrieval_keywords": retrieval_keywords,
+        "legal_skill_profile": structured.get("legal_skill_profile") or analysis.get("legal_skill_profile") or result.get("legal_skill_profile", {}),
         "coverage_note": coverage_note,
         "analysis_cache_status": analysis_cache_status,
         **result,
@@ -814,6 +1319,60 @@ def analyze_sentence_search(
         response_payload["module_packet"],
         retrieval_keywords,
     )
+    response_payload["rag_context"] = build_rag_context(
+        cleaned_text,
+        keywords=retrieval_keywords,
+        module=normalized_module,
+    )
+    response_payload["data_readiness"] = build_data_readiness(
+        module=normalized_module,
+        module_packet=response_payload["module_packet"],
+        retrieval_summary=response_payload["retrieval_summary"],
+        rag_context=response_payload["rag_context"],
+        local_result_total=int(response_payload.get("total") or 0),
+    )
+
+    # 从 module_packet 构建 supporting_case_groups 和 linked_laws
+    module_packet = response_payload["module_packet"]
+    supporting_case_groups = []
+    linked_laws = []
+
+    # 构建 linked_laws 从 relevant_laws
+    for law in module_packet.get("relevant_laws", [])[:6]:
+        linked_laws.append({
+            "rule_id": law.get("rule_id"),
+            "title": law.get("title", ""),
+            "article_no": law.get("article_no", ""),
+            "article_summary": law.get("article_summary", ""),
+            "detail_url": law.get("detail_url", ""),
+            "source_url": law.get("source_url", ""),
+            "legal_type": law.get("legal_type", ""),
+            "country": law.get("country", ""),
+            "linked_case_count": len(law.get("related_cases", [])),
+        })
+
+    # 构建 supporting_case_groups 从 case_law_rows
+    for case in module_packet.get("case_law_rows", [])[:5]:
+        supporting_case_groups.append({
+            "case_id": case.get("case_id"),
+            "title": case.get("title", ""),
+            "court_level": case.get("court_level", ""),
+            "summary": case.get("summary", ""),
+            "source_url": case.get("source_url", ""),
+            "match_score": case.get("match_score", 0),
+            "match_reason": case.get("match_reason", ""),
+            "linked_law_titles": [rule.get("title", "") for rule in case.get("rules", [])[:2]],
+        })
+
+    response_payload["supporting_case_groups"] = supporting_case_groups
+    response_payload["supporting_case_rows"] = module_packet.get("case_law_rows", []) or []
+    response_payload["linked_laws"] = linked_laws
+    if response_payload["data_readiness"].get("status") != "ready":
+        readiness_note = "；".join(response_payload["data_readiness"].get("warnings") or [])
+        if readiness_note:
+            response_payload["coverage_note"] = (
+                f"{response_payload.get('coverage_note') or ''} {readiness_note}"
+            ).strip()
 
     if (
         analysis_cache_status != "hit"

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 from datetime import datetime
 from pathlib import Path
@@ -16,12 +18,18 @@ from app.service.archive_service import (
     get_archive_status,
     rebuild_local_archive_from_db,
 )
+from app.service.data_quality_service import get_source_quality_snapshot
 from app.service.crawler_service import sync_all_sources
 from app.service.ingestion_task_service import get_ingestion_task
 from app.service.legal_data_service import (
+    delete_case_vote,
+    get_bulk_case_votes,
     get_canada_rule_detail_packet,
     get_case,
+    get_case_vote_details,
+    get_case_votes,
     get_rule,
+    get_user_votes_for_cases,
     import_from_url,
     import_manual_entry,
     list_case_rule_relations,
@@ -29,6 +37,7 @@ from app.service.legal_data_service import (
     list_import_tasks,
     list_rules,
     run_canada_crawler_import,
+    upsert_case_vote,
 )
 from app.service.module_service import (
     answer_module_question,
@@ -42,7 +51,10 @@ from app.service.ofac_service import sync_ofac_demo
 from app.service.canlii_service import sync_canlii_demo
 from app.service.common_service import looks_mojibake, repair_text
 from app.service.pdf_service import PDFRenderError, render_legal_memo_pdf
+from app.service.hybrid_retrieval_service import hybrid_search, rebuild_hybrid_index
+from app.service.rag_service import export_rag_chunks, get_rag_status, rag_search, rebuild_rag_index
 from app.service.search_service import search_and_optionally_sync
+from app.service.vector_store_service import get_vector_status, rebuild_chunk_embeddings, vector_search
 from app.service.user_service import (
     authenticate_user,
     build_case_history_payload,
@@ -50,6 +62,7 @@ from app.service.user_service import (
     build_history_snapshot,
     build_user_history_graph,
     clear_session_user,
+    count_user_histories,
     delete_history,
     get_current_user,
     get_history,
@@ -567,6 +580,8 @@ def _sanitize_module_packet(module_packet: dict, module_code: str) -> dict:
     for case in packet.get("case_law_rows", []) or []:
         case_entry = dict(case)
         case_entry["summary"] = _trim_copy(case_entry.get("summary") or case_entry.get("facts") or "", 180)
+        if module_code == "canada" and case_entry.get("scope") not in {"national_federal", "provincial_local"}:
+            case_entry["scope"] = "provincial_local"
         rules = []
         for law in case_entry.get("rules", []) or []:
             law_row = dict(law)
@@ -584,6 +599,8 @@ def _sanitize_prediction_payload(payload: dict, module_code: str) -> dict:
     clean_payload["module_packet"] = _sanitize_module_packet(clean_payload.get("module_packet") or {}, module_code)
     if isinstance(clean_payload.get("prediction"), dict):
         prediction = dict(clean_payload.get("prediction") or {})
+        prediction["confidence"] = _safe_float(prediction.get("confidence"))
+        prediction["confidence_percent"] = int(round(prediction["confidence"] * 100))
         support_groups = []
         for group in prediction.get("supporting_case_groups", []) or []:
             group_entry = dict(group)
@@ -603,6 +620,23 @@ def _sanitize_prediction_payload(payload: dict, module_code: str) -> dict:
             law_entry["article_summary"] = _trim_copy(law_entry.get("article_summary") or "", 110)
             linked_laws.append(law_entry)
         prediction["linked_laws"] = linked_laws
+        evidence = dict(prediction.get("prediction_evidence") or {})
+        evidence_laws = []
+        for law in evidence.get("laws", []) or []:
+            law_entry = dict(law)
+            law_entry["article_summary"] = _trim_copy(law_entry.get("article_summary") or "", 120)
+            evidence_laws.append(law_entry)
+        evidence_cases = []
+        for case in evidence.get("cases", []) or []:
+            case_entry = dict(case)
+            case_entry["summary"] = _trim_copy(case_entry.get("summary") or "", 140)
+            case_entry["match_reason"] = _trim_copy(case_entry.get("match_reason") or "", 100)
+            case_entry["similarities"] = [_trim_copy(item, 90) for item in (case_entry.get("similarities") or [])]
+            case_entry["differences"] = [_trim_copy(item, 90) for item in (case_entry.get("differences") or [])]
+            evidence_cases.append(case_entry)
+        evidence["laws"] = evidence_laws
+        evidence["cases"] = evidence_cases
+        prediction["prediction_evidence"] = evidence
         clean_payload["prediction"] = prediction
     return clean_payload
 
@@ -716,6 +750,13 @@ def _to_bool(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _safe_float(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _build_query_string(**kwargs) -> str:
     clean = {key: value for key, value in kwargs.items() if value not in {None, ""}}
     return urlencode(clean)
@@ -765,7 +806,18 @@ def _require_page_admin(request: Request, next_url: str) -> dict | RedirectRespo
 
 
 def _cache_safe_template(template_name: str, context: dict, status_code: int = 200) -> HTMLResponse:
-    response = templates.TemplateResponse(template_name, context, status_code=status_code)
+    request = context.get("request")
+    if request is None:
+        raise RuntimeError("Template context must include request")
+    try:
+        response = templates.TemplateResponse(
+            request=request,
+            name=template_name,
+            context=context,
+            status_code=status_code,
+        )
+    except TypeError:
+        response = templates.TemplateResponse(template_name, context, status_code=status_code)
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
@@ -852,10 +904,53 @@ def _save_case_history_if_possible(
     user = get_current_user(request)
     if not user or not query_text.strip():
         return 0
+
+    # 获取 prediction_payload，如果没有则使用 result_payload 本身
+    prediction_payload = result_payload.get("prediction") or {}
+    if not prediction_payload:
+        payload = build_case_history_payload(
+            query_text=query_text,
+            analysis_payload=result_payload,
+            prediction_payload={},
+            module_packet=result_payload.get("module_packet") or {},
+            module_code=module_code,
+        )
+        history_id = upsert_case_history(user_id=int(user["id"]), payload=payload)
+        if history_id:
+            remember_last_query(request, f"/histories/{history_id}", payload.get("case_title") or query_text[:80])
+        return history_id
+
+    # 确保 prediction_payload 包含所有必要的字段
+    if not prediction_payload.get("linked_laws"):
+        prediction_payload["linked_laws"] = result_payload.get("linked_laws") or []
+    if not prediction_payload.get("supporting_case_groups"):
+        prediction_payload["supporting_case_groups"] = result_payload.get("supporting_case_groups") or []
+
+    # 确保预测数据完整 - 从 result_payload 中获取正确的置信度
+    if not prediction_payload.get("predicted_outcome"):
+        prediction_payload["predicted_outcome"] = result_payload.get("analysis", {}).get("summary") or "待预测"
+    if not prediction_payload.get("reasoning"):
+        prediction_payload["reasoning"] = result_payload.get("analysis", {}).get("summary") or ""
+
+    # 从嵌套的 prediction 字典中获取正确的置信度
+    confidence = prediction_payload.get("confidence")
+    original_confidence = confidence
+    if confidence is None or confidence == 0:
+        # 尝试从嵌套的 prediction 字典中获取置信度
+        nested_prediction = prediction_payload.get("prediction") or {}
+        confidence_from_nested = nested_prediction.get("confidence")
+        if confidence_from_nested is not None and confidence_from_nested > 0:
+            prediction_payload["confidence"] = confidence_from_nested
+        else:
+            prediction_payload["confidence"] = 0.5  # 默认置信度
+
+    if _safe_float(original_confidence) <= 0 and _safe_float((prediction_payload.get("prediction") or {}).get("confidence")) <= 0 and _safe_float(prediction_payload.get("confidence")) == 0.5:
+        prediction_payload["confidence"] = 0
+
     payload = build_case_history_payload(
         query_text=query_text,
         analysis_payload=result_payload,
-        prediction_payload=result_payload.get("prediction") or {},
+        prediction_payload=prediction_payload,
         module_packet=result_payload.get("module_packet") or {},
         module_code=module_code,
     )
@@ -998,32 +1093,74 @@ def _history_prediction_process_from_display(history_item: dict) -> list[dict]:
     laws = history_item.get("legal_rules") or []
     cases = history_item.get("supporting_case_rows") or []
     dispute_focus = history_item.get("dispute_focus") or []
+    prediction = history_item.get("prediction") or {}
+    risk_points = history_item.get("risk_points") or []
+
+    # 构建法规与案例的详细描述
+    law_titles = [law.get("title", "") for law in laws[:3]]
+    case_titles = [case.get("title", "") for case in cases[:3]]
+    law_detail = f"已关联法规 {len(laws)} 条" + (f"：{'、'.join(law_titles)}" if law_titles else "")
+    case_detail = f"相关案例 {len(cases)} 条" + (f"：{'、'.join(case_titles)}" if case_titles else "")
+
+    # 构建风险点描述
+    risk_detail = "；".join([risk.get("description") or risk.get("name") for risk in risk_points[:3]]) if risk_points else "当前没有额外提炼出显著的不确定因素。"
+
     return [
         {
-            "kicker": "事实梳理",
-            "title": "先确认案情基础",
+            "kicker": "Facts",
+            "title": "先把当前案情拆成事实、争议和请求事项",
             "detail": history_item.get("case_summary") or history_item.get("query_text") or "当前记录缺少完整案情摘要。",
             "status": "已复用历史记录中的结构化分析。",
         },
         {
-            "kicker": "争议定位",
-            "title": "提炼影响结果的核心争点",
-            "detail": "；".join(dispute_focus[:3]) or "当前记录没有额外保存争议焦点，建议回看案情原文。",
-            "status": "按历史记录中的争议焦点继续展示。",
-        },
-        {
-            "kicker": "法规与案例",
-            "title": "核对法规依据与支撑案例",
-            "detail": f"已关联法规 {len(laws)} 条，相关案例 {len(cases)} 条。系统继续按法规与案例的对应关系展示。",
+            "kicker": "Materials",
+            "title": "再按拆分关键词去本地检索法规和相关案例",
+            "detail": f"{law_detail}；{case_detail}。系统继续按法规与案例的对应关系展示。",
             "status": "全部材料来自本地已保存记录。",
         },
         {
-            "kicker": "综合判断",
-            "title": "输出当前预测结论",
-            "detail": history_item.get("prediction", {}).get("explanation") or history_item.get("analysis_summary") or "当前没有保存完整结论说明。",
-            "status": "本次页面未重新调用模型。",
+            "kicker": "Comparison",
+            "title": "把当前案情与已归到对应法规下的案例逐条比照",
+            "detail": f"已对 {len(cases)} 个案例进行了相似点和差异点分析。" + (" 案例比照结果：" + "；".join([f"{case.get('title', '')}：{case.get('match_reason', '')}" for case in cases[:2]]) if cases else ""),
+            "status": "按历史记录中的案例对比继续展示。",
+        },
+        {
+            "kicker": "Risk",
+            "title": "最后看哪些不确定因素会左右结论",
+            "detail": risk_detail,
+            "status": "按历史记录中的风险点继续展示。",
+        },
+        {
+            "kicker": "Preliminary View",
+            "title": "据此给出一个面向律师阅读顺序的初步判断",
+            "detail": prediction.get("explanation") or history_item.get("analysis_summary") or "当前没有保存完整结论说明。",
+            "status": "本次页面未重新调用模型，直接复用已保存的预测结论。",
         },
     ]
+
+
+def _history_prediction_is_reusable(history_item: dict) -> bool:
+    prediction = history_item.get("prediction") or {}
+    if not history_item.get("has_prediction"):
+        return False
+    if not (history_item.get("supporting_case_rows") or []):
+        return False
+
+    conclusion = repair_text(prediction.get("conclusion"))
+    explanation = repair_text(prediction.get("explanation"))
+    confidence = _safe_float(prediction.get("confidence"))
+    if not conclusion or not explanation or confidence <= 0:
+        return False
+
+    analysis_summary = repair_text(history_item.get("analysis_summary"))
+    case_summary = repair_text(history_item.get("case_summary"))
+    query_text = repair_text(history_item.get("query_text"))
+    copied_analysis = conclusion and conclusion in {analysis_summary, case_summary, query_text[: len(conclusion)]}
+    copied_explanation = explanation and explanation in {analysis_summary, case_summary, query_text[: len(explanation)]}
+    if confidence == 0.5 and copied_analysis and copied_explanation:
+        return False
+
+    return True
 
 
 def _prediction_payload_from_history_display(history_item: dict, module_code: str) -> dict:
@@ -1037,6 +1174,33 @@ def _prediction_payload_from_history_display(history_item: dict, module_code: st
         if len(keywords) >= 6:
             break
     prediction = history_item.get("prediction") or {}
+
+    # 确保 confidence 不为0，从多个来源尝试获取
+    confidence = float(prediction.get("confidence") or 0)
+    if confidence == 0:
+        # 尝试从 history_item 的其他字段获取
+        confidence = float(history_item.get("prediction_confidence") or 0)
+    if confidence == 0 and history_item.get("supporting_case_rows"):
+        # 如果有支撑案例，给出一个基础置信度
+        case_count = len(history_item.get("supporting_case_rows") or [])
+        law_count = len(history_item.get("legal_rules") or [])
+        confidence = min(0.3 + (case_count * 0.1) + (law_count * 0.05), 0.8)
+    history_module_packet = _history_module_packet_from_display(history_item, module_code)
+    prediction_evidence = {
+        "source": "history_analysis_result",
+        "law_count": len(history_item.get("legal_rules") or []),
+        "case_count": len(history_item.get("supporting_case_rows") or []),
+        "laws": history_item.get("legal_rules") or [],
+        "cases": [
+            {
+                **dict(case),
+                "law_titles": [rule.get("title") for rule in (case.get("rules") or []) if rule.get("title")],
+            }
+            for case in (history_item.get("supporting_case_rows") or [])
+        ],
+        "law_case_groups": history_item.get("supporting_case_groups") or [],
+    }
+
     return {
         "analysis": {
             "jurisdiction": history_item.get("court_level") or history_item.get("country") or "",
@@ -1058,8 +1222,8 @@ def _prediction_payload_from_history_display(history_item: dict, module_code: st
             "label": repair_text(prediction.get("label")) or "综合判断",
             "predicted_outcome": repair_text(prediction.get("conclusion")) or repair_text(prediction.get("label")) or "当前没有稳定预测结论。",
             "likely_prevailing_party": repair_text(prediction.get("label")) or "综合判断",
-            "confidence": float(prediction.get("confidence") or 0),
-            "confidence_percent": int(round(float(prediction.get("confidence") or 0) * 100)),
+            "confidence": confidence,
+            "confidence_percent": int(round(confidence * 100)),
             "reasoning": repair_text(prediction.get("explanation")) or history_item.get("analysis_summary") or history_item.get("case_summary") or "",
             "reason_points": history_item.get("key_facts") or history_item.get("legal_relations") or [],
             "risk_points": [repair_text(item.get("description") or item.get("name")) for item in (history_item.get("risk_points") or []) if repair_text(item.get("description") or item.get("name"))],
@@ -1079,6 +1243,7 @@ def _prediction_payload_from_history_display(history_item: dict, module_code: st
             "model_error": "",
             "supporting_case_groups": history_item.get("supporting_case_groups") or [],
             "linked_laws": history_item.get("legal_rules") or [],
+            "prediction_evidence": prediction_evidence,
             "bilingual": {
                 "predicted_outcome_zh": repair_text(prediction.get("conclusion")) or repair_text(prediction.get("label")) or "当前没有稳定预测结论。",
                 "predicted_outcome_en": "",
@@ -1088,7 +1253,7 @@ def _prediction_payload_from_history_display(history_item: dict, module_code: st
                 "likely_prevailing_party_en": "",
             },
         },
-        "module_packet": _history_module_packet_from_display(history_item, module_code),
+        "module_packet": history_module_packet,
         "history_reused": True,
         "remote_fetch": {"status": "history_reuse", "message": "当前页面直接复用已保存的预测结果。"},
         "coverage_note": "当前结果直接来自已保存历史，不会重新调用模型。",
@@ -1098,6 +1263,95 @@ def _prediction_payload_from_history_display(history_item: dict, module_code: st
             "case_count": len(history_item.get("supporting_case_rows") or []),
         },
     }
+
+
+def _build_analysis_payload_from_history(history_item: dict, module_code: str) -> dict:
+    """从历史记录构建分析负载，确保与预测页面数据一致"""
+    keywords = []
+    if history_item.get("case_type"):
+        keywords.append(history_item["case_type"])
+    for law in history_item.get("legal_rules") or []:
+        title = repair_text(law.get("title"))
+        if title and title not in keywords:
+            keywords.append(title)
+        if len(keywords) >= 6:
+            break
+
+    snapshot = history_item.get("result_snapshot") or {}
+    analysis_snapshot = snapshot.get("analysis", {})
+
+    # 构建 module_packet
+    module_packet = _history_module_packet_from_display(history_item, module_code)
+
+    # 从历史记录获取 supporting_case_groups 和 linked_laws
+    supporting_case_groups = history_item.get("supporting_case_groups") or []
+    linked_laws = history_item.get("legal_rules") or []
+
+    # 如果 supporting_case_groups 为空，从 module_packet 中构建
+    if not supporting_case_groups and module_packet.get("case_law_rows"):
+        for case in module_packet.get("case_law_rows", [])[:5]:
+            supporting_case_groups.append({
+                "case_id": case.get("case_id"),
+                "title": case.get("title", ""),
+                "court_level": case.get("court_level", ""),
+                "summary": case.get("summary", ""),
+                "source_url": case.get("source_url", ""),
+                "match_score": case.get("match_score", 0),
+                "match_reason": case.get("match_reason", ""),
+                "linked_law_titles": [rule.get("title", "") for rule in case.get("rules", [])[:2]],
+            })
+
+    # 构建分析结果
+    analysis_result = {
+        "input_text": history_item.get("query_text") or "",
+        "analysis": {
+            "jurisdiction": history_item.get("court_level") or history_item.get("country") or "",
+            "summary": history_item.get("analysis_summary") or history_item.get("case_summary") or "",
+            "facts": history_item.get("case_summary") or history_item.get("query_text") or "",
+            "disputed_issues": history_item.get("dispute_focus") or [],
+            "requested_relief": analysis_snapshot.get("requested_relief") or "",
+            "keywords": keywords,
+            "legal_topics": analysis_snapshot.get("legal_topics") or [],
+            "claims": analysis_snapshot.get("claims") or [],
+            "risk_flags": [item.get("description") or item.get("name") for item in (history_item.get("risk_points") or []) if item.get("description") or item.get("name")],
+        },
+        "intake_outline": {
+            "facts": history_item.get("case_summary") or history_item.get("query_text") or "",
+            "disputed_issues": history_item.get("dispute_focus") or [],
+            "requested_relief": analysis_snapshot.get("requested_relief") or "",
+            "keywords": keywords,
+        },
+        "bilingual_context": {
+            "facts": {"zh": history_item.get("case_summary") or history_item.get("query_text") or "", "en": ""},
+            "disputed_issues": {"zh": history_item.get("dispute_focus") or [], "en": []},
+            "requested_relief": {"zh": analysis_snapshot.get("requested_relief") or "", "en": ""},
+            "keywords": {"zh": keywords, "en": []},
+        },
+        "module_packet": module_packet,
+        "supporting_case_groups": supporting_case_groups,
+        "linked_laws": linked_laws,
+        "retrieval_summary": {
+            "keywords": keywords[:6],
+            "law_count": len(module_packet.get("relevant_laws", [])),
+            "case_count": len(module_packet.get("case_law_rows", [])),
+        },
+        "data_readiness": {
+            "status": "ready",
+            "evidence": {
+                "matched_laws": len(module_packet.get("relevant_laws", [])),
+                "matched_cases": len(module_packet.get("case_law_rows", [])),
+            },
+            "corpus": {
+                "canlii_total": 0,
+            },
+        },
+        "analysis_mode": "history_reuse",
+        "coverage_note": "当前结果基于已有历史记录，不会重复消耗分析时间。",
+        "history_reused": True,
+        "remote_fetch": {"status": "history_reuse", "message": "当前页面直接复用已保存的历史记录。"},
+    }
+
+    return analysis_result
 
 
 def _normalize_filename_text(value: str, max_length: int = 56) -> str:
@@ -1293,6 +1547,7 @@ def _render_prediction_page(
             "history_id": 0,
         }
     )
+    history_analysis_seed = None
     if active_text:
         if not refresh:
             existing_history_id, existing_history_item = _exact_history_display_for_query(
@@ -1302,63 +1557,108 @@ def _render_prediction_page(
             )
             if existing_history_id and existing_history_item:
                 if page_id == "analysis":
+                    # 分析页面：使用历史记录数据构建分析视图，不再重定向到历史详情
+                    analysis_payload = _build_analysis_payload_from_history(
+                        existing_history_item, module_code
+                    )
+                    context["history_id"] = existing_history_id
+                    context["analysis_result"] = analysis_payload
+                    context["analysis_view"] = existing_history_item
                     _remember_query(
                         request,
                         query_text=active_text,
-                        restore_url=f"/histories/{existing_history_id}",
+                        restore_url=f"{page_path}?{_build_query_string(text=active_text, limit=limit, offset=offset, source=effective_source, sort=sort, module=module_code)}",
                     )
-                    return RedirectResponse(url=f"/histories/{existing_history_id}", status_code=303)
-                prediction_payload = _sanitize_prediction_payload(
-                    _prediction_payload_from_history_display(existing_history_item, module_code),
-                    module_code,
-                )
-                context["history_id"] = existing_history_id
-                context["prediction_result"] = prediction_payload
-                context["analysis_result"] = prediction_payload
-                context["analysis_view"] = existing_history_item
-                _remember_query(
-                    request,
-                    query_text=active_text,
-                    restore_url=f"{page_path}?{_build_query_string(text=active_text, limit=limit, offset=offset, source=effective_source, sort=sort, module=module_code)}",
-                )
-                return _cache_safe_template("predict.html", context)
+                    return _cache_safe_template("analyze.html", context)
+                # 预测页面：使用历史记录数据构建预测视图
+                if _history_prediction_is_reusable(existing_history_item):
+                    prediction_payload = _sanitize_prediction_payload(
+                        _prediction_payload_from_history_display(existing_history_item, module_code),
+                        module_code,
+                    )
+                    context["history_id"] = existing_history_id
+                    context["prediction_result"] = prediction_payload
+                    context["analysis_result"] = prediction_payload
+                    context["analysis_view"] = existing_history_item
+                    _remember_query(
+                        request,
+                        query_text=active_text,
+                        restore_url=f"{page_path}?{_build_query_string(text=active_text, limit=limit, offset=offset, source=effective_source, sort=sort, module=module_code)}",
+                    )
+                    return _cache_safe_template("predict.html", context)
+                history_analysis_seed = _build_analysis_payload_from_history(existing_history_item, module_code)
+                if not (history_analysis_seed.get("module_packet") or {}).get("case_law_rows"):
+                    history_analysis_seed = None
         existing_history_id = 0
-        prediction_payload = _sanitize_prediction_payload(
-            predict_legal_outcome(
-            text=active_text,
-            limit=limit,
-            offset=offset,
-            source=effective_source,
-            sort=sort,
-            module=module_code,
-            refresh=refresh,
-            ),
-            module_code,
-        )
-        context["prediction_result"] = prediction_payload
-        context["analysis_result"] = prediction_payload
-        context.update(
-            _task_context(
-                prediction_payload.get("remote_fetch"),
-                refresh_url=_predict_url(active_text, limit, offset, effective_source, sort, module_code, refresh=True),
+        if page_id == "analysis":
+            analysis_payload = analyze_sentence_search(
+                text=active_text,
+                limit=limit,
+                offset=offset,
+                source=effective_source,
+                sort=sort,
+                module=module_code,
+                refresh=refresh,
+                origin_page="analysis",
+                local_only=False,
             )
-        )
-        context["history_id"] = _save_case_history_if_possible(
-            request,
-            query_text=active_text,
-            module_code=module_code,
-            result_payload=prediction_payload,
-        )
-        if page_id == "analysis" and context["history_id"] and prediction_payload.get("history_reused"):
-            return RedirectResponse(url=f"/histories/{context['history_id']}", status_code=303)
-        context["analysis_view"] = _sanitize_history_display(_build_analysis_view_payload(
-            query_text=active_text,
-            module_code=module_code,
-            result_payload=prediction_payload,
-            history_id=context["history_id"],
-            user_id=int(page_user["id"]),
-        ))
-        if page_id == "predict":
+            context["analysis_result"] = analysis_payload
+            context.update(
+                _task_context(
+                    analysis_payload.get("remote_fetch"),
+                    refresh_url=_analysis_url(active_text, limit, offset, effective_source, sort, module_code, refresh=True),
+                )
+            )
+            # 保存分析到历史记录
+            existing_history_id = _save_case_history_if_possible(
+                request,
+                query_text=active_text,
+                module_code=module_code,
+                result_payload=analysis_payload,
+            )
+            context["history_id"] = existing_history_id
+            context["analysis_view"] = _sanitize_history_display(_build_analysis_view_payload(
+                query_text=active_text,
+                module_code=module_code,
+                result_payload=analysis_payload,
+                history_id=existing_history_id,
+                user_id=int(page_user["id"]),
+            ))
+        else:
+            prediction_payload = _sanitize_prediction_payload(
+                predict_legal_outcome(
+                text=active_text,
+                limit=limit,
+                offset=offset,
+                source=effective_source,
+                sort=sort,
+                module=module_code,
+                refresh=refresh,
+                analysis_result=history_analysis_seed,
+                ),
+                module_code,
+            )
+            context["prediction_result"] = prediction_payload
+            context["analysis_result"] = prediction_payload
+            context.update(
+                _task_context(
+                    prediction_payload.get("remote_fetch"),
+                    refresh_url=_predict_url(active_text, limit, offset, effective_source, sort, module_code, refresh=True),
+                )
+            )
+            context["history_id"] = _save_case_history_if_possible(
+                request,
+                query_text=active_text,
+                module_code=module_code,
+                result_payload=prediction_payload,
+            )
+            context["analysis_view"] = _sanitize_history_display(_build_analysis_view_payload(
+                query_text=active_text,
+                module_code=module_code,
+                result_payload=prediction_payload,
+                history_id=context["history_id"],
+                user_id=int(page_user["id"]),
+            ))
             context["prediction_result"] = prediction_payload
         _remember_query(
             request,
@@ -1677,6 +1977,102 @@ def api_archive_status(request: Request):
     return get_archive_status()
 
 
+@router.get("/api/data-readiness")
+def api_data_readiness(request: Request):
+    require_user(request)
+    return get_source_quality_snapshot()
+
+
+@router.get("/api/rag/status")
+def api_rag_status(request: Request):
+    require_user(request)
+    return get_rag_status()
+
+
+@router.get("/api/rag/search")
+def api_rag_search(
+    request: Request,
+    query: str = Query(...),
+    module: str = Query("canada"),
+    source: str = Query("all"),
+    limit: int = Query(8),
+):
+    require_user(request)
+    return rag_search(query, module=normalize_module(module), source_filter=source, limit=limit)
+
+
+@router.get("/api/rag/vector-search")
+def api_rag_vector_search(
+    request: Request,
+    query: str = Query(...),
+    module: str = Query("canada"),
+    source: str = Query("all"),
+    limit: int = Query(8),
+):
+    require_user(request)
+    return vector_search(query, module=normalize_module(module), source_filter=source, limit=limit)
+
+
+@router.get("/api/rag/hybrid-search")
+def api_rag_hybrid_search(
+    request: Request,
+    query: str = Query(...),
+    module: str = Query("canada"),
+    source: str = Query("all"),
+    limit: int = Query(8),
+):
+    require_user(request)
+    return hybrid_search(query, module=normalize_module(module), source_filter=source, limit=limit)
+
+
+@router.post("/api/rag/rebuild")
+def api_rag_rebuild(
+    request: Request,
+    source: str = Query("all"),
+    limit: int | None = Query(None),
+):
+    require_admin(request)
+    return rebuild_rag_index(source_filter=source, limit=limit)
+
+
+@router.get("/api/rag/vector-status")
+def api_rag_vector_status(request: Request):
+    require_user(request)
+    return get_vector_status()
+
+
+@router.post("/api/rag/rebuild-vectors")
+def api_rag_rebuild_vectors(
+    request: Request,
+    source: str = Query("all"),
+    module: str = Query("canada"),
+    limit: int | None = Query(None),
+):
+    require_admin(request)
+    return rebuild_chunk_embeddings(source_filter=source, limit=limit, module=normalize_module(module))
+
+
+@router.post("/api/rag/rebuild-hybrid")
+def api_rag_rebuild_hybrid(
+    request: Request,
+    source: str = Query("all"),
+    module: str = Query("canada"),
+    limit: int | None = Query(None),
+):
+    require_admin(request)
+    return rebuild_hybrid_index(source_filter=source, limit=limit, module=normalize_module(module))
+
+
+@router.post("/api/rag/export")
+def api_rag_export(
+    request: Request,
+    source: str = Query("all"),
+    limit: int | None = Query(None),
+):
+    require_admin(request)
+    return export_rag_chunks(source_filter=source, limit=limit)
+
+
 @router.post("/api/archive/export")
 def api_archive_export(request: Request, source: str = Query("all")):
     require_admin(request)
@@ -1843,6 +2239,7 @@ def histories_page(
     country: str = Query(""),
     court_level: str = Query(""),
     legal_type: str = Query(""),
+    page: int = Query(1),
 ):
     user = _require_page_user(
         request,
@@ -1850,18 +2247,39 @@ def histories_page(
     )
     if isinstance(user, RedirectResponse):
         return user
+
+    page_size = 20
+    current_page = max(1, page)
+    offset = (current_page - 1) * page_size
+
+    total_count = count_user_histories(
+        user_id=int(user["id"]),
+        query_type=query_type,
+        case_type=case_type,
+        country=country,
+        court_level=court_level,
+        legal_type=legal_type,
+    )
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    if current_page > total_pages:
+        current_page = total_pages
+        offset = (current_page - 1) * page_size
+
+    histories = list_user_histories(
+        user_id=int(user["id"]),
+        query_type=query_type,
+        case_type=case_type,
+        country=country,
+        court_level=court_level,
+        legal_type=legal_type,
+        limit=page_size,
+        offset=offset,
+    )
+
     context = _base_context(request, "histories")
     context.update(
         {
-            "histories": list_user_histories(
-                user_id=int(user["id"]),
-                query_type=query_type,
-                case_type=case_type,
-                country=country,
-                court_level=court_level,
-                legal_type=legal_type,
-                limit=100,
-            ),
+            "histories": [_sanitize_history_display(build_history_display_payload(item)) for item in histories],
             "filters": {
                 "query_type": query_type,
                 "case_type": case_type,
@@ -1869,9 +2287,16 @@ def histories_page(
                 "court_level": court_level,
                 "legal_type": legal_type,
             },
+            "pagination": {
+                "current_page": current_page,
+                "total_pages": total_pages,
+                "total_count": total_count,
+                "page_size": page_size,
+                "has_prev": current_page > 1,
+                "has_next": current_page < total_pages,
+            },
         }
     )
-    context["histories"] = [_sanitize_history_display(build_history_display_payload(item)) for item in context["histories"]]
     return _cache_safe_template("histories.html", context)
 
 
@@ -2274,8 +2699,7 @@ def api_analyze(request: Request, payload: AnalyzePayload):
         if existing_history_id and existing_history_item:
             existing_history_item["history_id"] = existing_history_id
             return existing_history_item
-    result = _sanitize_prediction_payload(
-        predict_legal_outcome(
+    result = analyze_sentence_search(
         text=payload.text,
         limit=payload.limit,
         offset=payload.offset,
@@ -2283,8 +2707,8 @@ def api_analyze(request: Request, payload: AnalyzePayload):
         sort=payload.sort,
         module=module_code,
         refresh=payload.refresh,
-        ),
-        module_code,
+        origin_page="analyze",
+        local_only=False,
     )
     history_id = _save_case_history_if_possible(
         request,
@@ -2449,6 +2873,42 @@ def api_case_rule_relations(
     return list_case_rule_relations(case_id=case_id, rule_id=rule_id, limit=500)
 
 
+class VotePayload(BaseModel):
+    vote_type: str
+    reason: str = ""
+
+
+@router.post("/api/cases/{case_id}/vote")
+def api_case_vote(request: Request, case_id: int, payload: VotePayload):
+    user = require_user(request)
+    result = upsert_case_vote(
+        case_id=case_id,
+        user_id=int(user["id"]),
+        vote_type=payload.vote_type,
+        reason=payload.reason,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "vote failed"))
+    votes = get_case_votes(case_id)
+    return {"status": "ok", "votes": votes, "my_vote": payload.vote_type}
+
+
+@router.delete("/api/cases/{case_id}/vote")
+def api_case_delete_vote(request: Request, case_id: int):
+    user = require_user(request)
+    delete_case_vote(case_id=case_id, user_id=int(user["id"]))
+    votes = get_case_votes(case_id)
+    return {"status": "deleted", "votes": votes}
+
+
+@router.get("/api/cases/{case_id}/votes")
+def api_case_get_votes(request: Request, case_id: int):
+    require_user(request)
+    votes = get_case_votes(case_id)
+    details = get_case_vote_details(case_id)
+    return {"votes": votes, "details": details}
+
+
 @router.get("/api/admin/users")
 def api_admin_users(request: Request):
     require_admin(request)
@@ -2575,3 +3035,68 @@ def api_admin_crawler_run(request: Request):
 def api_admin_import_tasks(request: Request):
     require_admin(request)
     return list_import_tasks(limit=300)
+
+
+# 数据源管理API
+@router.get("/api/data-sources")
+def api_data_sources(request: Request):
+    """获取所有可用的数据源"""
+    require_user(request)
+    from app.service.data_source_service import get_source_status
+    return get_source_status()
+
+
+@router.post("/api/data-sources/legislation")
+def api_update_legislation_source(request: Request, source_type: str = Query(...)):
+    """更新法规数据源"""
+    require_admin(request)
+    from app.service.data_source_service import update_legislation_source
+    success = update_legislation_source(source_type)
+    if not success:
+        raise HTTPException(status_code=400, detail="Invalid source type or missing configuration")
+    return {"status": "updated", "source_type": source_type}
+
+
+@router.post("/api/data-sources/case")
+def api_update_case_source(request: Request, source_type: str = Query(...)):
+    """更新案例数据源"""
+    require_admin(request)
+    from app.service.data_source_service import update_case_source
+    success = update_case_source(source_type)
+    if not success:
+        raise HTTPException(status_code=400, detail="Invalid source type or missing configuration")
+    return {"status": "updated", "source_type": source_type}
+
+
+# 加拿大数据同步API
+@router.post("/api/sync/canada-data")
+def api_sync_canada_data(request: Request):
+    """同步加拿大数据"""
+    require_admin(request)
+    from app.service.canada_data_service import sync_canada_data
+    return sync_canada_data()
+
+
+@router.get("/api/canada-data/stats")
+def api_canada_data_stats(request: Request):
+    """获取加拿大数据统计"""
+    require_user(request)
+    from app.service.canada_data_service import get_canada_data_stats
+    return get_canada_data_stats()
+
+
+# 关系分析API
+@router.post("/api/relations/analyze")
+def api_analyze_relations(request: Request):
+    """分析所有案例与法规的关系"""
+    require_admin(request)
+    from app.service.relation_analysis_service import analyze_all_cases
+    return analyze_all_cases()
+
+
+@router.get("/api/relations/stats")
+def api_relation_stats(request: Request):
+    """获取关系统计"""
+    require_user(request)
+    from app.service.relation_analysis_service import get_relation_stats
+    return get_relation_stats()

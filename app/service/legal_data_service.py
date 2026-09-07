@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import threading
 import time
@@ -12,11 +14,13 @@ from bs4 import BeautifulSoup
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.core.database import engine
+from app.core.database import engine, is_sqlite
 from app.service.canada_case_law_service import bootstrap_canada_law_graph
 from app.service.canada_legislation_service import sync_canada_legislation_demo
 from app.service.canlii_service import sync_canlii_demo
 from app.service.common_service import plain_text_preview, repair_text, sha256_text, split_keywords, upsert_source_item
+from app.service.legal_relevance_service import apply_case_law_relevance
+from app.service.legal_relation_ranking_service import rank_case_rule_relation
 
 CANADA_CASE_SOURCE_CODES = {"canlii", "manual_canada_case", "url_canada_case"}
 CANADA_RULE_SOURCE_CODES = {
@@ -38,35 +42,52 @@ _CANADA_SYNC_THREAD: threading.Thread | None = None
 _CANADA_SYNC_THREAD_LOCK = threading.Lock()
 
 
+def _sql_in_clause(column: str, values, params: dict, prefix: str) -> str:
+    clean_values = list(values or [])
+    if not clean_values:
+        clean_values = [-1]
+    if is_sqlite():
+        placeholders = []
+        for index, value in enumerate(clean_values):
+            key = f"{prefix}_{index}"
+            params[key] = value
+            placeholders.append(f":{key}")
+        return f"{column} IN ({', '.join(placeholders)})"
+    params[prefix] = clean_values
+    return f"{column} = ANY(:{prefix})"
+
+
 def ensure_legal_data_tables():
-    statements = [
-        """
-        CREATE TABLE IF NOT EXISTS legal_cases (
-            id BIGSERIAL PRIMARY KEY,
-            title TEXT NOT NULL,
-            country TEXT NOT NULL DEFAULT '',
-            court_name TEXT NOT NULL DEFAULT '',
-            court_level TEXT NOT NULL DEFAULT '',
-            court_rank INTEGER NOT NULL DEFAULT 0,
-            case_type TEXT NOT NULL DEFAULT '',
-            summary TEXT NOT NULL DEFAULT '',
-            facts TEXT NOT NULL DEFAULT '',
-            judgment_result TEXT NOT NULL DEFAULT '',
-            judgment_date DATE NULL,
-            source_url TEXT NOT NULL DEFAULT '',
-            source_site TEXT NOT NULL DEFAULT '',
-            raw_text TEXT NOT NULL DEFAULT '',
-            source_item_id BIGINT NULL,
-            source_code VARCHAR(50) NOT NULL DEFAULT '',
-            external_uid TEXT NOT NULL DEFAULT '',
-            normalized_title TEXT NOT NULL DEFAULT '',
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_cases_source_item_full
-        ON legal_cases (source_item_id)
+    from app.core.database import is_sqlite
+    if is_sqlite():
+        statements = [
+            """
+            CREATE TABLE IF NOT EXISTS legal_cases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                country TEXT NOT NULL DEFAULT '',
+                court_name TEXT NOT NULL DEFAULT '',
+                court_level TEXT NOT NULL DEFAULT '',
+                court_rank INTEGER NOT NULL DEFAULT 0,
+                case_type TEXT NOT NULL DEFAULT '',
+                summary TEXT NOT NULL DEFAULT '',
+                facts TEXT NOT NULL DEFAULT '',
+                judgment_result TEXT NOT NULL DEFAULT '',
+                judgment_date DATE NULL,
+                source_url TEXT NOT NULL DEFAULT '',
+                source_site TEXT NOT NULL DEFAULT '',
+                raw_text TEXT NOT NULL DEFAULT '',
+                source_item_id BIGINT NULL,
+                source_code VARCHAR(50) NOT NULL DEFAULT '',
+                external_uid TEXT NOT NULL DEFAULT '',
+                normalized_title TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_cases_source_item_full
+            ON legal_cases (source_item_id)
         """,
         """
         CREATE INDEX IF NOT EXISTS idx_legal_cases_country_level
@@ -178,6 +199,22 @@ def ensure_legal_data_tables():
         ON import_tasks (created_at DESC)
         """,
         """
+        CREATE TABLE IF NOT EXISTS case_votes (
+            id BIGSERIAL PRIMARY KEY,
+            case_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            vote_type VARCHAR(10) NOT NULL CHECK (vote_type IN ('upvote', 'downvote')),
+            reason TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(case_id, user_id)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_case_votes_case
+        ON case_votes (case_id, vote_type)
+        """,
+        """
         CREATE TABLE IF NOT EXISTS app_runtime_state (
             state_key VARCHAR(120) PRIMARY KEY,
             state_json JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -185,6 +222,169 @@ def ensure_legal_data_tables():
         )
         """,
     ]
+    else:
+        statements = [
+            """
+            CREATE TABLE IF NOT EXISTS legal_cases (
+                id BIGSERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                country TEXT NOT NULL DEFAULT '',
+                court_name TEXT NOT NULL DEFAULT '',
+                court_level TEXT NOT NULL DEFAULT '',
+                court_rank INTEGER NOT NULL DEFAULT 0,
+                case_type TEXT NOT NULL DEFAULT '',
+                summary TEXT NOT NULL DEFAULT '',
+                facts TEXT NOT NULL DEFAULT '',
+                judgment_result TEXT NOT NULL DEFAULT '',
+                judgment_date DATE NULL,
+                source_url TEXT NOT NULL DEFAULT '',
+                source_site TEXT NOT NULL DEFAULT '',
+                raw_text TEXT NOT NULL DEFAULT '',
+                source_item_id BIGINT NULL,
+                source_code VARCHAR(50) NOT NULL DEFAULT '',
+                external_uid TEXT NOT NULL DEFAULT '',
+                normalized_title TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_cases_source_item_full
+            ON legal_cases (source_item_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_legal_cases_country_level
+            ON legal_cases (country, court_rank DESC, updated_at DESC)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_legal_cases_normalized_title
+            ON legal_cases (normalized_title)
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_cases_source_url
+            ON legal_cases (LOWER(source_url))
+            WHERE COALESCE(source_url, '') <> ''
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_cases_identity
+            ON legal_cases (country, normalized_title, court_name, judgment_date)
+            WHERE COALESCE(normalized_title, '') <> ''
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS legal_rules (
+                id BIGSERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                country TEXT NOT NULL DEFAULT '',
+                legal_type TEXT NOT NULL DEFAULT '',
+                article_no TEXT NOT NULL DEFAULT '',
+                article_text TEXT NOT NULL DEFAULT '',
+                article_summary TEXT NOT NULL DEFAULT '',
+                source_url TEXT NOT NULL DEFAULT '',
+                source_site TEXT NOT NULL DEFAULT '',
+                source_item_id BIGINT NULL,
+                canada_law_id BIGINT NULL,
+                normalized_title TEXT NOT NULL DEFAULT '',
+                slug VARCHAR(240) NOT NULL DEFAULT '',
+                rule_level TEXT NOT NULL DEFAULT '',
+                citation TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_rules_source_item_full
+            ON legal_rules (source_item_id)
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_rules_canada_law_full
+            ON legal_rules (canada_law_id)
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_rules_slug
+            ON legal_rules (slug)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_legal_rules_normalized_title
+            ON legal_rules (normalized_title)
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_rules_source_url
+            ON legal_rules (LOWER(source_url))
+            WHERE COALESCE(source_url, '') <> ''
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_legal_rules_identity
+            ON legal_rules (country, normalized_title, article_no)
+            WHERE COALESCE(normalized_title, '') <> ''
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS case_rule_relations (
+                id BIGSERIAL PRIMARY KEY,
+                case_id BIGINT NOT NULL REFERENCES legal_cases(id) ON DELETE CASCADE,
+                rule_id BIGINT NOT NULL REFERENCES legal_rules(id) ON DELETE CASCADE,
+                relation_type TEXT NOT NULL DEFAULT '',
+                match_score NUMERIC(6, 4) NOT NULL DEFAULT 0,
+                match_reason TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_case_rule_relations_pair
+            ON case_rule_relations (case_id, rule_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_case_rule_relations_rule
+            ON case_rule_relations (rule_id, match_score DESC)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_case_rule_relations_case
+            ON case_rule_relations (case_id, match_score DESC)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS import_tasks (
+                id BIGSERIAL PRIMARY KEY,
+                created_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+                import_type VARCHAR(30) NOT NULL,
+                country TEXT NOT NULL DEFAULT '',
+                source_url TEXT NOT NULL DEFAULT '',
+                status VARCHAR(30) NOT NULL DEFAULT 'queued',
+                total_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                fail_count INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT NOT NULL DEFAULT '',
+                payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_import_tasks_created
+            ON import_tasks (created_at DESC)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS case_votes (
+                id BIGSERIAL PRIMARY KEY,
+                case_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                vote_type VARCHAR(10) NOT NULL CHECK (vote_type IN ('upvote', 'downvote')),
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(case_id, user_id)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_case_votes_case
+            ON case_votes (case_id, vote_type)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS app_runtime_state (
+                state_key VARCHAR(120) PRIMARY KEY,
+                state_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+        ]
     with engine.begin() as conn:
         for statement in statements:
             conn.execute(text(statement))
@@ -229,23 +429,22 @@ def _save_runtime_state(state_key: str, payload: dict):
 
 
 def _current_canada_source_signature() -> dict:
-    sql = """
+    params = {}
+    case_clause = _sql_in_clause("source_code", sorted(CANADA_CASE_SOURCE_CODES), params, "case_codes")
+    rule_clause = _sql_in_clause("source_code", sorted(CANADA_RULE_SOURCE_CODES), params, "rule_codes")
+    updated_case_expr = "COALESCE(MAX(updated_at), '')" if is_sqlite() else "COALESCE(MAX(updated_at)::text, '')"
+    updated_rule_expr = "COALESCE(MAX(updated_at), '')" if is_sqlite() else "COALESCE(MAX(updated_at)::text, '')"
+    sql = f"""
     SELECT
-        (SELECT COUNT(*) FROM source_items WHERE source_code = ANY(:case_codes)) AS case_source_count,
-        (SELECT COALESCE(MAX(id), 0) FROM source_items WHERE source_code = ANY(:case_codes)) AS case_source_max_id,
-        (SELECT COALESCE(MAX(updated_at)::text, '') FROM source_items WHERE source_code = ANY(:case_codes)) AS case_source_max_updated_at,
-        (SELECT COUNT(*) FROM source_items WHERE source_code = ANY(:rule_codes)) AS rule_source_count,
-        (SELECT COALESCE(MAX(id), 0) FROM source_items WHERE source_code = ANY(:rule_codes)) AS rule_source_max_id,
-        (SELECT COALESCE(MAX(updated_at)::text, '') FROM source_items WHERE source_code = ANY(:rule_codes)) AS rule_source_max_updated_at
+        (SELECT COUNT(*) FROM source_items WHERE {case_clause}) AS case_source_count,
+        (SELECT COALESCE(MAX(id), 0) FROM source_items WHERE {case_clause}) AS case_source_max_id,
+        (SELECT {updated_case_expr} FROM source_items WHERE {case_clause}) AS case_source_max_updated_at,
+        (SELECT COUNT(*) FROM source_items WHERE {rule_clause}) AS rule_source_count,
+        (SELECT COALESCE(MAX(id), 0) FROM source_items WHERE {rule_clause}) AS rule_source_max_id,
+        (SELECT {updated_rule_expr} FROM source_items WHERE {rule_clause}) AS rule_source_max_updated_at
     """
     with engine.connect() as conn:
-        row = conn.execute(
-            text(sql),
-            {
-                "case_codes": sorted(CANADA_CASE_SOURCE_CODES),
-                "rule_codes": sorted(CANADA_RULE_SOURCE_CODES),
-            },
-        ).mappings().first()
+        row = conn.execute(text(sql), params).mappings().first()
     payload = dict(row or {})
     return {
         "case_source_count": int(payload.get("case_source_count") or 0),
@@ -862,7 +1061,9 @@ def _normalize_title(value: str) -> str:
 
 
 def _fetch_canada_source_cases() -> list[dict]:
-    sql = """
+    params = {}
+    source_clause = _sql_in_clause("source_code", CANADA_CASE_SOURCE_CODES, params, "source_codes")
+    sql = f"""
     SELECT
         id,
         source_code,
@@ -876,11 +1077,11 @@ def _fetch_canada_source_cases() -> list[dict]:
         created_at,
         updated_at
     FROM source_items
-    WHERE source_code = ANY(:source_codes)
+    WHERE {source_clause}
     ORDER BY updated_at DESC, id DESC
     """
     with engine.connect() as conn:
-        rows = conn.execute(text(sql), {"source_codes": list(CANADA_CASE_SOURCE_CODES)}).mappings().all()
+        rows = conn.execute(text(sql), params).mappings().all()
     return [dict(row) for row in rows]
 
 
@@ -1307,6 +1508,9 @@ def _sync_canada_case_rule_relations():
                 reason = f"Matched by {repair_text(row.get('match_source'))}: {reason}"
             else:
                 reason = repair_text(row.get("match_source"))
+            evidence_excerpt = plain_text_preview(row.get("evidence_excerpt"))[:500]
+            if evidence_excerpt and evidence_excerpt not in reason:
+                reason = f"{reason}；证据片段：{evidence_excerpt}" if reason else f"证据片段：{evidence_excerpt}"
             conn.execute(
                 text(
                     """
@@ -1406,11 +1610,10 @@ def schedule_canada_legal_data_sync(force: bool = False) -> dict:
 
 
 def _fetch_case_rule_matches(case_source_item_ids: list[int], rule_source_item_ids: list[int]) -> list[dict]:
-    params = {
-        "case_source_item_ids": case_source_item_ids or [-1],
-        "rule_source_item_ids": rule_source_item_ids or [-1],
-    }
-    sql = """
+    params = {}
+    case_source_clause = _sql_in_clause("lc.source_item_id", case_source_item_ids or [-1], params, "case_source_item_ids")
+    rule_source_clause = _sql_in_clause("lr.source_item_id", rule_source_item_ids or [-1], params, "rule_source_item_ids")
+    sql = f"""
     SELECT
         lc.id AS case_id,
         lc.title AS case_title,
@@ -1421,6 +1624,7 @@ def _fetch_case_rule_matches(case_source_item_ids: list[int], rule_source_item_i
         lc.case_type,
         lc.summary AS case_summary,
         lc.facts AS case_facts,
+        lc.raw_text AS case_raw_text,
         lc.judgment_result,
         lc.judgment_date,
         lc.source_url AS case_source_url,
@@ -1445,8 +1649,8 @@ def _fetch_case_rule_matches(case_source_item_ids: list[int], rule_source_item_i
     JOIN legal_rules lr ON lr.id = crr.rule_id
     WHERE lc.country = 'Canada'
       AND (
-            lc.source_item_id = ANY(:case_source_item_ids)
-         OR lr.source_item_id = ANY(:rule_source_item_ids)
+            {case_source_clause}
+         OR {rule_source_clause}
       )
     ORDER BY crr.match_score DESC, lc.court_rank DESC, lc.judgment_date DESC NULLS LAST, lc.id DESC
     """
@@ -1455,23 +1659,31 @@ def _fetch_case_rule_matches(case_source_item_ids: list[int], rule_source_item_i
     return [dict(row) for row in rows]
 
 
-def _keyword_match_score(keywords: list[str], *parts: str) -> int:
+def _keyword_match_score(keywords: list[str], *parts: str, original_keywords: list[str] | None = None) -> int:
     haystack = " ".join(repair_text(part).lower() for part in parts if repair_text(part))
+    title_lower = repair_text(parts[0] if parts else "").lower()
     score = 0
+    # 原始关键词（未扩展）给更高权重
+    original_set = {repair_text(kw).lower() for kw in (original_keywords or []) if repair_text(kw)}
     for keyword in keywords or []:
         normalized = repair_text(keyword).lower()
         if not normalized:
             continue
         if normalized in haystack:
-            score += 3 if normalized in repair_text(parts[0] if parts else "").lower() else 1
+            if normalized in original_set:
+                # 原始关键词匹配给更高权重
+                score += 10 if normalized in title_lower else 5
+            else:
+                score += 3 if normalized in title_lower else 1
     return score
 
 
-def _keyword_only_relevant_laws(keywords: list[str], limit: int = 8) -> list[dict]:
+def _keyword_only_relevant_laws(keywords: list[str], limit: int = 8, original_keywords: list[str] | None = None) -> list[dict]:
     normalized_keywords = [repair_text(item) for item in keywords or [] if repair_text(item)]
     if not normalized_keywords:
         return []
-    rows = list_rules(country="Canada", limit=500)
+    # 不按country过滤，因为有些法规的country是省份名(如Ontario)
+    rows = list_rules(limit=500)
     scored = []
     for row in rows:
         score = _keyword_match_score(
@@ -1480,6 +1692,7 @@ def _keyword_only_relevant_laws(keywords: list[str], limit: int = 8) -> list[dic
             row.get("article_no"),
             row.get("article_summary"),
             row.get("article_text"),
+            original_keywords=original_keywords,
         )
         if score <= 0:
             continue
@@ -1507,6 +1720,7 @@ def _keyword_only_relevant_laws(keywords: list[str], limit: int = 8) -> list[dic
                 "source_url": repair_text(row.get("source_url")),
                 "detail_url": f"/law/canada/{repair_text(row.get('slug'))}" if repair_text(row.get("slug")) else "",
                 "rule_level": repair_text(row.get("rule_level") or row.get("legal_type") or ""),
+                "keyword_score": int(row.get("keyword_score") or 0),
                 "linked_case_count": int(row.get("related_case_count") or 0),
                 "national_case_count": 0,
                 "local_case_count": 0,
@@ -1526,6 +1740,9 @@ _CANADA_KEYWORD_ALIAS_GROUPS = [
     (("行政", "处罚", "许可", "复议", "审查", "administrative", "tribunal", "judicial review"), ("administrative", "tribunal", "judicial review", "licence", "penalty")),
     (("刑事", "诈骗", "洗钱", "量刑", "定罪", "criminal", "fraud", "offence", "sentencing"), ("criminal", "fraud", "offence", "sentencing", "prosecution")),
     (("消费者", "消费", "误导", "质量", "consumer", "unfair practice"), ("consumer", "consumer protection", "unfair practice", "misrepresentation")),
+    (("房产", "地产", "不动产", "买卖", "中介", "披露", "real estate", "property", "conveyancing", "disclosure", "agent", "realtor"), ("real estate", "property", "conveyancing", "land titles", "disclosure", "misrepresentation", "agent liability", "vendor", "purchaser")),
+    (("信托", "fiduciary", "trust", "trustee"), ("trust", "fiduciary", "trustee", "beneficiary", "estate")),
+    (("遗嘱", "继承", "遗产", "will", "estate", "succession", "inheritance"), ("will", "estate", "succession", "inheritance", "beneficiary", "probate")),
 ]
 
 
@@ -1606,7 +1823,7 @@ def _keyword_relation_rows(keywords: list[str], limit_cases: int = 12) -> list[d
     rows = _fetch_canada_case_rule_corpus()
     scored_rows = []
     for row in rows:
-        score = _keyword_match_score(
+        lexical_score = _keyword_match_score(
             expanded_keywords,
             row.get("case_title"),
             row.get("case_summary"),
@@ -1618,15 +1835,25 @@ def _keyword_relation_rows(keywords: list[str], limit_cases: int = 12) -> list[d
             row.get("article_summary"),
             row.get("article_text"),
             row.get("match_reason"),
+            row.get("evidence_excerpt"),
+            original_keywords=keywords,
         )
-        if score <= 0:
+        rank = rank_case_rule_relation(row, expanded_keywords, original_keywords=keywords)
+        if float(rank.get("rank_score") or 0) <= 0:
             continue
         item = dict(row)
-        item["_keyword_score"] = score
+        item["_keyword_score"] = max(min(float(lexical_score), 24.0), float(rank.get("keyword_score") or 0))
+        item["_relation_rank_score"] = float(rank.get("rank_score") or 0)
+        item["evidence_excerpt"] = repair_text(item.get("evidence_excerpt")) or rank.get("evidence_excerpt", "")
+        rank_reason = repair_text(rank.get("match_reason"))
+        existing_reason = repair_text(item.get("match_reason"))
+        if rank_reason and rank_reason not in existing_reason:
+            item["match_reason"] = f"{existing_reason}；{rank_reason}" if existing_reason else rank_reason
         scored_rows.append(item)
     scored_rows.sort(
         key=lambda item: (
-            int(item.get("_keyword_score") or 0),
+            float(item.get("_relation_rank_score") or 0),
+            float(item.get("_keyword_score") or 0),
             float(item.get("match_score") or 0),
             int(item.get("court_rank") or 0),
             item.get("judgment_date") or "",
@@ -1643,23 +1870,89 @@ def _keyword_relation_rows(keywords: list[str], limit_cases: int = 12) -> list[d
     return relation_rows
 
 
+def _fetch_direct_case_law_links(case_source_item_ids: list[int]) -> list[dict]:
+    """直接从 canada_case_law_links 获取关联，转换为 legal_cases/legal_rules ID 空间"""
+    if not case_source_item_ids:
+        return []
+    params = {}
+    case_clause = _sql_in_clause("cl.case_item_id", case_source_item_ids, params, "case_ids")
+    sql = f"""
+    SELECT
+        lc.id AS case_id,
+        lc.title AS case_title,
+        lc.country AS case_country,
+        lc.court_name,
+        lc.court_level,
+        lc.court_rank,
+        lc.case_type,
+        lc.summary AS case_summary,
+        lc.facts AS case_facts,
+        lc.raw_text AS case_raw_text,
+        lc.judgment_result,
+        lc.judgment_date,
+        lc.source_url AS case_source_url,
+        lc.source_site AS case_source_site,
+        lc.source_item_id AS case_source_item_id,
+        lr.id AS rule_id,
+        lr.title AS rule_title,
+        lr.country AS rule_country,
+        lr.legal_type,
+        lr.article_no,
+        lr.article_text,
+        lr.article_summary,
+        lr.source_url AS rule_source_url,
+        lr.source_site AS rule_source_site,
+        lr.slug,
+        lr.rule_level,
+        cl.matched_alias,
+        cl.match_source AS relation_type,
+        cl.match_score,
+        cl.evidence_excerpt
+    FROM canada_case_law_links cl
+    JOIN source_items si ON si.id = cl.case_item_id
+    JOIN canada_laws cl_law ON cl_law.id = cl.law_id
+    JOIN legal_cases lc ON lc.source_item_id = cl.case_item_id
+    JOIN legal_rules lr ON lr.canada_law_id = cl.law_id
+    WHERE {case_clause}
+    ORDER BY cl.match_score DESC
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql), params).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def build_canada_case_rule_packet(result_rows: list[dict], refresh: bool = False, keywords: list[str] | None = None) -> dict:
     ensure_legal_data_tables()
     if refresh:
         sync_canada_legal_data(force=True)
     expanded_keywords = _expand_canada_keywords(keywords or [])
-    keyword_rows = _keyword_relation_rows(expanded_keywords)
+    keyword_rows = _keyword_relation_rows(keywords or [])
     case_source_ids = [
         int(row["id"])
         for row in result_rows
-        if row.get("source_code") in CANADA_CASE_SOURCE_CODES and row.get("id") is not None
+        if row.get("source_code") in CANADA_CASE_SOURCE_CODES
+        and row.get("id") is not None
+        and str(row["id"]).isdigit()
     ]
     rule_source_ids = [
         int(row["id"])
         for row in result_rows
-        if row.get("source_code") in CANADA_RULE_SOURCE_CODES and row.get("id") is not None
+        if row.get("source_code") in CANADA_RULE_SOURCE_CODES
+        and row.get("id") is not None
+        and str(row["id"]).isdigit()
     ]
     relation_rows = _fetch_case_rule_matches(case_source_ids, rule_source_ids)
+
+    # 如果 case_rule_relations 数据不足，直接从 canada_case_law_links 补充
+    if len(relation_rows) < 10 and case_source_ids:
+        extra_rows = _fetch_direct_case_law_links(case_source_ids)
+        if extra_rows:
+            seen_keys = {(int(r.get("case_id") or 0), int(r.get("rule_id") or 0)) for r in relation_rows}
+            for row in extra_rows:
+                key = (int(row.get("case_id") or 0), int(row.get("rule_id") or 0))
+                if key not in seen_keys and key != (0, 0):
+                    relation_rows.append(row)
+                    seen_keys.add(key)
     if keyword_rows:
         merged_rows: dict[tuple[int, int], dict] = {}
         for row in relation_rows + keyword_rows:
@@ -1680,7 +1973,11 @@ def build_canada_case_rule_packet(result_rows: list[dict], refresh: bool = False
     elif not relation_rows:
         relation_rows = keyword_rows
     if not relation_rows:
-        return {"relevant_laws": _keyword_only_relevant_laws(expanded_keywords), "case_law_rows": []}
+        # 即使没有关联行，也用 keyword_rows 构建案例-法规关系
+        if keyword_rows:
+            relation_rows = keyword_rows
+        else:
+            return {"relevant_laws": _keyword_only_relevant_laws(expanded_keywords, original_keywords=keywords), "case_law_rows": []}
 
     cases: dict[int, dict] = {}
     law_stats: dict[int, dict[str, Any]] = {}
@@ -1688,6 +1985,10 @@ def build_canada_case_rule_packet(result_rows: list[dict], refresh: bool = False
     for row in relation_rows:
         case_id = int(row["case_id"])
         rule_id = int(row["rule_id"])
+        row_reason = repair_text(row.get("match_reason"))
+        if not row_reason and repair_text(row.get("matched_alias")):
+            match_source = repair_text(row.get("relation_type") or row.get("match_source") or "direct_mention")
+            row_reason = f"Matched by {match_source}: {repair_text(row.get('matched_alias'))}"
         case_entry = cases.setdefault(
             case_id,
             {
@@ -1700,24 +2001,31 @@ def build_canada_case_rule_packet(result_rows: list[dict], refresh: bool = False
                 "case_type": repair_text(row.get("case_type") or "Case"),
                 "summary": repair_text(row.get("case_summary")),
                 "facts": repair_text(row.get("case_facts")),
+                "raw_text": repair_text(row.get("case_raw_text")),
                 "judgment_result": repair_text(row.get("judgment_result")),
                 "judgment_date": str(row.get("judgment_date") or "")[:10],
                 "source_url": repair_text(row.get("case_source_url")),
                 "source_site": repair_text(row.get("case_source_site")),
                 "match_score": 0.0,
                 "keyword_score": 0.0,
+                "relation_rank_score": 0.0,
                 "match_reason": "",
+                "evidence_excerpt": "",
                 "scope": "",
                 "rules": [],
             },
         )
         score = float(row.get("match_score") or 0)
         keyword_score = float(row.get("_keyword_score") or 0)
+        relation_rank_score = float(row.get("_relation_rank_score") or 0)
         if score >= float(case_entry.get("match_score") or 0):
             case_entry["match_score"] = score
-            case_entry["match_reason"] = repair_text(row.get("match_reason"))
+            case_entry["match_reason"] = row_reason
+            case_entry["evidence_excerpt"] = repair_text(row.get("evidence_excerpt"))
         if keyword_score >= float(case_entry.get("keyword_score") or 0):
             case_entry["keyword_score"] = keyword_score
+        if relation_rank_score >= float(case_entry.get("relation_rank_score") or 0):
+            case_entry["relation_rank_score"] = relation_rank_score
 
         scope = _case_scope(case_entry)
         case_entry["scope"] = scope
@@ -1734,7 +2042,9 @@ def build_canada_case_rule_packet(result_rows: list[dict], refresh: bool = False
             "slug": repair_text(row.get("slug")),
             "rule_level": repair_text(row.get("rule_level")),
             "match_score": score,
-            "match_reason": repair_text(row.get("match_reason")),
+            "match_reason": row_reason,
+            "evidence_excerpt": repair_text(row.get("evidence_excerpt")),
+            "relation_rank_score": relation_rank_score,
             "detail_url": f"/law/canada/{repair_text(row.get('slug'))}",
         }
         if all(existing["rule_id"] != rule_id for existing in case_entry["rules"]):
@@ -1782,6 +2092,12 @@ def build_canada_case_rule_packet(result_rows: list[dict], refresh: bool = False
             elif scope == "provincial_local":
                 stats["local_case_count"] += 1
 
+    for case_id, case_entry in list(cases.items()):
+        cases[case_id] = apply_case_law_relevance(
+            case_entry,
+            keywords=expanded_keywords,
+        )
+
     # linked_case_count should count unique cases per rule
     unique_rule_cases: dict[int, set[int]] = defaultdict(set)
     for case in cases.values():
@@ -1814,23 +2130,180 @@ def build_canada_case_rule_packet(result_rows: list[dict], refresh: bool = False
     case_rows = sorted(
         cases.values(),
         key=lambda item: (
-            float(item.get("keyword_score") or 0),
             float(item.get("match_score") or 0),
+            float(item.get("keyword_score") or 0),
             int(item.get("court_rank") or 0),
             item.get("judgment_date") or "",
         ),
         reverse=True,
     )
+
+    def _sync_related_case_relevance():
+        case_by_id = {int(case.get("case_id") or 0): case for case in case_rows}
+        for law in law_stats.values():
+            for related in law.get("related_cases") or []:
+                case = case_by_id.get(int(related.get("case_id") or 0))
+                if not case:
+                    continue
+                related["match_score"] = case.get("match_score")
+                related["raw_match_score"] = case.get("raw_match_score")
+                related["relevance_score"] = case.get("relevance_score")
+                related["relevance_label"] = case.get("relevance_label")
+                related["relevance_level"] = case.get("relevance_level")
+                related["relevance_highlights"] = case.get("relevance_highlights") or []
+            for column in law.get("case_columns") or []:
+                for related in column.get("items") or []:
+                    case = case_by_id.get(int(related.get("case_id") or 0))
+                    if not case:
+                        continue
+                    related["match_score"] = case.get("match_score")
+                    related["raw_match_score"] = case.get("raw_match_score")
+                    related["relevance_score"] = case.get("relevance_score")
+                    related["relevance_label"] = case.get("relevance_label")
+                    related["relevance_level"] = case.get("relevance_level")
+                    related["relevance_highlights"] = case.get("relevance_highlights") or []
+
+    _sync_related_case_relevance()
+    # 计算法规标题与搜索关键词的相关性
+    # 主要法律概念(出现在关键词列表前面的)给更高权重
+    primary_keywords = set()
+    secondary_keywords = set()
+    for i, kw in enumerate(expanded_keywords or []):
+        kw_lower = kw.lower()
+        if i < 5:  # 前5个是主要关键词
+            primary_keywords.add(kw_lower)
+        else:
+            secondary_keywords.add(kw_lower)
+
+    # 第一个关键词是最重要的法律概念
+    first_keyword = (expanded_keywords[0].lower() if expanded_keywords else "")
+    # 原始关键词（未扩展）用于精确匹配
+    original_keywords = [kw.lower() for kw in (keywords or [])]
+
+    def _law_relevance_score(law):
+        title_lower = (law.get("title") or "").lower()
+        keyword_score = float(law.get("keyword_score") or 0)
+        case_count = int(law.get("linked_case_count") or 0)
+        # 标题中包含搜索关键词的法规得分更高
+        title_bonus = 0
+        # 原始关键词匹配给最高权重
+        for kw in original_keywords:
+            if kw in title_lower:
+                title_bonus += 50
+        for kw in primary_keywords:
+            if kw in title_lower:
+                title_bonus += 15
+        for kw in secondary_keywords:
+            if kw in title_lower:
+                title_bonus += 5
+        # 第一个关键词(最重要的法律概念)在标题中出现，额外加30分
+        if first_keyword and first_keyword in title_lower:
+            title_bonus += 30
+        return (title_bonus + keyword_score, case_count, int(law.get("national_case_count") or 0))
+
     relevant_laws = sorted(
         law_stats.values(),
-        key=lambda item: (
-            float(item.get("keyword_score") or 0),
-            int(item.get("linked_case_count") or 0),
-            int(item.get("national_case_count") or 0),
-            item.get("title", "").lower(),
-        ),
+        key=_law_relevance_score,
         reverse=True,
     )
+
+    # 补充关键词匹配的法规 (即使没有案例关联)
+    existing_rule_ids = {int(law.get("rule_id") or 0) for law in relevant_laws}
+    keyword_laws = _keyword_only_relevant_laws(expanded_keywords, limit=20, original_keywords=keywords)
+    for law in keyword_laws:
+        rule_id = int(law.get("rule_id") or 0)
+        if rule_id and rule_id not in existing_rule_ids:
+            law["linked_case_count"] = 0
+            law["national_case_count"] = 0
+            law["local_case_count"] = 0
+            law["related_cases"] = []
+            law["case_columns"] = [
+                {"key": "national_federal", "label": "国家 / 联邦法院", "items": []},
+                {"key": "provincial_local", "label": "省级 / 地方法院", "items": []},
+            ]
+            relevant_laws.append(law)
+            existing_rule_ids.add(rule_id)
+
+    # 将 case_law_rows 中的案例关联到对应法规
+    case_law_rows = list(cases.values())
+    law_by_id = {int(law.get("rule_id") or 0): law for law in relevant_laws if law.get("rule_id")}
+    for case in case_law_rows:
+        for rule in case.get("rules", []):
+            rule_id = int(rule.get("rule_id") or 0)
+            law = law_by_id.get(rule_id)
+            if not law:
+                continue
+            case_id = int(case.get("case_id") or 0)
+            case_key = case_id or repair_text(case.get("title")).lower()
+            existing_case_keys = {c.get("case_id") or repair_text(c.get("title")).lower() for c in law.get("related_cases", [])}
+            if case_key not in existing_case_keys:
+                case_summary = repair_text(case.get("summary") or case.get("facts"))
+                scope = case.get("scope", "")
+                law["related_cases"].append({
+                    "case_id": case_id,
+                    "title": repair_text(case.get("title")),
+                    "court_level": repair_text(case.get("court_level")),
+                    "court_rank": int(case.get("court_rank") or 0),
+                    "case_type": repair_text(case.get("case_type")),
+                    "judgment_date": str(case.get("judgment_date") or "")[:10],
+                    "summary": plain_text_preview(case_summary)[:120],
+                    "source_url": repair_text(case.get("source_url")),
+                    "scope": scope,
+                    "match_score": case.get("match_score"),
+                    "raw_match_score": case.get("raw_match_score"),
+                    "relevance_score": case.get("relevance_score"),
+                    "relevance_label": case.get("relevance_label"),
+                    "relevance_level": case.get("relevance_level"),
+                    "relevance_highlights": case.get("relevance_highlights") or [],
+                    "evidence_excerpt": repair_text(case.get("evidence_excerpt")),
+                })
+                law["linked_case_count"] = int(law.get("linked_case_count") or 0) + 1
+                if scope == "national_federal":
+                    law["national_case_count"] = int(law.get("national_case_count") or 0) + 1
+                elif scope == "provincial_local":
+                    law["local_case_count"] = int(law.get("local_case_count") or 0) + 1
+            # 更新 case_columns
+            for col in law.get("case_columns", []):
+                if col.get("key") == scope:
+                    existing_ids = {c.get("case_id") for c in col.get("items", [])}
+                    if case_id not in existing_ids:
+                        col["items"].append({
+                            "case_id": case_id,
+                            "title": repair_text(case.get("title")),
+                            "court_level": repair_text(case.get("court_level")),
+                            "court_rank": int(case.get("court_rank") or 0),
+                            "case_type": repair_text(case.get("case_type")),
+                            "judgment_date": str(case.get("judgment_date") or "")[:10],
+                            "summary": plain_text_preview(case.get("summary") or case.get("facts"))[:120],
+                            "source_url": repair_text(case.get("source_url")),
+                            "scope": scope,
+                            "match_score": case.get("match_score"),
+                            "raw_match_score": case.get("raw_match_score"),
+                            "relevance_score": case.get("relevance_score"),
+                            "relevance_label": case.get("relevance_label"),
+                            "relevance_level": case.get("relevance_level"),
+                            "relevance_highlights": case.get("relevance_highlights") or [],
+                            "evidence_excerpt": repair_text(case.get("evidence_excerpt")),
+                        })
+
+    # 重新排序，确保关键词匹配的法规也在正确位置
+    relevant_laws = sorted(
+        relevant_laws,
+        key=_law_relevance_score,
+        reverse=True,
+    )
+
+    # 去重: 同名法规只保留得分最高的
+    seen_titles: set[str] = set()
+    deduplicated_laws: list[dict] = []
+    for law in relevant_laws:
+        title_key = (law.get("title") or "").lower().strip()
+        if not title_key or title_key in seen_titles:
+            continue
+        seen_titles.add(title_key)
+        deduplicated_laws.append(law)
+    relevant_laws = deduplicated_laws
+
     return {"relevant_laws": relevant_laws, "case_law_rows": case_rows}
 
 
@@ -1860,6 +2333,7 @@ def get_canada_rule_detail_packet(rule_slug: str) -> dict | None:
                 JOIN legal_cases lc ON lc.id = crr.case_id
                 WHERE crr.rule_id = :rule_id
                 ORDER BY lc.court_rank DESC, crr.match_score DESC, lc.judgment_date DESC NULLS LAST
+                LIMIT 50
                 """
             ),
             {"rule_id": int(rule["id"])},
@@ -2582,3 +3056,119 @@ def run_canada_crawler_import(created_by: int | None = None) -> dict:
     except Exception as exc:
         _finish_import_task(task_id, status="failed", total_count=1, success_count=0, fail_count=1, error_message=str(exc))
         raise
+
+
+# ============================================================
+# Case Voting System
+# ============================================================
+
+def upsert_case_vote(*, case_id: int, user_id: int, vote_type: str, reason: str = "") -> dict:
+    """Create or update a vote on a case."""
+    if vote_type not in ("upvote", "downvote"):
+        return {"ok": False, "error": "vote_type must be 'upvote' or 'downvote'"}
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO case_votes (case_id, user_id, vote_type, reason, created_at, updated_at)
+                VALUES (:case_id, :user_id, :vote_type, :reason, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (case_id, user_id)
+                DO UPDATE SET vote_type = :vote_type, reason = :reason, updated_at = CURRENT_TIMESTAMP
+            """),
+            {"case_id": case_id, "user_id": user_id, "vote_type": vote_type, "reason": reason},
+        )
+    return {"ok": True, "case_id": case_id, "vote_type": vote_type}
+
+
+def delete_case_vote(*, case_id: int, user_id: int) -> bool:
+    """Remove a user's vote on a case."""
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("DELETE FROM case_votes WHERE case_id = :case_id AND user_id = :user_id"),
+            {"case_id": case_id, "user_id": user_id},
+        )
+        return result.rowcount > 0
+
+
+def get_case_votes(case_id: int) -> dict:
+    """Get vote summary for a case."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT vote_type, COUNT(*) AS cnt
+                FROM case_votes
+                WHERE case_id = :case_id
+                GROUP BY vote_type
+            """),
+            {"case_id": case_id},
+        ).mappings().all()
+    upvotes = 0
+    downvotes = 0
+    for row in rows:
+        if row["vote_type"] == "upvote":
+            upvotes = int(row["cnt"])
+        else:
+            downvotes = int(row["cnt"])
+    return {"case_id": case_id, "upvotes": upvotes, "downvotes": downvotes, "score": upvotes - downvotes}
+
+
+def get_case_vote_details(case_id: int) -> list[dict]:
+    """Get all votes with reasons for a case."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT cv.vote_type, cv.reason, cv.created_at, cv.user_id,
+                       COALESCE(u.username, '') AS username
+                FROM case_votes cv
+                LEFT JOIN users u ON u.id = cv.user_id
+                WHERE cv.case_id = :case_id
+                ORDER BY cv.created_at DESC
+            """),
+            {"case_id": case_id},
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def get_user_votes_for_cases(user_id: int, case_ids: list[int]) -> dict[int, str]:
+    """Get a user's votes for multiple cases (returns case_id -> vote_type)."""
+    if not case_ids:
+        return {}
+    params = {"user_id": user_id}
+    case_clause = _sql_in_clause("case_id", case_ids, params, "case_ids")
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(f"""
+                SELECT case_id, vote_type
+                FROM case_votes
+                WHERE user_id = :user_id AND {case_clause}
+            """),
+            params,
+        ).mappings().all()
+    return {int(row["case_id"]): row["vote_type"] for row in rows}
+
+
+def get_bulk_case_votes(case_ids: list[int]) -> dict[int, dict]:
+    """Get vote summaries for multiple cases."""
+    if not case_ids:
+        return {}
+    params = {}
+    case_clause = _sql_in_clause("case_id", case_ids, params, "case_ids")
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(f"""
+                SELECT case_id, vote_type, COUNT(*) AS cnt
+                FROM case_votes
+                WHERE {case_clause}
+                GROUP BY case_id, vote_type
+            """),
+            params,
+        ).mappings().all()
+    result: dict[int, dict] = {cid: {"upvotes": 0, "downvotes": 0, "score": 0} for cid in case_ids}
+    for row in rows:
+        cid = int(row["case_id"])
+        if row["vote_type"] == "upvote":
+            result[cid]["upvotes"] = int(row["cnt"])
+        else:
+            result[cid]["downvotes"] = int(row["cnt"])
+    for cid in result:
+        result[cid]["score"] = result[cid]["upvotes"] - result[cid]["downvotes"]
+    return result

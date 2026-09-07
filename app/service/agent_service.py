@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import json
 import re
@@ -10,6 +12,10 @@ from app.core.database import engine, fetch_all
 from app.service.analysis_service import analyze_sentence_search
 from app.service.bilingual_service import build_bilingual_prediction_pack
 from app.service.common_service import plain_text_preview, repair_text
+from app.service.evidence_quality_service import (
+    apply_evidence_quality_guard,
+    build_prediction_evidence_quality,
+)
 from app.service.llm_service import (
     LLMServiceError,
     create_structured_response,
@@ -61,6 +67,42 @@ CASE_COMPARISON_SCHEMA = {
         }
     },
     "required": ["comparisons"],
+    "additionalProperties": False,
+}
+
+ARGUMENTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "supporting": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "point": {"type": "string"},
+                    "citation": {"type": "string"},
+                    "strength": {"type": "string", "enum": ["strong", "moderate", "weak"]},
+                },
+                "required": ["point"],
+                "additionalProperties": False,
+            },
+            "maxItems": 5,
+        },
+        "opposing": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "point": {"type": "string"},
+                    "citation": {"type": "string"},
+                    "strength": {"type": "string", "enum": ["strong", "moderate", "weak"]},
+                },
+                "required": ["point"],
+                "additionalProperties": False,
+            },
+            "maxItems": 5,
+        },
+    },
+    "required": ["supporting", "opposing"],
     "additionalProperties": False,
 }
 
@@ -411,10 +453,55 @@ def _build_supporting_case_groups(module_packet: dict, limit_laws: int = 4, case
                     "scope": repair_text(merged_case.get("scope")),
                     "scope_label": _support_scope_label(merged_case.get("scope")),
                     "match_score": _safe_float(merged_case.get("match_score")),
+                    "raw_match_score": _safe_float(merged_case.get("raw_match_score")),
+                    "relevance_score": _safe_float(merged_case.get("relevance_score") or merged_case.get("match_score")),
+                    "relevance_label": repair_text(merged_case.get("relevance_label")),
+                    "relevance_level": repair_text(merged_case.get("relevance_level")),
+                    "relevance_highlights": merged_case.get("relevance_highlights") or [],
                     "match_reason": repair_text(merged_case.get("match_reason")),
                     "linked_law_titles": linked_law_titles,
                 }
             )
+
+        if not cases:
+            law_title = repair_text(law.get("title"))
+            for module_case in packet.get("case_law_rows", []) or []:
+                linked_rules = module_case.get("rules") or []
+                if linked_rules:
+                    matches_law = any(
+                        (_safe_int(rule.get("rule_id")) and _safe_int(rule.get("rule_id")) == law_id)
+                        or (law_title and repair_text(rule.get("title")) == law_title)
+                        for rule in linked_rules
+                    )
+                    if not matches_law:
+                        continue
+                case_id = _safe_int(module_case.get("case_id"))
+                case_title = repair_text(module_case.get("title"))
+                case_key = case_id or repair_text(module_case.get("external_id") or module_case.get("id")).lower() or case_title.lower()
+                if not case_key or case_key in seen_cases:
+                    continue
+                seen_cases.add(case_key)
+                linked_law_titles = _compact_text_list(
+                    [rule.get("title") for rule in linked_rules],
+                    limit=4,
+                ) or _compact_text_list([law_title], limit=1)
+                cases.append(
+                    {
+                        "case_id": case_id,
+                        "title": case_title,
+                        "court_level": repair_text(module_case.get("court_level")),
+                        "court_rank": _safe_int(module_case.get("court_rank")),
+                        "case_type": repair_text(module_case.get("case_type")),
+                        "judgment_date": str(module_case.get("judgment_date") or "")[:10],
+                        "summary": _safe_excerpt(module_case.get("summary") or module_case.get("facts") or "", limit=150),
+                        "source_url": repair_text(module_case.get("source_url")),
+                        "scope": repair_text(module_case.get("scope")),
+                        "scope_label": _support_scope_label(module_case.get("scope")),
+                        "match_score": _safe_float(module_case.get("match_score")),
+                        "match_reason": repair_text(module_case.get("match_reason")),
+                        "linked_law_titles": linked_law_titles,
+                    }
+                )
 
         if not cases:
             continue
@@ -481,6 +568,133 @@ def _build_precedent_packets_from_module_packet(module_packet: dict, limit: int 
             }
         )
     return packets
+
+
+def _prediction_case_limit(requested_limit: int, module_packet: dict) -> int:
+    case_count = len((module_packet or {}).get("case_law_rows", []) or [])
+    try:
+        requested = int(requested_limit or 0)
+    except (TypeError, ValueError):
+        requested = 0
+    if case_count <= 0:
+        return max(3, min(requested or 8, 12))
+    return max(3, min(max(requested, case_count), 20))
+
+
+def _prediction_case_rows_for_model(precedents: list[dict], limit: int = 12) -> list[dict]:
+    rows = []
+    for precedent in precedents[:limit]:
+        rows.append(
+            {
+                "title": repair_text(precedent.get("title")),
+                "summary": _safe_excerpt(precedent.get("summary") or "", limit=260),
+                "court_level": repair_text(precedent.get("court_level")),
+                "case_type": repair_text(precedent.get("case_type")),
+                "published_at": repair_text(precedent.get("published_at")),
+                "match_reason": repair_text(precedent.get("match_reason")),
+                "law_titles": _compact_text_list(precedent.get("law_titles"), limit=4),
+                "similarities": _compact_text_list(precedent.get("similarities"), limit=3),
+                "differences": _compact_text_list(precedent.get("differences"), limit=3),
+            }
+        )
+    return rows
+
+
+def _law_case_groups_for_model(groups: list[dict], limit_groups: int = 6, limit_cases: int = 6) -> list[dict]:
+    rows = []
+    for group in groups[:limit_groups]:
+        rows.append(
+            {
+                "law_title": repair_text(group.get("title")),
+                "article_no": repair_text(group.get("article_no")),
+                "article_summary": _safe_excerpt(group.get("article_summary") or "", limit=220),
+                "relevance_score": _safe_float(group.get("relevance_score")),
+                "cases": [
+                    {
+                        "title": repair_text(case.get("title")),
+                        "summary": _safe_excerpt(case.get("summary") or "", limit=220),
+                        "court_level": repair_text(case.get("court_level")),
+                        "case_type": repair_text(case.get("case_type")),
+                        "judgment_date": repair_text(case.get("judgment_date")),
+                        "match_reason": repair_text(case.get("match_reason")),
+                        "match_score": _safe_float(case.get("match_score")),
+                    }
+                    for case in (group.get("cases") or [])[:limit_cases]
+                ],
+            }
+        )
+    return rows
+
+
+def _build_prediction_evidence(module_packet: dict, groups: list[dict], precedents: list[dict]) -> dict:
+    case_rows = []
+    seen_cases = set()
+    for group in groups or []:
+        law_title = repair_text(group.get("title"))
+        for case in group.get("cases") or []:
+            case_id = _safe_int(case.get("case_id"))
+            case_title_key = repair_text(case.get("title")).lower()
+            case_key = f"id:{case_id}" if case_id else f"title:{case_title_key}"
+            if not case_title_key or case_key in seen_cases or f"title:{case_title_key}" in seen_cases:
+                continue
+            seen_cases.add(case_key)
+            seen_cases.add(f"title:{case_title_key}")
+            case_rows.append(
+                {
+                    "case_id": case_id,
+                    "title": repair_text(case.get("title")),
+                    "summary": repair_text(case.get("summary")),
+                    "court_level": repair_text(case.get("court_level")),
+                    "case_type": repair_text(case.get("case_type")),
+                    "judgment_date": repair_text(case.get("judgment_date")),
+                    "source_url": repair_text(case.get("source_url")),
+                    "match_reason": repair_text(case.get("match_reason")),
+                    "match_score": _safe_float(case.get("match_score")),
+                    "raw_match_score": _safe_float(case.get("raw_match_score")),
+                    "relevance_score": _safe_float(case.get("relevance_score") or case.get("match_score")),
+                    "relevance_label": repair_text(case.get("relevance_label")),
+                    "relevance_level": repair_text(case.get("relevance_level")),
+                    "relevance_highlights": case.get("relevance_highlights") or [],
+                    "law_titles": _compact_text_list([law_title] + (case.get("linked_law_titles") or []), limit=4),
+                }
+            )
+
+    for precedent in precedents or []:
+        case_title_key = repair_text(precedent.get("title")).lower()
+        case_key = f"title:{case_title_key}"
+        if not case_key or case_key in seen_cases:
+            continue
+        seen_cases.add(case_key)
+        case_rows.append(
+            {
+                "case_id": 0,
+                "title": repair_text(precedent.get("title")),
+                "summary": repair_text(precedent.get("summary")),
+                "court_level": repair_text(precedent.get("court_level")),
+                "case_type": repair_text(precedent.get("case_type")),
+                "judgment_date": repair_text(precedent.get("published_at")),
+                "source_url": repair_text(precedent.get("source_url") or precedent.get("url")),
+                "match_reason": repair_text(precedent.get("match_reason")),
+                "match_score": 0,
+                "raw_match_score": _safe_float(precedent.get("raw_match_score")),
+                "relevance_score": _safe_float(precedent.get("relevance_score") or precedent.get("match_score")),
+                "relevance_label": repair_text(precedent.get("relevance_label")),
+                "relevance_level": repair_text(precedent.get("relevance_level")),
+                "relevance_highlights": precedent.get("relevance_highlights") or [],
+                "law_titles": _compact_text_list(precedent.get("law_titles"), limit=4),
+                "similarities": _compact_text_list(precedent.get("similarities"), limit=3),
+                "differences": _compact_text_list(precedent.get("differences"), limit=3),
+            }
+        )
+
+    return {
+        "source": "analysis_result",
+        "law_count": len((module_packet or {}).get("relevant_laws", []) or []),
+        "case_count": len(case_rows),
+        "laws": _law_reference_rows(module_packet, limit=8),
+        "cases": case_rows,
+        "law_case_groups": _law_case_groups_for_model(groups, limit_groups=6, limit_cases=6),
+    }
 
 
 def _build_heuristic_case_comparisons(intake_outline: dict, precedents: list[dict]) -> list[dict]:
@@ -923,6 +1137,12 @@ def _build_supporting_case_groups(
         case_id = _safe_int(case.get("case_id"))
         if case_id:
             case_lookup[case_id] = dict(case)
+        title_key = repair_text(case.get("title")).lower()
+        if title_key:
+            case_lookup[f"title:{title_key}"] = dict(case)
+        external_key = repair_text(case.get("external_id") or case.get("id")).lower()
+        if external_key:
+            case_lookup[f"external:{external_key}"] = dict(case)
 
     normalized_terms = _compact_text_list(reference_terms or [], limit=12)
     weak_tokens = {
@@ -953,9 +1173,15 @@ def _build_supporting_case_groups(
         for raw_case in _flatten_related_cases(dict(law)):
             case_id = _safe_int(raw_case.get("case_id"))
             full_case = dict(case_lookup.get(case_id) or {})
+            if not full_case:
+                title_key = repair_text(raw_case.get("title")).lower()
+                full_case = dict(case_lookup.get(f"title:{title_key}") or {})
+            if not full_case:
+                external_key = repair_text(raw_case.get("external_id") or raw_case.get("id")).lower()
+                full_case = dict(case_lookup.get(f"external:{external_key}") or {})
             merged_case = {**raw_case, **full_case}
             case_title = repair_text(merged_case.get("title"))
-            case_key = case_id or case_title.lower()
+            case_key = case_id or repair_text(merged_case.get("external_id") or merged_case.get("id")).lower() or case_title.lower()
             if not case_key or case_key in seen_cases:
                 continue
             seen_cases.add(case_key)
@@ -1082,6 +1308,115 @@ def _count_supporting_cases(precedents: list[dict], groups: list[dict]) -> int:
         if key:
             seen.add(key)
     return len(seen)
+
+
+def _token_overlap_ratio(text_a: str, text_b: str) -> float:
+    """计算两段文本的词元重叠比例"""
+    tokens_a = _tokenize_text(text_a)
+    tokens_b = _tokenize_text(text_b)
+    if not tokens_a or not tokens_b:
+        return 0.0
+    overlap = tokens_a & tokens_b
+    return len(overlap) / min(len(tokens_a), len(tokens_b))
+
+
+def _postprocess_prediction(prediction: dict, input_text: str, analysis: dict) -> dict:
+    """后处理: 过滤模型输出中的无用重复内容"""
+    if not prediction or prediction.get("status") != "model":
+        return prediction
+
+    reasoning = repair_text(prediction.get("reasoning") or "")
+    input_clean = repair_text(input_text)
+
+    # 1. 检测 reasoning 是否只是复述输入
+    overlap = _token_overlap_ratio(reasoning, input_clean)
+    if overlap > 0.6 and len(reasoning) > 50:
+        # reasoning 和输入重叠太多，替换为结构化摘要
+        issues = analysis.get("disputed_issues") or analysis.get("claims") or []
+        topics = analysis.get("legal_topics") or []
+        laws = analysis.get("search_keywords") or []
+        parts = []
+        if issues:
+            parts.append(f"争议焦点: {'、'.join(issues[:3])}")
+        if topics:
+            parts.append(f"法律领域: {'、'.join(topics[:3])}")
+        if laws:
+            parts.append(f"关键法规: {'、'.join(laws[:3])}")
+        if parts:
+            prediction["reasoning"] = "；".join(parts) + "。需结合具体证据和判例做进一步分析。"
+            prediction["reasoning_filtered"] = True
+
+    # 2. 清理 key_factors 中的纯输入复述
+    key_factors = prediction.get("key_factors") or []
+    filtered_factors = []
+    for factor in key_factors:
+        factor_text = repair_text(factor)
+        if not factor_text:
+            continue
+        # 跳过和输入高度重复的因素
+        if _token_overlap_ratio(factor_text, input_clean) > 0.5:
+            continue
+        # 跳过过于泛化的因素
+        if factor_text.lower() in {"the facts", "the evidence", "the case", "the law"}:
+            continue
+        filtered_factors.append(factor_text)
+    if filtered_factors and len(filtered_factors) < len(key_factors):
+        prediction["key_factors"] = filtered_factors[:6]
+
+    # 3. 清理 caveats 中的模板废话
+    caveats = prediction.get("caveats") or []
+    filtered_caveats = []
+    skip_phrases = {"this is not legal advice", "consult a lawyer", "this is for demonstration"}
+    for caveat in caveats:
+        caveat_text = repair_text(caveat).lower()
+        if any(phrase in caveat_text for phrase in skip_phrases):
+            continue
+        filtered_caveats.append(repair_text(caveat))
+    if filtered_caveats:
+        prediction["caveats"] = filtered_caveats[:4]
+
+    # 4. 确保 predicted_outcome 不是空话
+    outcome = repair_text(prediction.get("predicted_outcome") or "")
+    if len(outcome) < 20 or _token_overlap_ratio(outcome, input_clean) > 0.7:
+        if filtered_factors:
+            prediction["predicted_outcome"] = (
+                f"基于已检索的法规和案例，主要争议集中在{'、'.join(filtered_factors[:2])}，"
+                f"最终结论需结合具体证据和法院裁判标准进一步判断。"
+            )
+
+    return prediction
+
+
+def _reliable_min_support_items() -> int:
+    return max(0, int(getattr(settings, "reliable_min_support_items", 1)))
+
+
+def _reliable_answer_mode() -> bool:
+    return bool(getattr(settings, "reliable_answer_mode", True))
+
+
+def _has_enough_prediction_evidence(precedents: list[dict], groups: list[dict]) -> bool:
+    if not _reliable_answer_mode():
+        return True
+    return _count_supporting_cases(precedents, groups) >= _reliable_min_support_items()
+
+
+def _data_readiness_allows_prediction(analysis_result: dict) -> bool:
+    if not _reliable_answer_mode():
+        return True
+    readiness = analysis_result.get("data_readiness") or {}
+    status = readiness.get("status")
+    # Allow prediction for both "ready" and "partial" status
+    # "insufficient" will still block prediction
+    return status in ("ready", "partial")
+
+
+def _insufficient_evidence_message(min_items: int) -> str:
+    return (
+        "The system found too little local legal authority to support a reliable outcome prediction. "
+        f"At least {min_items} supporting case item(s) are required in reliable mode. "
+        "Import more authorized data or broaden the query before asking the model for a conclusion."
+    )
 
 
 def _build_heuristic_case_comparisons(intake_outline: dict, precedents: list[dict]) -> list[dict]:
@@ -1285,10 +1620,11 @@ def _build_local_reasoned_prediction(analysis_result: dict, precedents: list[dic
         intake_outline.get("keywords", []),
         analysis.get("legal_topics", []),
     )[:10]
+    case_limit = max(len(precedents), _prediction_case_limit(len(precedents), module_packet))
     support_groups = _build_supporting_case_groups(
         module_packet,
-        limit_laws=4,
-        cases_per_law=3,
+        limit_laws=max(4, min(len(module_packet.get("relevant_laws", []) or []), 8)),
+        cases_per_law=max(3, min(case_limit, 8)),
         reference_terms=reference_terms,
     )
 
@@ -1303,13 +1639,24 @@ def _build_local_reasoned_prediction(analysis_result: dict, precedents: list[dic
     support_titles = _derive_supporting_case_titles(precedents, support_groups, limit=5)
     support_lines = _support_group_lines(support_groups, limit_groups=3, limit_cases=2)
 
+    # 计算置信度：基于可用数据的质量
     base_confidence = 0.4
+    # 法规匹配提升置信度
     base_confidence += 0.08 if law_titles else 0
+    # 案例分组提升置信度
     base_confidence += 0.08 if support_groups else 0
+    # 争议焦点明确提升置信度
     base_confidence += 0.06 if issues else 0
+    # 请求事项明确提升置信度
     base_confidence += 0.04 if requested_relief else 0
+    # 支撑案例提升置信度
     base_confidence += 0.04 if support_titles else 0
-    confidence = max(0.32, min(round(base_confidence, 2), 0.78))
+    # CanLII实时数据提升置信度
+    canlii_realtime = analysis_result.get("canlii_realtime") or {}
+    if canlii_realtime.get("count", 0) > 0:
+        base_confidence += 0.05
+    # 确保置信度在合理范围内（0.3 - 0.8）
+    confidence = max(0.3, min(round(base_confidence, 2), 0.8))
 
     if module_code == "us_sanctions":
         predicted_outcome = (
@@ -1370,6 +1717,171 @@ def _build_local_reasoned_prediction(analysis_result: dict, precedents: list[dic
     }
 
 
+def _build_local_arguments(
+    analysis_result: dict,
+    prediction: dict,
+    precedents: list[dict],
+) -> dict:
+    """
+    基于现有数据生成本地支持/反对论点。
+    """
+    analysis = analysis_result.get("analysis", {}) or {}
+    intake_outline = analysis_result.get("intake_outline", {}) or {}
+    supporting_case_groups = prediction.get("supporting_case_groups", [])
+    linked_laws = prediction.get("linked_laws", [])
+    risk_points = prediction.get("risk_points", [])
+    caveats = prediction.get("caveats", [])
+    reason_points = prediction.get("reason_points", [])
+
+    supporting_args = []
+    opposing_args = []
+
+    # 生成支持论点
+    # 1. 从支撑案例分组中提取支持论点
+    for group in supporting_case_groups[:3]:
+        law_title = repair_text(group.get("title", ""))
+        cases = group.get("cases", [])
+        if law_title and cases:
+            case_titles = [repair_text(c.get("title", "")) for c in cases[:2]]
+            supporting_args.append({
+                "point": f"相关案例支持适用{law_title}",
+                "citation": "、".join(case_titles) if case_titles else "",
+                "strength": "strong" if len(cases) >= 2 else "moderate",
+            })
+
+    # 2. 从关联法规中提取支持论点
+    for law in linked_laws[:2]:
+        law_title = repair_text(law.get("title", ""))
+        if law_title:
+            supporting_args.append({
+                "point": f"本案涉及{law_title}的适用",
+                "citation": law_title,
+                "strength": "strong",
+            })
+
+    # 3. 从事实和争议焦点中提取支持论点
+    disputed_issues = intake_outline.get("disputed_issues", [])
+    if disputed_issues:
+        supporting_args.append({
+            "point": f"争议焦点明确：{'、'.join(disputed_issues[:2])}",
+            "citation": "",
+            "strength": "moderate",
+        })
+
+    # 4. 从推理要点中提取支持论点
+    for point in reason_points[:2]:
+        if "法规锚点" in point or "案例对照" in point:
+            supporting_args.append({
+                "point": point,
+                "citation": "",
+                "strength": "moderate",
+            })
+
+    # 生成反对论点
+    # 1. 从风险点中提取反对论点
+    for risk in risk_points[:3]:
+        opposing_args.append({
+            "point": f"风险提示：{risk}",
+            "citation": "",
+            "strength": "strong" if "关键" in risk or "重要" in risk else "moderate",
+        })
+
+    # 2. 从注意事项中提取反对论点
+    for caveat in caveats[:2]:
+        opposing_args.append({
+            "point": caveat,
+            "citation": "",
+            "strength": "weak",
+        })
+
+    # 3. 从案例差异中提取反对论点
+    for precedent in precedents[:2]:
+        differences = precedent.get("differences", [])
+        if differences:
+            opposing_args.append({
+                "point": f"与案例{repair_text(precedent.get('title', ''))}存在差异：{differences[0]}",
+                "citation": repair_text(precedent.get("title", "")),
+                "strength": "moderate",
+            })
+
+    # 确保至少有一些基本论点
+    if not supporting_args:
+        supporting_args.append({
+            "point": "系统已检索到相关法规和案例供参考",
+            "citation": "",
+            "strength": "weak",
+        })
+
+    if not opposing_args:
+        opposing_args.append({
+            "point": "当前分析基于有限信息，可能需要进一步核实",
+            "citation": "",
+            "strength": "weak",
+        })
+
+    return {
+        "supporting": supporting_args[:5],
+        "opposing": opposing_args[:5],
+    }
+
+
+def _build_llm_arguments(
+    analysis_result: dict,
+    prediction: dict,
+    precedents: list[dict],
+) -> dict:
+    """
+    调用 LLM 生成支持/反对论点。
+    """
+    if not is_llm_configured():
+        return _build_local_arguments(analysis_result, prediction, precedents)
+
+    instructions = (
+        "你是一位法律分析专家。基于给定的案情分析、预测结果和相关案例，"
+        "生成结构化的支持论点和反对论点。\n\n"
+        "要求：\n"
+        "1. 每个论点必须有明确的法律依据或事实支撑\n"
+        "2. 引用具体的案例或法规作为支撑\n"
+        "3. 区分论点的强度（strong/moderate/weak）\n"
+        "4. 支持论点和反对论点各生成 3-5 个\n"
+        "5. 使用中文输出"
+    )
+
+    user_input = json.dumps({
+        "case_facts": analysis_result.get("intake_outline", {}).get("facts", ""),
+        "disputed_issues": analysis_result.get("intake_outline", {}).get("disputed_issues", []),
+        "requested_relief": analysis_result.get("intake_outline", {}).get("requested_relief", ""),
+        "prediction": {
+            "outcome": prediction.get("predicted_outcome", ""),
+            "reasoning": prediction.get("reasoning", ""),
+            "confidence": prediction.get("confidence", 0),
+        },
+        "supporting_cases": [
+            {"title": group.get("title", ""), "cases": [c.get("title", "") for c in group.get("cases", [])[:2]]}
+            for group in prediction.get("supporting_case_groups", [])[:3]
+        ],
+        "linked_laws": [law.get("title", "") for law in prediction.get("linked_laws", [])[:3]],
+        "risk_points": prediction.get("risk_points", []),
+        "caveats": prediction.get("caveats", []),
+    }, ensure_ascii=False)
+
+    try:
+        response = create_structured_response(
+            schema_name="legal_arguments",
+            schema=ARGUMENTS_SCHEMA,
+            instructions=instructions,
+            user_input=user_input,
+        )
+        result = response.get("data", {})
+        # 验证结果结构
+        if "supporting" in result and "opposing" in result:
+            return result
+        else:
+            return _build_local_arguments(analysis_result, prediction, precedents)
+    except Exception:
+        return _build_local_arguments(analysis_result, prediction, precedents)
+
+
 def _decorate_prediction(
     analysis_result: dict,
     prediction: dict,
@@ -1414,6 +1926,11 @@ def _decorate_prediction(
     prediction["linked_laws"] = linked_laws
     prediction["supporting_case_groups"] = supporting_case_groups
     prediction["supporting_case_titles"] = supporting_case_titles
+    prediction["prediction_evidence"] = _build_prediction_evidence(
+        module_packet,
+        supporting_case_groups,
+        precedents,
+    )
     prediction["reason_points"] = _merge_unique_strings(
         prediction.get("key_factors", []),
         intake_outline.get("disputed_issues", []),
@@ -1432,6 +1949,33 @@ def _decorate_prediction(
     prediction["disputed_issues"] = intake_outline.get("disputed_issues", [])
     prediction["keywords"] = intake_outline.get("keywords", [])
     prediction["support_case_count"] = _count_supporting_cases(precedents, supporting_case_groups)
+    min_support_items = _reliable_min_support_items()
+    has_enough_evidence = prediction["support_case_count"] >= min_support_items
+    prediction["evidence_status"] = "sufficient" if has_enough_evidence else "insufficient"
+    prediction["reliable_answer_mode"] = _reliable_answer_mode()
+    prediction["minimum_support_items"] = min_support_items
+    prediction["reliability_warnings"] = []
+    if _reliable_answer_mode() and not has_enough_evidence:
+        max_confidence = max(0.0, min(float(getattr(settings, "reliable_max_confidence_without_cases", 0.25)), 1.0))
+        prediction["confidence"] = min(prediction["confidence"], max_confidence)
+        prediction["confidence_percent"] = int(round(prediction["confidence"] * 100))
+        prediction["reliability_warnings"].append(_insufficient_evidence_message(min_support_items))
+    readiness = analysis_result.get("data_readiness") or {}
+    prediction["data_readiness"] = readiness
+    if _reliable_answer_mode() and readiness.get("status") and readiness.get("status") != "ready":
+        max_confidence = max(0.0, min(float(readiness.get("max_recommended_confidence") or 0.25), 1.0))
+        prediction["confidence"] = min(prediction["confidence"], max_confidence)
+        prediction["confidence_percent"] = int(round(prediction["confidence"] * 100))
+        prediction["evidence_status"] = "insufficient"
+        prediction["reliability_warnings"].extend(readiness.get("warnings") or [])
+    evidence_quality = build_prediction_evidence_quality(
+        analysis_result=analysis_result,
+        prediction=prediction,
+        module_packet=module_packet,
+        supporting_case_groups=supporting_case_groups,
+        precedents=precedents,
+    )
+    prediction = apply_evidence_quality_guard(prediction, evidence_quality)
     prediction["recommendation_basis"] = _merge_unique_strings(
         _support_group_lines(supporting_case_groups, limit_groups=3, limit_cases=2),
         [f"优先法规：{item['title']}" for item in linked_laws[:2]],
@@ -1462,6 +2006,17 @@ def _decorate_prediction(
     ]
     prediction["prediction_process"] = _build_prediction_story(module_code, analysis_result, prediction, precedents, execution_trace)
     prediction["bilingual"] = build_bilingual_prediction_pack(prediction, analysis_result)
+
+    # 生成支持/反对论点
+    if is_llm_configured() and not getattr(settings, "prediction_local_fast_mode", True):
+        prediction["arguments"] = _build_llm_arguments(
+            analysis_result, prediction, precedents
+        )
+    else:
+        prediction["arguments"] = _build_local_arguments(
+            analysis_result, prediction, precedents
+        )
+
     return prediction
 
 
@@ -1615,6 +2170,7 @@ def predict_legal_outcome(
     sort: str = "relevance",
     module: str = "canada",
     refresh: bool = False,
+    analysis_result: dict | None = None,
 ):
     normalized_module = normalize_module(module)
     cleaned_text = repair_text(text)
@@ -1631,31 +2187,103 @@ def predict_legal_outcome(
     if not refresh:
         cached_payload = _get_cached_prediction(cache_key)
         if cached_payload is not None:
-            return cached_payload
+            cached_packet = cached_payload.get("module_packet") or {}
+            if normalized_module != "canada" or cached_packet.get("case_law_rows"):
+                return cached_payload
 
-    analysis_result = analyze_sentence_search(
-        text=cleaned_text,
-        limit=limit,
-        offset=offset,
-        source=source,
-        sort=sort,
-        module=normalized_module,
-        refresh=refresh,
-        origin_page="predict",
-        local_only=True,
-    )
-
-    if normalized_module == "canada" and (analysis_result.get("module_packet") or {}).get("case_law_rows"):
-        precedents = _build_precedent_packets_from_module_packet(analysis_result.get("module_packet") or {}, limit=3)
+    if analysis_result is None:
+        use_realtime = (
+            getattr(settings, "canlii_realtime_search_enabled", True)
+            and normalized_module in ("canada", "all")
+        )
+        analysis_result = analyze_sentence_search(
+            text=cleaned_text,
+            limit=limit,
+            offset=offset,
+            source=source,
+            sort=sort,
+            module=normalized_module,
+            refresh=refresh,
+            origin_page="predict",
+            local_only=not use_realtime,
+        )
     else:
-        precedents = _build_precedent_packets(analysis_result["results"], limit=3)
+        analysis_result = copy.deepcopy(analysis_result)
+        intake = analysis_result.get("intake_outline") or {}
+        module_packet = analysis_result.get("module_packet") or {}
+        analysis_result.setdefault("input_text", cleaned_text)
+        analysis_result.setdefault("module_code", normalized_module)
+        analysis_result.setdefault("source", source)
+        analysis_result.setdefault("sort", sort)
+        analysis_result.setdefault("results", [])
+        analysis_result.setdefault("total", len(module_packet.get("case_law_rows", []) or []))
+        analysis_result.setdefault("extracted_keywords", intake.get("keywords") or [])
+        analysis_result.setdefault(
+            "retrieval_summary",
+            {
+                "keywords": intake.get("keywords") or [],
+                "law_count": len(module_packet.get("relevant_laws", []) or []),
+                "case_count": len(module_packet.get("case_law_rows", []) or []),
+            },
+        )
+
+    module_packet = analysis_result.get("module_packet") or {}
+    precedent_limit = _prediction_case_limit(limit, module_packet)
+    if normalized_module == "canada" and module_packet.get("case_law_rows"):
+        precedents = _build_precedent_packets_from_module_packet(module_packet, limit=precedent_limit)
+    else:
+        precedents = _build_precedent_packets(analysis_result["results"], limit=precedent_limit)
     supporting_case_groups = _build_supporting_case_groups(
-        analysis_result.get("module_packet") or {},
-        limit_laws=4,
-        cases_per_law=3,
+        module_packet,
+        limit_laws=max(4, min(len(module_packet.get("relevant_laws", []) or []), 8)),
+        cases_per_law=max(3, min(precedent_limit, 8)),
         reference_terms=(analysis_result.get("retrieval_summary", {}) or {}).get("keywords")
         or (analysis_result.get("intake_outline", {}) or {}).get("keywords", []),
     )
+    if not _has_enough_prediction_evidence(precedents, supporting_case_groups) or not _data_readiness_allows_prediction(analysis_result):
+        min_support_items = _reliable_min_support_items()
+        readiness = analysis_result.get("data_readiness") or {}
+        readiness_warning = "；".join(readiness.get("warnings") or [])
+        guard_message = readiness_warning or _insufficient_evidence_message(min_support_items)
+        prediction = _preview_prediction(
+            analysis_result,
+            status="insufficient_evidence",
+            model_status="skipped_insufficient_evidence",
+            model_error=guard_message,
+        )
+        execution_trace = {
+            "analysis": {
+                "status": analysis_result.get("analysis_mode", "heuristic"),
+                "error_message": analysis_result.get("analysis_error", ""),
+                "error_category": analysis_result.get("analysis_error_category", ""),
+                "attempt_log": analysis_result.get("analysis_attempt_log", []),
+            },
+            "case_comparison": {
+                "stage": "case_comparison",
+                "status": "skipped_insufficient_evidence",
+                "model_status": "skipped_insufficient_evidence",
+                "error_message": guard_message,
+                "error_category": "input",
+                "attempt_log": [],
+            },
+            "prediction": {
+                "status": "skipped_insufficient_evidence",
+                "error_message": guard_message,
+                "error_category": "input",
+                "attempt_log": [],
+            },
+        }
+        prediction["supporting_case_groups"] = supporting_case_groups
+        prediction = _decorate_prediction(analysis_result, prediction, precedents, execution_trace)
+        response_payload = {
+            **analysis_result,
+            "precedents": precedents,
+            "prediction": prediction,
+            "prediction_cache_status": "miss",
+        }
+        _persist_agent_run(analysis_result, prediction)
+        _set_cached_prediction(cache_key, response_payload)
+        return response_payload
     local_fast_mode = bool(getattr(settings, "prediction_local_fast_mode", True))
     if local_fast_mode:
         annotated_precedents = _build_heuristic_case_comparisons(
@@ -1796,25 +2424,57 @@ def predict_legal_outcome(
         )
     else:
         instructions = (
-            "You are a legal research assistant producing a cautious demo prediction. "
-            "Use only the supplied event analysis, the linked laws, and the locally retrieved cases that have already been grouped under those laws. "
-            "Explain how the laws and grouped cases support the preliminary view. "
-            "If the precedents are thin or noisy, lower confidence and say so. "
-            "Do not invent courts, statutes, or cases."
+            "Predict the legal outcome from the supplied structured case analysis, linked laws, "
+            "analysis_cases, and law_case_groups. Treat analysis_cases and law_case_groups as the "
+            "same authorities already surfaced on the case analysis page. Base the prediction on "
+            "those cases and laws; do not make a conclusion that is detached from them. If the cases "
+            "are weak, distinguishable, or too thin, lower confidence and say so.\n"
+            "Return JSON with:\n"
+            "1. predicted_outcome: Specific legal conclusion\n"
+            "2. likely_prevailing_party: Who prevails and why\n"
+            "3. confidence: 0.3-0.8 based on the supplied cases/laws\n"
+            "4. reasoning: Legal reasoning in 2-3 sentences that mentions the relevant case/law pattern\n"
+            "5. key_factors: 3-4 factors determining outcome\n"
+            "6. supporting_case_titles: Case names from analysis_cases or law_case_groups only\n"
+            "7. caveats: 2-3 risks or unknowns"
         )
+    canlii_rt_cards = [
+        {"title": card.get("title"), "summary": card.get("summary")}
+        for card in (analysis_result.get("grouped_results", {}).get("canlii", []))
+        if card.get("realtime_source")
+    ][:3]
+    # 精简 payload 减少 token 消耗
+    simplified_analysis = {
+        "facts": (analysis_result.get("analysis", {}) or {}).get("facts", "")[:300],
+        "disputed_issues": (analysis_result.get("analysis", {}) or {}).get("disputed_issues", [])[:3],
+        "legal_topics": (analysis_result.get("analysis", {}) or {}).get("legal_topics", [])[:3],
+        "requested_relief": (analysis_result.get("analysis", {}) or {}).get("requested_relief", "")[:100],
+    }
+    analysis_cases_for_model = _prediction_case_rows_for_model(
+        annotated_precedents,
+        limit=precedent_limit,
+    )
+    law_case_groups_for_model = _law_case_groups_for_model(
+        supporting_case_groups,
+        limit_groups=6,
+        limit_cases=6,
+    )
     user_payload = json.dumps(
         {
-            "event_text": analysis_result["input_text"],
-            "intake_outline": analysis_result.get("intake_outline", {}),
-            "analysis": analysis_result["analysis"],
-            "retrieval_summary": analysis_result.get("retrieval_summary", {}),
-            "linked_laws": _law_reference_rows(analysis_result.get("module_packet") or {}, limit=4),
-            "law_case_groups": supporting_case_groups,
-            "precedents": annotated_precedents,
+            "event_text": analysis_result["input_text"][:500],
+            "analysis": simplified_analysis,
+            "linked_laws": _law_reference_rows(module_packet, limit=8),
+            "analysis_cases": analysis_cases_for_model,
+            "law_case_groups": law_case_groups_for_model,
+            "prediction_instruction": (
+                "Use analysis_cases and law_case_groups as the core prediction evidence. "
+                "supporting_case_titles must be selected from those cases."
+            ),
         },
         ensure_ascii=False,
     )
 
+    # 启用 LLM 预测调用
     prediction_call = _invoke_model_with_retry(
         stage="prediction",
         schema_name="legal_prediction_demo",
@@ -1835,6 +2495,7 @@ def predict_legal_outcome(
                 "response_id": response.get("response_id", ""),
             }
         )
+        prediction = _postprocess_prediction(prediction, cleaned_text, analysis_result.get("analysis", {}))
         execution_trace["prediction"] = {
             "status": "model",
             "error_message": "",
@@ -1842,16 +2503,14 @@ def predict_legal_outcome(
             "attempt_log": prediction_call["attempt_log"],
         }
     else:
+        # LLM failed - use local reasoned prediction instead of basic preview
         error_category = prediction_call["error_category"] or "provider_error"
-        model_status = "timeout_fallback" if error_category == "timeout" else "fallback_error"
-        prediction = _preview_prediction(
-            analysis_result,
-            status="fallback",
-            model_status=model_status,
-            model_error=prediction_call["error_message"],
-        )
+        prediction = _build_local_reasoned_prediction(analysis_result, annotated_precedents)
+        prediction["status"] = "local_reasoning_fallback"
+        prediction["model_status"] = "llm_fallback_to_local"
+        prediction["model_error"] = prediction_call["error_message"]
         execution_trace["prediction"] = {
-            "status": "fallback",
+            "status": "local_reasoning_fallback",
             "error_message": prediction_call["error_message"],
             "error_category": error_category,
             "attempt_log": prediction_call["attempt_log"],

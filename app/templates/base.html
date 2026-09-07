@@ -317,6 +317,81 @@
             showLoading(modeFromPath(targetUrl.pathname));
         });
     });
+
+    // Hide loading overlay when page loads
+    window.addEventListener('load', () => {
+        overlay.classList.remove('visible');
+        overlay.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('loading-active');
+        window.clearInterval(intervalId);
+        window.clearTimeout(phaseTimeoutId);
+    });
+})();
+</script>
+
+<script>
+(() => {
+    function initCaseSliders() {
+        document.querySelectorAll('[data-case-slider]').forEach((slider) => {
+            if (slider.dataset.sliderReady === 'true') return;
+            const track = slider.querySelector('[data-slider-track]');
+            const prev = slider.querySelector('[data-slider-prev]');
+            const next = slider.querySelector('[data-slider-next]');
+            const status = slider.querySelector('[data-slider-status]');
+            if (!track) return;
+
+            slider.dataset.sliderReady = 'true';
+
+            const cards = () => Array.from(track.children).filter((item) => item instanceof HTMLElement);
+
+            function currentIndex() {
+                const items = cards();
+                if (!items.length) return 0;
+                const left = track.scrollLeft;
+                let bestIndex = 0;
+                let bestDistance = Number.POSITIVE_INFINITY;
+                items.forEach((item, index) => {
+                    const distance = Math.abs(item.offsetLeft - track.offsetLeft - left);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        bestIndex = index;
+                    }
+                });
+                return bestIndex;
+            }
+
+            function update() {
+                const items = cards();
+                const total = items.length;
+                const index = currentIndex();
+                const maxScroll = Math.max(0, track.scrollWidth - track.clientWidth - 2);
+                if (status) status.textContent = total ? `${index + 1} / ${total}` : '0 / 0';
+                if (prev) prev.disabled = track.scrollLeft <= 2 || total <= 1;
+                if (next) next.disabled = track.scrollLeft >= maxScroll || total <= 1;
+            }
+
+            function scrollToStep(direction) {
+                const items = cards();
+                if (!items.length) return;
+                const index = currentIndex();
+                const targetIndex = Math.max(0, Math.min(items.length - 1, index + direction));
+                items[targetIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
+            }
+
+            prev?.addEventListener('click', () => scrollToStep(-1));
+            next?.addEventListener('click', () => scrollToStep(1));
+            track.addEventListener('scroll', () => window.requestAnimationFrame(update), { passive: true });
+            window.addEventListener('resize', update);
+            update();
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initCaseSliders);
+    } else {
+        initCaseSliders();
+    }
+    window.addEventListener('pageshow', initCaseSliders);
 })();
 </script>
 

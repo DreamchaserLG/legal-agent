@@ -1,0 +1,1814 @@
+{
+  "status": "completed",
+  "dataset": "canada_residential_tenancy_retrieval_v1",
+  "dataset_path": "data\\eval\\canada_retrieval_eval.json",
+  "module": "canada",
+  "limit": 10,
+  "summary": {
+    "cases": 20,
+    "hit@1": 0.9,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr": 0.95
+  },
+  "cases": [
+    {
+      "id": "tenant_eviction_repair_001",
+      "query": "Ontario tenant eviction repair issue",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Ottawa Community Housing Corporation",
+          "Morrison"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.184501,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 2,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.183216,
+          "source_url": "https://demo.local/canada/rules/residential-tenancies-act-2006"
+        },
+        {
+          "rank": 3,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.178915,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 4,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.178248,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 5,
+          "title": "Willow Park Co-operative Homes Inc. v Chambers, 2026 ONLTB 18018 (CanLII)",
+          "source_kind": "case",
+          "score": 0.178242,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18018/2026onltb18018.html"
+        },
+        {
+          "rank": 6,
+          "title": "Interrent Holdings Manager LP v El-Guindy, 2026 ONLTB 16867 (CanLII)",
+          "source_kind": "case",
+          "score": 0.178089,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16867/2026onltb16867.html"
+        },
+        {
+          "rank": 7,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.175772,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        },
+        {
+          "rank": 8,
+          "title": "gen1@Mckenzie v McLean, 2026 ONLTB 17226 (CanLII)",
+          "source_kind": "case",
+          "score": 0.17513,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17226/2026onltb17226.html"
+        },
+        {
+          "rank": 9,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.173881,
+          "source_url": "https://www.ontario.ca/laws/statute/06r17"
+        },
+        {
+          "rank": 10,
+          "title": "Agnew v. Bourgette, 2026 ONSC 2902 (CanLII)",
+          "source_kind": "case",
+          "score": 0.165072,
+          "source_url": "https://www.canlii.org/en/on/onscdc/doc/2026/2026onsc2902/2026onsc2902.html"
+        }
+      ]
+    },
+    {
+      "id": "pest_clutter_access_002",
+      "query": "tenant eviction pest infestation excessive clutter barred access Ontario LTB",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Ottawa Community Housing Corporation",
+          "Morrison"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.192395,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 2,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.177085,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 3,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.171887,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 4,
+          "title": "Toronto Seniors Housing Corporation v Khachapuridze, 2026 ONLTB 15994 (CanLII)",
+          "source_kind": "case",
+          "score": 0.169776,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb15994/2026onltb15994.html"
+        },
+        {
+          "rank": 5,
+          "title": "Interrent Holdings Manager LP v El-Guindy, 2026 ONLTB 16867 (CanLII)",
+          "source_kind": "case",
+          "score": 0.169378,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16867/2026onltb16867.html"
+        },
+        {
+          "rank": 6,
+          "title": "Agnew v. Bourgette, 2026 ONSC 2902 (CanLII)",
+          "source_kind": "case",
+          "score": 0.159791,
+          "source_url": "https://www.canlii.org/en/on/onscdc/doc/2026/2026onsc2902/2026onsc2902.html"
+        },
+        {
+          "rank": 7,
+          "title": "Suleiman v Elmaleh, 2026 ONLTB 16833 (CanLII)",
+          "source_kind": "case",
+          "score": 0.154738,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16833/2026onltb16833.html"
+        },
+        {
+          "rank": 8,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.151444,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        },
+        {
+          "rank": 9,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.151172,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 10,
+          "title": "Bassily v Greek Market Corner LTD, 2026 ONLTB 18478 (CanLII)",
+          "source_kind": "case",
+          "score": 0.150404,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18478/2026onltb18478.html"
+        }
+      ]
+    },
+    {
+      "id": "vital_services_hydro_003",
+      "query": "tenant hydro disconnected vital services landlord Ontario residential tenancy",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Mckenzie",
+          "McLean"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "gen1@Mckenzie v McLean, 2026 ONLTB 17226 (CanLII)",
+          "source_kind": "case",
+          "score": 0.173387,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17226/2026onltb17226.html"
+        },
+        {
+          "rank": 2,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.13848,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 3,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.137532,
+          "source_url": "https://www.ontario.ca/laws/statute/06r17"
+        },
+        {
+          "rank": 4,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.135927,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        },
+        {
+          "rank": 5,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.128092,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 6,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.126073,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 7,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.11904,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 8,
+          "title": "Bassily v Greek Market Corner LTD, 2026 ONLTB 18478 (CanLII)",
+          "source_kind": "case",
+          "score": 0.118038,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18478/2026onltb18478.html"
+        },
+        {
+          "rank": 9,
+          "title": "Agnew v. Bourgette, 2026 ONSC 2902 (CanLII)",
+          "source_kind": "case",
+          "score": 0.116064,
+          "source_url": "https://www.canlii.org/en/on/onscdc/doc/2026/2026onsc2902/2026onsc2902.html"
+        },
+        {
+          "rank": 10,
+          "title": "Maple View Property Management v. Chen",
+          "source_kind": "case",
+          "score": 0.115926,
+          "source_url": "https://demo.local/canada/cases/maple-view-v-chen"
+        }
+      ]
+    },
+    {
+      "id": "rent_arrears_n4_004",
+      "query": "Ontario tenant rent arrears N4 notice eviction section 69",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Abai",
+          "Cisse"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.190813,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 2,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.185645,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 3,
+          "title": "Interrent Holdings Manager LP v El-Guindy, 2026 ONLTB 16867 (CanLII)",
+          "source_kind": "case",
+          "score": 0.185421,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16867/2026onltb16867.html"
+        },
+        {
+          "rank": 4,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.181986,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 5,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.174715,
+          "source_url": "https://demo.local/canada/rules/residential-tenancies-act-2006"
+        },
+        {
+          "rank": 6,
+          "title": "Toronto Seniors Housing Corporation v Khachapuridze, 2026 ONLTB 15994 (CanLII)",
+          "source_kind": "case",
+          "score": 0.172909,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb15994/2026onltb15994.html"
+        },
+        {
+          "rank": 7,
+          "title": "Agnew v. Bourgette, 2026 ONSC 2902 (CanLII)",
+          "source_kind": "case",
+          "score": 0.172683,
+          "source_url": "https://www.canlii.org/en/on/onscdc/doc/2026/2026onsc2902/2026onsc2902.html"
+        },
+        {
+          "rank": 8,
+          "title": "Guyot v Housing NWT et al, 2026 NWTSC 11 (CanLII)",
+          "source_kind": "case",
+          "score": 0.168532,
+          "source_url": "https://www.canlii.org/en/nt/ntsc/doc/2026/2026nwtsc11/2026nwtsc11.html"
+        },
+        {
+          "rank": 9,
+          "title": "Willow Park Co-operative Homes Inc. v Chambers, 2026 ONLTB 18018 (CanLII)",
+          "source_kind": "case",
+          "score": 0.166682,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18018/2026onltb18018.html"
+        },
+        {
+          "rank": 10,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.164274,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        }
+      ]
+    },
+    {
+      "id": "serious_impairment_safety_005",
+      "query": "tenant conduct laundry room mobility scooter serious impairment safety eviction",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Housing York",
+          "Hayton"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.202823,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 2,
+          "title": "Toronto Seniors Housing Corporation v Khachapuridze, 2026 ONLTB 15994 (CanLII)",
+          "source_kind": "case",
+          "score": 0.190248,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb15994/2026onltb15994.html"
+        },
+        {
+          "rank": 3,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.181448,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        },
+        {
+          "rank": 4,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.180749,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 5,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.180092,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        },
+        {
+          "rank": 6,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.175745,
+          "source_url": "https://www.ontario.ca/laws/statute/06r17"
+        },
+        {
+          "rank": 7,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.173938,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 8,
+          "title": "Interrent Holdings Manager LP v El-Guindy, 2026 ONLTB 16867 (CanLII)",
+          "source_kind": "case",
+          "score": 0.172989,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16867/2026onltb16867.html"
+        },
+        {
+          "rank": 9,
+          "title": "gen1@Mckenzie v McLean, 2026 ONLTB 17226 (CanLII)",
+          "source_kind": "case",
+          "score": 0.172624,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17226/2026onltb17226.html"
+        },
+        {
+          "rank": 10,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.170834,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        }
+      ]
+    },
+    {
+      "id": "coop_nonpayment_n4c_006",
+      "query": "co-operative housing nonpayment N4C notice occupancy arrears eviction",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Willow Park",
+          "Chambers"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Willow Park Co-operative Homes Inc. v Chambers, 2026 ONLTB 18018 (CanLII)",
+          "source_kind": "case",
+          "score": 0.177513,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18018/2026onltb18018.html"
+        },
+        {
+          "rank": 2,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.167412,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 3,
+          "title": "Interrent Holdings Manager LP v El-Guindy, 2026 ONLTB 16867 (CanLII)",
+          "source_kind": "case",
+          "score": 0.157105,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16867/2026onltb16867.html"
+        },
+        {
+          "rank": 4,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.156665,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 5,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.154424,
+          "source_url": "https://demo.local/canada/rules/residential-tenancies-act-2006"
+        },
+        {
+          "rank": 6,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.14357,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 7,
+          "title": "Toronto Seniors Housing Corporation v Khachapuridze, 2026 ONLTB 15994 (CanLII)",
+          "source_kind": "case",
+          "score": 0.142012,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb15994/2026onltb15994.html"
+        },
+        {
+          "rank": 8,
+          "title": "North York Housing Corp. v. Ibrahim",
+          "source_kind": "case",
+          "score": 0.139306,
+          "source_url": "https://demo.local/canada/cases/north-york-housing-v-ibrahim"
+        },
+        {
+          "rank": 9,
+          "title": "Minoza v Housing NWT, 2026 NWTSC 22 (CanLII)",
+          "source_kind": "case",
+          "score": 0.131926,
+          "source_url": "https://www.canlii.org/en/nt/ntsc/doc/2026/2026nwtsc22/2026nwtsc22.html"
+        },
+        {
+          "rank": 10,
+          "title": "Guyot v Housing NWT et al, 2026 NWTSC 11 (CanLII)",
+          "source_kind": "case",
+          "score": 0.124528,
+          "source_url": "https://www.canlii.org/en/nt/ntsc/doc/2026/2026nwtsc11/2026nwtsc11.html"
+        }
+      ]
+    },
+    {
+      "id": "n12_good_faith_007",
+      "query": "N12 landlord own use good faith possession another unit Ontario tenancy",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Birks",
+          "Cornakovic"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.17195,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        },
+        {
+          "rank": 2,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.156161,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 3,
+          "title": "Agnew v. Bourgette, 2026 ONSC 2902 (CanLII)",
+          "source_kind": "case",
+          "score": 0.144774,
+          "source_url": "https://www.canlii.org/en/on/onscdc/doc/2026/2026onsc2902/2026onsc2902.html"
+        },
+        {
+          "rank": 4,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.139619,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        },
+        {
+          "rank": 5,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.132264,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 6,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.131042,
+          "source_url": "https://www.ontario.ca/laws/statute/06r17"
+        },
+        {
+          "rank": 7,
+          "title": "Bassily v Greek Market Corner LTD, 2026 ONLTB 18478 (CanLII)",
+          "source_kind": "case",
+          "score": 0.126303,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18478/2026onltb18478.html"
+        },
+        {
+          "rank": 8,
+          "title": "Suleiman v Elmaleh, 2026 ONLTB 16833 (CanLII)",
+          "source_kind": "case",
+          "score": 0.124234,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16833/2026onltb16833.html"
+        },
+        {
+          "rank": 9,
+          "title": "Maple View Property Management v. Chen",
+          "source_kind": "case",
+          "score": 0.114822,
+          "source_url": "https://demo.local/canada/cases/maple-view-v-chen"
+        },
+        {
+          "rank": 10,
+          "title": "NPR GP Inc v Higher Experience Inc, 2026 NUCA 1 (CanLII)",
+          "source_kind": "case",
+          "score": 0.11133,
+          "source_url": "https://www.canlii.org/en/nu/nuca/doc/2026/2026nuca1/2026nuca1.html"
+        }
+      ]
+    },
+    {
+      "id": "automatic_stay_ltb_008",
+      "query": "Divisional Court certificate stay interlocutory LTB order proceeding",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Interrent",
+          "El-Guindy"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Interrent Holdings Manager LP v El-Guindy, 2026 ONLTB 16867 (CanLII)",
+          "source_kind": "case",
+          "score": 0.103063,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16867/2026onltb16867.html"
+        },
+        {
+          "rank": 2,
+          "title": "1086289 Ontario Inc. (Urban Electrical Contractors) v. Welland (City), 2026 ONCA 352 (CanLII)",
+          "source_kind": "case",
+          "score": 0.064232,
+          "source_url": "https://www.canlii.org/en/on/onca/doc/2026/2026onca352/2026onca352.html"
+        },
+        {
+          "rank": 3,
+          "title": "COURT ORDERED ASSESSMENTS",
+          "source_kind": "law",
+          "score": 0.062731,
+          "source_url": "https://www.ontario.ca/laws?search=COURT%20ORDERED%20ASSESSMENTS"
+        },
+        {
+          "rank": 4,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.054577,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 5,
+          "title": "2377351 Ontario Inc. v. Furney, 2026 ONSC 1749 (CanLII)",
+          "source_kind": "case",
+          "score": 0.052932,
+          "source_url": "https://www.canlii.org/en/on/onsc/doc/2026/2026onsc1749/2026onsc1749.html"
+        },
+        {
+          "rank": 6,
+          "title": "Greathead v KWP Management, 2026 ONLTB 17074 (CanLII)",
+          "source_kind": "case",
+          "score": 0.052123,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17074/2026onltb17074.html"
+        },
+        {
+          "rank": 7,
+          "title": "850-906 Wonderland Holdings Limited v Le Capelain, 2026 ONLTB 18519 (CanLII)",
+          "source_kind": "case",
+          "score": 0.050609,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18519/2026onltb18519.html"
+        },
+        {
+          "rank": 8,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.043322,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 9,
+          "title": "R (H.C.) v. Ontario Special Education Tribunal, 2026 ONCA 249 (CanLII)",
+          "source_kind": "case",
+          "score": 0.042914,
+          "source_url": "https://www.canlii.org/en/on/onca/doc/2026/2026onca249/2026onca249.html"
+        },
+        {
+          "rank": 10,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.042591,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        }
+      ]
+    },
+    {
+      "id": "smoke_detector_clutter_009",
+      "query": "missing smoke detector excessive clutter residential tenancy termination",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Ottawa Community Housing Corporation",
+          "Morrison"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.174195,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 2,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.158223,
+          "source_url": "https://www.ontario.ca/laws/statute/06r17"
+        },
+        {
+          "rank": 3,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.156358,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 4,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.156202,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 5,
+          "title": "Maple View Property Management v. Chen",
+          "source_kind": "case",
+          "score": 0.152992,
+          "source_url": "https://demo.local/canada/cases/maple-view-v-chen"
+        },
+        {
+          "rank": 6,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.150819,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        },
+        {
+          "rank": 7,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.149958,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        },
+        {
+          "rank": 8,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.149726,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 9,
+          "title": "gen1@Mckenzie v McLean, 2026 ONLTB 17226 (CanLII)",
+          "source_kind": "case",
+          "score": 0.145495,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17226/2026onltb17226.html"
+        },
+        {
+          "rank": 10,
+          "title": "Suleiman v Elmaleh, 2026 ONLTB 16833 (CanLII)",
+          "source_kind": "case",
+          "score": 0.144176,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16833/2026onltb16833.html"
+        }
+      ]
+    },
+    {
+      "id": "section_83_relief_010",
+      "query": "Ontario LTB relief from eviction section 83 rent arrears tenant in possession",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 2,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Abai",
+          "Cisse"
+        ]
+      },
+      "hit@1": false,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Toronto Seniors Housing Corporation v Khachapuridze, 2026 ONLTB 15994 (CanLII)",
+          "source_kind": "case",
+          "score": 0.189056,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb15994/2026onltb15994.html"
+        },
+        {
+          "rank": 2,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.185996,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 3,
+          "title": "Interrent Holdings Manager LP v El-Guindy, 2026 ONLTB 16867 (CanLII)",
+          "source_kind": "case",
+          "score": 0.184445,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16867/2026onltb16867.html"
+        },
+        {
+          "rank": 4,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.182333,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 5,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.181805,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 6,
+          "title": "Willow Park Co-operative Homes Inc. v Chambers, 2026 ONLTB 18018 (CanLII)",
+          "source_kind": "case",
+          "score": 0.178985,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18018/2026onltb18018.html"
+        },
+        {
+          "rank": 7,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.174826,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 8,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.173832,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        },
+        {
+          "rank": 9,
+          "title": "Agnew v. Bourgette, 2026 ONSC 2902 (CanLII)",
+          "source_kind": "case",
+          "score": 0.17139,
+          "source_url": "https://www.canlii.org/en/on/onscdc/doc/2026/2026onsc2902/2026onsc2902.html"
+        },
+        {
+          "rank": 10,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.170645,
+          "source_url": "https://demo.local/canada/rules/residential-tenancies-act-2006"
+        }
+      ]
+    },
+    {
+      "id": "rta_unauthorized_subletting_011",
+      "query": "Ontario residential tenancy termination possession unauthorized subletting statute",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "law",
+        "title_contains": [
+          "Residential Tenancies Act"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.191314,
+          "source_url": "https://demo.local/canada/rules/residential-tenancies-act-2006"
+        },
+        {
+          "rank": 2,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.166245,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 3,
+          "title": "Maple View Property Management v. Chen",
+          "source_kind": "case",
+          "score": 0.163153,
+          "source_url": "https://demo.local/canada/cases/maple-view-v-chen"
+        },
+        {
+          "rank": 4,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.161264,
+          "source_url": "https://www.ontario.ca/laws/statute/06r17"
+        },
+        {
+          "rank": 5,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.15711,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 6,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.143655,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        },
+        {
+          "rank": 7,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.133501,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 8,
+          "title": "Bassily v Greek Market Corner LTD, 2026 ONLTB 18478 (CanLII)",
+          "source_kind": "case",
+          "score": 0.132402,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18478/2026onltb18478.html"
+        },
+        {
+          "rank": 9,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.131581,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        },
+        {
+          "rank": 10,
+          "title": "Toronto Seniors Housing Corporation v Khachapuridze, 2026 ONLTB 15994 (CanLII)",
+          "source_kind": "case",
+          "score": 0.131551,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb15994/2026onltb15994.html"
+        }
+      ]
+    },
+    {
+      "id": "residential_evictions_reg_012",
+      "query": "Ontario residential evictions regulation",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "law",
+        "title_contains": [
+          "RESIDENTIAL EVICTIONS"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "RESIDENTIAL EVICTIONS",
+          "source_kind": "law",
+          "score": 0.138257,
+          "source_url": "https://www.ontario.ca/laws?search=RESIDENTIAL%20EVICTIONS"
+        },
+        {
+          "rank": 2,
+          "title": "ZONING ORDER - ONTARIO PLACE",
+          "source_kind": "law",
+          "score": 0.069216,
+          "source_url": "https://www.ontario.ca/laws?search=ZONING%20ORDER%20-%20ONTARIO%20PLACE"
+        },
+        {
+          "rank": 3,
+          "title": "FAMILY ARBITRATION",
+          "source_kind": "law",
+          "score": 0.068974,
+          "source_url": "https://www.ontario.ca/laws?search=FAMILY%20ARBITRATION"
+        },
+        {
+          "rank": 4,
+          "title": "REGISTER",
+          "source_kind": "law",
+          "score": 0.067583,
+          "source_url": "https://www.ontario.ca/laws?search=REGISTER"
+        },
+        {
+          "rank": 5,
+          "title": "CONDOMINIUM AUTHORITY TRIBUNAL",
+          "source_kind": "law",
+          "score": 0.067427,
+          "source_url": "https://www.ontario.ca/laws?search=CONDOMINIUM%20AUTHORITY%20TRIBUNAL"
+        },
+        {
+          "rank": 6,
+          "title": "FAMILY LAW RULES",
+          "source_kind": "law",
+          "score": 0.066461,
+          "source_url": "https://www.ontario.ca/laws?search=FAMILY%20LAW%20RULES"
+        },
+        {
+          "rank": 7,
+          "title": "TORONTO FAMILY CASE MANAGEMENT RULES",
+          "source_kind": "law",
+          "score": 0.066334,
+          "source_url": "https://www.ontario.ca/laws?search=TORONTO%20FAMILY%20CASE%20MANAGEMENT%20RULES"
+        },
+        {
+          "rank": 8,
+          "title": "MANAGEMENT OF RETIREMENT HOMES IN OUTBREAK",
+          "source_kind": "law",
+          "score": 0.066034,
+          "source_url": "https://www.ontario.ca/laws?search=MANAGEMENT%20OF%20RETIREMENT%20HOMES%20IN%20OUTBREAK"
+        },
+        {
+          "rank": 9,
+          "title": "WINDOW CLEANING",
+          "source_kind": "law",
+          "score": 0.065826,
+          "source_url": "https://www.ontario.ca/laws?search=WINDOW%20CLEANING"
+        },
+        {
+          "rank": 10,
+          "title": "ARBITRATION OF DISPUTES",
+          "source_kind": "law",
+          "score": 0.065532,
+          "source_url": "https://www.ontario.ca/laws?search=ARBITRATION%20OF%20DISPUTES"
+        }
+      ]
+    },
+    {
+      "id": "commercial_tenancies_013",
+      "query": "Ontario commercial tenancies landlord and tenant act statute",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "law",
+        "title_contains": [
+          "Commercial Tenancies Act"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Commercial Tenancies Act, R.S.O. 1990, c. L.7 (formerly Landlord and Tenant Act)",
+          "source_kind": "law",
+          "score": 0.217016,
+          "source_url": "https://www.ontario.ca/laws?search=Commercial%20Tenancies%20Act%2C%20R.S.O.%201990%2C%20c.%20L.7%20%28formerly%20Landlord%20and%20Tenant%20Act%29"
+        },
+        {
+          "rank": 2,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.131463,
+          "source_url": "https://www.ontario.ca/laws/statute/06r17"
+        },
+        {
+          "rank": 3,
+          "title": "Landlord and Tenant Act, R.S.O. 1990, c. L.7",
+          "source_kind": "law",
+          "score": 0.128971,
+          "source_url": "https://www.ontario.ca/laws?search=Landlord%20and%20Tenant%20Act%2C%20R.S.O.%201990%2C%20c.%20L.7"
+        },
+        {
+          "rank": 4,
+          "title": "Landlord and Tenant Act",
+          "source_kind": "law",
+          "score": 0.113432,
+          "source_url": ""
+        },
+        {
+          "rank": 5,
+          "title": "Landlord and Tenant Act",
+          "source_kind": "law",
+          "score": 0.113051,
+          "source_url": ""
+        },
+        {
+          "rank": 6,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.108838,
+          "source_url": "https://demo.local/canada/rules/residential-tenancies-act-2006"
+        },
+        {
+          "rank": 7,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.106792,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 8,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.104186,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 9,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.10042,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        },
+        {
+          "rank": 10,
+          "title": "Suleiman v Elmaleh, 2026 ONLTB 16833 (CanLII)",
+          "source_kind": "case",
+          "score": 0.100096,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16833/2026onltb16833.html"
+        }
+      ]
+    },
+    {
+      "id": "uninhabitable_unit_014",
+      "query": "rental unit uninhabitable repairs maintenance Ontario tenant",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Ottawa Community Housing Corporation",
+          "Morrison"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.169959,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 2,
+          "title": "gen1@Mckenzie v McLean, 2026 ONLTB 17226 (CanLII)",
+          "source_kind": "case",
+          "score": 0.147626,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17226/2026onltb17226.html"
+        },
+        {
+          "rank": 3,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.129377,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 4,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.127663,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        },
+        {
+          "rank": 5,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.1267,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 6,
+          "title": "Suleiman v Elmaleh, 2026 ONLTB 16833 (CanLII)",
+          "source_kind": "case",
+          "score": 0.122829,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16833/2026onltb16833.html"
+        },
+        {
+          "rank": 7,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.120006,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 8,
+          "title": "Bassily v Greek Market Corner LTD, 2026 ONLTB 18478 (CanLII)",
+          "source_kind": "case",
+          "score": 0.119111,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18478/2026onltb18478.html"
+        },
+        {
+          "rank": 9,
+          "title": "Agnew v. Bourgette, 2026 ONSC 2902 (CanLII)",
+          "source_kind": "case",
+          "score": 0.118238,
+          "source_url": "https://www.canlii.org/en/on/onscdc/doc/2026/2026onsc2902/2026onsc2902.html"
+        },
+        {
+          "rank": 10,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.117554,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        }
+      ]
+    },
+    {
+      "id": "illegal_act_safety_015",
+      "query": "guest assault illegal act serious impairment safety residential tenancy eviction",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Khachapuridze"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Toronto Seniors Housing Corporation v Khachapuridze, 2026 ONLTB 15994 (CanLII)",
+          "source_kind": "case",
+          "score": 0.200135,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb15994/2026onltb15994.html"
+        },
+        {
+          "rank": 2,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.189616,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 3,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.181116,
+          "source_url": "https://www.ontario.ca/laws/statute/06r17"
+        },
+        {
+          "rank": 4,
+          "title": "Suleiman v Elmaleh, 2026 ONLTB 16833 (CanLII)",
+          "source_kind": "case",
+          "score": 0.178018,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16833/2026onltb16833.html"
+        },
+        {
+          "rank": 5,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.177268,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 6,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.174283,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        },
+        {
+          "rank": 7,
+          "title": "Agnew v. Bourgette, 2026 ONSC 2902 (CanLII)",
+          "source_kind": "case",
+          "score": 0.173762,
+          "source_url": "https://www.canlii.org/en/on/onscdc/doc/2026/2026onsc2902/2026onsc2902.html"
+        },
+        {
+          "rank": 8,
+          "title": "gen1@Mckenzie v McLean, 2026 ONLTB 17226 (CanLII)",
+          "source_kind": "case",
+          "score": 0.171035,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17226/2026onltb17226.html"
+        },
+        {
+          "rank": 9,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.166721,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        },
+        {
+          "rank": 10,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.165318,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        }
+      ]
+    },
+    {
+      "id": "tenant_absent_hearing_016",
+      "query": "tenant did not attend LTB hearing eviction relief denied social housing",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 2,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Housing York",
+          "Hayton"
+        ]
+      },
+      "hit@1": false,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Toronto Seniors Housing Corporation v Khachapuridze, 2026 ONLTB 15994 (CanLII)",
+          "source_kind": "case",
+          "score": 0.196618,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb15994/2026onltb15994.html"
+        },
+        {
+          "rank": 2,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.193301,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 3,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.189909,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 4,
+          "title": "Interrent Holdings Manager LP v El-Guindy, 2026 ONLTB 16867 (CanLII)",
+          "source_kind": "case",
+          "score": 0.186319,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16867/2026onltb16867.html"
+        },
+        {
+          "rank": 5,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.182685,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 6,
+          "title": "Agnew v. Bourgette, 2026 ONSC 2902 (CanLII)",
+          "source_kind": "case",
+          "score": 0.171852,
+          "source_url": "https://www.canlii.org/en/on/onscdc/doc/2026/2026onsc2902/2026onsc2902.html"
+        },
+        {
+          "rank": 7,
+          "title": "Willow Park Co-operative Homes Inc. v Chambers, 2026 ONLTB 18018 (CanLII)",
+          "source_kind": "case",
+          "score": 0.16438,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18018/2026onltb18018.html"
+        },
+        {
+          "rank": 8,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.162632,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        },
+        {
+          "rank": 9,
+          "title": "Skyline Real Estate Holdings Inc. C/O Skyline Living v Brownlee, 2026 ONLTB 18157 (CanLII)",
+          "source_kind": "case",
+          "score": 0.161495,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18157/2026onltb18157.html"
+        },
+        {
+          "rank": 10,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.160033,
+          "source_url": "https://demo.local/canada/rules/residential-tenancies-act-2006"
+        }
+      ]
+    },
+    {
+      "id": "monthly_housing_charges_017",
+      "query": "monthly housing charges arrears order terminate unless voided by payment",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Willow Park",
+          "Chambers"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Willow Park Co-operative Homes Inc. v Chambers, 2026 ONLTB 18018 (CanLII)",
+          "source_kind": "case",
+          "score": 0.091823,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18018/2026onltb18018.html"
+        },
+        {
+          "rank": 2,
+          "title": "Interrent Holdings Manager LP v El-Guindy, 2026 ONLTB 16867 (CanLII)",
+          "source_kind": "case",
+          "score": 0.081838,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16867/2026onltb16867.html"
+        },
+        {
+          "rank": 3,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.073725,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 4,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.05773,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 5,
+          "title": "Toronto Seniors Housing Corporation v Khachapuridze, 2026 ONLTB 15994 (CanLII)",
+          "source_kind": "case",
+          "score": 0.053008,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb15994/2026onltb15994.html"
+        },
+        {
+          "rank": 6,
+          "title": "North York Housing Corp. v. Ibrahim",
+          "source_kind": "case",
+          "score": 0.052685,
+          "source_url": "https://demo.local/canada/cases/north-york-housing-v-ibrahim"
+        },
+        {
+          "rank": 7,
+          "title": "Education Development Charges Act, R.S.O. 1990, c. D.9 (formerly Development Charges Act)",
+          "source_kind": "law",
+          "score": 0.047333,
+          "source_url": "https://www.ontario.ca/laws?search=Education%20Development%20Charges%20Act%2C%20R.S.O.%201990%2C%20c.%20D.9%20%28formerly%20Development%20Charges%20Act%29"
+        },
+        {
+          "rank": 8,
+          "title": "Ottawa Community Housing v Kabeya, 2026 ONLTB 10347 (CanLII)",
+          "source_kind": "case",
+          "score": 0.046865,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb10347/2026onltb10347.html"
+        },
+        {
+          "rank": 9,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.038432,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 10,
+          "title": "Municipal and School Board Payments Adjustment Act, R.S.O. 1990, c. M.47",
+          "source_kind": "law",
+          "score": 0.036629,
+          "source_url": "https://www.ontario.ca/laws?search=Municipal%20and%20School%20Board%20Payments%20Adjustment%20Act%2C%20R.S.O.%201990%2C%20c.%20M.47"
+        }
+      ]
+    },
+    {
+      "id": "good_faith_other_unit_018",
+      "query": "good faith occupation possession another unit undermining intent application dismissed",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Birks",
+          "Cornakovic"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.081725,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        },
+        {
+          "rank": 2,
+          "title": "Community Trust Company v. He, 2026 ONCA 261 (CanLII)",
+          "source_kind": "case",
+          "score": 0.045973,
+          "source_url": "https://www.canlii.org/en/on/onca/doc/2026/2026onca261/2026onca261.html"
+        },
+        {
+          "rank": 3,
+          "title": "Foreign Cultural Objects Immunity from Seizure Act, R.S.O. 1990, c. F.23",
+          "source_kind": "law",
+          "score": 0.035921,
+          "source_url": "https://www.ontario.ca/laws?search=Foreign%20Cultural%20Objects%20Immunity%20from%20Seizure%20Act%2C%20R.S.O.%201990%2C%20c.%20F.23"
+        },
+        {
+          "rank": 4,
+          "title": "APPLICATION OF CORPORATIONS INFORMATION ACT",
+          "source_kind": "law",
+          "score": 0.033709,
+          "source_url": "https://www.ontario.ca/laws?search=APPLICATION%20OF%20CORPORATIONS%20INFORMATION%20ACT"
+        },
+        {
+          "rank": 5,
+          "title": "Special Investigations Unit Act, 2019, S.O. 2019, c. 1, Sched. 5",
+          "source_kind": "law",
+          "score": 0.032462,
+          "source_url": "https://www.ontario.ca/laws?search=Special%20Investigations%20Unit%20Act%2C%202019%2C%20S.O.%202019%2C%20c.%201%2C%20Sched.%205"
+        },
+        {
+          "rank": 6,
+          "title": "United States v. Sokolovski, 2026 ONCA 351 (CanLII)",
+          "source_kind": "case",
+          "score": 0.027914,
+          "source_url": "https://www.canlii.org/en/on/onca/doc/2026/2026onca351/2026onca351.html"
+        },
+        {
+          "rank": 7,
+          "title": "North Buxton Community Church v. BMEC, 2026 ONSC 1592 (CanLII)",
+          "source_kind": "case",
+          "score": 0.027612,
+          "source_url": "https://www.canlii.org/en/on/onsc/doc/2026/2026onsc1592/2026onsc1592.html"
+        },
+        {
+          "rank": 8,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.026867,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 9,
+          "title": "Transportation of Dangerous Goods Regulations ( SOR /2001-286)",
+          "source_kind": "law",
+          "score": 0.026516,
+          "source_url": "https://laws-lois.justice.gc.ca/eng/regulations/SOR-2001-286/index.html"
+        },
+        {
+          "rank": 10,
+          "title": "Canada Occupational Health and Safety Regulations ( SOR /86-304)",
+          "source_kind": "law",
+          "score": 0.025833,
+          "source_url": "https://laws-lois.justice.gc.ca/eng/regulations/SOR-86-304/index.html"
+        }
+      ]
+    },
+    {
+      "id": "access_refused_pest_019",
+      "query": "termination ongoing pest infestation access refused tenant clutter",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Ottawa Community Housing Corporation",
+          "Morrison"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "Ottawa Community Housing Corporation v Morrison, 2026 ONLTB 17548 (CanLII)",
+          "source_kind": "case",
+          "score": 0.185751,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17548/2026onltb17548.html"
+        },
+        {
+          "rank": 2,
+          "title": "Housing York Inc. v Hayton, 2026 ONLTB 16790 (CanLII)",
+          "source_kind": "case",
+          "score": 0.165901,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16790/2026onltb16790.html"
+        },
+        {
+          "rank": 3,
+          "title": "Abai v Cisse, 2026 ONLTB 17976 (CanLII)",
+          "source_kind": "case",
+          "score": 0.163762,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17976/2026onltb17976.html"
+        },
+        {
+          "rank": 4,
+          "title": "Maple View Property Management v. Chen",
+          "source_kind": "case",
+          "score": 0.163163,
+          "source_url": "https://demo.local/canada/cases/maple-view-v-chen"
+        },
+        {
+          "rank": 5,
+          "title": "Xu v Sattaur, 2026 ONLTB 16834 (CanLII)",
+          "source_kind": "case",
+          "score": 0.157496,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16834/2026onltb16834.html"
+        },
+        {
+          "rank": 6,
+          "title": "Interrent Holdings Manager LP v El-Guindy, 2026 ONLTB 16867 (CanLII)",
+          "source_kind": "case",
+          "score": 0.155729,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16867/2026onltb16867.html"
+        },
+        {
+          "rank": 7,
+          "title": "Wickramaratne v Hong, 2026 ONLTB 16866 (CanLII)",
+          "source_kind": "case",
+          "score": 0.15225,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16866/2026onltb16866.html"
+        },
+        {
+          "rank": 8,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.150215,
+          "source_url": "https://www.ontario.ca/laws/statute/06r17"
+        },
+        {
+          "rank": 9,
+          "title": "Suleiman v Elmaleh, 2026 ONLTB 16833 (CanLII)",
+          "source_kind": "case",
+          "score": 0.148035,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb16833/2026onltb16833.html"
+        },
+        {
+          "rank": 10,
+          "title": "Birks v Cornakovic, 2026 ONLTB 18044 (CanLII)",
+          "source_kind": "case",
+          "score": 0.137675,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb18044/2026onltb18044.html"
+        }
+      ]
+    },
+    {
+      "id": "rta_s31_vital_services_020",
+      "query": "Residential Tenancies Act section 31 vital services hydro disconnected",
+      "status": "ok",
+      "strategy": "structured_hybrid_rrf_rerank",
+      "match_rank": 1,
+      "matched_expectation": {
+        "source_kind": "case",
+        "title_contains": [
+          "Mckenzie",
+          "McLean"
+        ]
+      },
+      "hit@1": true,
+      "hit@3": true,
+      "hit@5": true,
+      "hit@10": true,
+      "top_results": [
+        {
+          "rank": 1,
+          "title": "gen1@Mckenzie v McLean, 2026 ONLTB 17226 (CanLII)",
+          "source_kind": "case",
+          "score": 0.109932,
+          "source_url": "https://www.canlii.org/en/on/onltb/doc/2026/2026onltb17226/2026onltb17226.html"
+        },
+        {
+          "rank": 2,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.100737,
+          "source_url": "https://www.ontario.ca/laws/statute/06r17"
+        },
+        {
+          "rank": 3,
+          "title": "Residential Tenancies Act, 2006",
+          "source_kind": "law",
+          "score": 0.094572,
+          "source_url": "https://demo.local/canada/rules/residential-tenancies-act-2006"
+        },
+        {
+          "rank": 4,
+          "title": "Residential Tenancies Act, R.S.O. 1980, c. 452",
+          "source_kind": "law",
+          "score": 0.065016,
+          "source_url": "https://www.ontario.ca/laws?search=Residential%20Tenancies%20Act%2C%20R.S.O.%201980%2C%20c.%20452"
+        },
+        {
+          "rank": 5,
+          "title": "TRANSITIONAL MATTERS UNDER CLAUSE 453 (1) (A) OF THE ACT — DEMOLITION AND CONVERSION OF RESIDENTIAL RENTAL PROPERTIES",
+          "source_kind": "law",
+          "score": 0.063939,
+          "source_url": "https://www.ontario.ca/laws?search=TRANSITIONAL%20MATTERS%20UNDER%20CLAUSE%20453%20%281%29%20%28A%29%20OF%20THE%20ACT%20%E2%80%94%20DEMOLITION%20AND%20CONVERSION%20OF%20RESIDENTIAL%20RENTAL%20PROPERTIES"
+        },
+        {
+          "rank": 6,
+          "title": "TRANSITIONAL MATTERS UNDER CLAUSE 432 (1) (A) OF THE ACT — DEMOLITION AND CONVERSION OF RESIDENTIAL RENTAL PROPERTIES",
+          "source_kind": "law",
+          "score": 0.061411,
+          "source_url": "https://www.ontario.ca/laws?search=TRANSITIONAL%20MATTERS%20UNDER%20CLAUSE%20432%20%281%29%20%28A%29%20OF%20THE%20ACT%20%E2%80%94%20DEMOLITION%20AND%20CONVERSION%20OF%20RESIDENTIAL%20RENTAL%20PROPERTIES"
+        },
+        {
+          "rank": 7,
+          "title": "GENERAL",
+          "source_kind": "law",
+          "score": 0.060981,
+          "source_url": "https://www.ontario.ca/laws?search=GENERAL"
+        },
+        {
+          "rank": 8,
+          "title": "Residential Tenancies Act",
+          "source_kind": "law",
+          "score": 0.05723,
+          "source_url": ""
+        },
+        {
+          "rank": 9,
+          "title": "Residential Tenancies Act, 1979, S.O. 1979, c. 78",
+          "source_kind": "law",
+          "score": 0.056962,
+          "source_url": "https://www.ontario.ca/laws?search=Residential%20Tenancies%20Act%2C%201979%2C%20S.O.%201979%2C%20c.%2078"
+        },
+        {
+          "rank": 10,
+          "title": "AMOUNT PAYABLE BY MUNICIPALITIES UNDER SECTION 5.1 OF THE ACT FOR ONTARIO PROVINCIAL POLICE SERVICES",
+          "source_kind": "law",
+          "score": 0.056588,
+          "source_url": "https://www.ontario.ca/laws?search=AMOUNT%20PAYABLE%20BY%20MUNICIPALITIES%20UNDER%20SECTION%205.1%20OF%20THE%20ACT%20FOR%20ONTARIO%20PROVINCIAL%20POLICE%20SERVICES"
+        }
+      ]
+    }
+  ],
+  "duration_seconds": 45.771
+}

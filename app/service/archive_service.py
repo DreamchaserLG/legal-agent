@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import re
@@ -33,7 +35,7 @@ def ensure_archive_directories():
 
 def _safe_segment(value: str, fallback: str, limit: int = 96) -> str:
     raw = re.sub(r"\s+", "-", str(value or "").strip())
-    raw = re.sub(r"[^A-Za-z0-9_\-\u4e00-\u9fff.]+", "-", raw).strip(" .-_")
+    raw = re.sub(r"[^A-Za-z0-9_\-\u4e00-\u9fff.()]+", "-", raw).strip(" .-_")
     if not raw:
         raw = fallback
     if len(raw) > limit:
@@ -222,12 +224,28 @@ def get_archive_status() -> dict:
                 """
             )
         ).mappings().first()
+        archive_rows = conn.execute(
+            text(
+                """
+                SELECT source_code, source_uid
+                FROM source_items
+                """
+            )
+        ).mappings().all()
+    expected_archive_files = {
+        str(_archive_item_path(row["source_code"], row["source_uid"]))
+        for row in archive_rows
+    } if _archive_enabled() else set()
+    archived_file_paths = {str(path) for path in item_files}
     return {
         "archive_enabled": _archive_enabled(),
         "archive_root": str(_archive_root()),
         "export_root": str(_exports_root()),
         "database_counts": dict(row or {}),
         "archived_item_files": len(item_files),
+        "expected_archive_files": len(expected_archive_files),
+        "archive_missing_files": len(expected_archive_files - archived_file_paths),
+        "archive_extra_files": len(archived_file_paths - expected_archive_files),
         "snapshot_files": len(export_files),
         "latest_snapshot": str(max(export_files, key=lambda item: item.stat().st_mtime)) if export_files else "",
     }
@@ -296,9 +314,25 @@ def bootstrap_database_from_archive() -> dict:
             )
         ).mappings().all()
     db_counts = {str(row.get("source_code") or ""): int(row.get("total") or 0) for row in rows}
+    db_total = sum(db_counts.values())
+    archive_total = sum(archive_counts.values())
 
-    needs_restore = any(int(db_counts.get(source_code, 0)) < count for source_code, count in archive_counts.items())
-    if not needs_restore:
+    # 快速跳过: 数据库已有大量数据，不需要恢复
+    if db_total >= max(500, archive_total * 0.8):
+        return {
+            "archive_enabled": True,
+            "bootstrapped": False,
+            "reason": "database_already_populated",
+            "archive_counts": archive_counts,
+            "database_counts": db_counts,
+        }
+
+    # 只恢复缺失的 source，不全量重做
+    missing_sources = [
+        source_code for source_code, count in archive_counts.items()
+        if int(db_counts.get(source_code, 0)) < count * 0.5
+    ]
+    if not missing_sources:
         return {
             "archive_enabled": True,
             "bootstrapped": False,
@@ -307,11 +341,12 @@ def bootstrap_database_from_archive() -> dict:
             "database_counts": db_counts,
         }
 
-    result = restore_source_items_from_archive("all")
+    result = restore_source_items_from_archive(",".join(missing_sources))
     result.update(
         {
             "bootstrapped": True,
-            "reason": "archive_restored",
+            "reason": "archive_restored_partial",
+            "restored_sources": missing_sources,
             "archive_counts": archive_counts,
             "database_counts": db_counts,
         }

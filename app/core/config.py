@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 
 from dotenv import load_dotenv
@@ -27,6 +29,7 @@ class Settings:
         self.llm_timeout = int(os.getenv("LLM_TIMEOUT", "90"))
         self.llm_retry_count = int(os.getenv("LLM_RETRY_COUNT", "2"))
         self.llm_retry_backoff_ms = int(os.getenv("LLM_RETRY_BACKOFF_MS", "800"))
+        self.llm_circuit_breaker_seconds = int(os.getenv("LLM_CIRCUIT_BREAKER_SECONDS", "120"))
         self.cache_ttl_seconds = int(os.getenv("CACHE_TTL_SECONDS", "300"))
         self.prediction_use_model_case_comparison = (
             os.getenv("PREDICTION_USE_MODEL_CASE_COMPARISON", "false").strip().lower()
@@ -40,6 +43,36 @@ class Settings:
             os.getenv("PREDICTION_LOCAL_FAST_MODE", "true").strip().lower()
             in {"1", "true", "yes", "on"}
         )
+        self.reliable_answer_mode = (
+            os.getenv("RELIABLE_ANSWER_MODE", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.reliable_min_support_items = int(os.getenv("RELIABLE_MIN_SUPPORT_ITEMS", "1"))
+        self.reliable_max_confidence_without_cases = float(os.getenv("RELIABLE_MAX_CONFIDENCE_WITHOUT_CASES", "0.25"))
+        self.rag_enabled = (
+            os.getenv("RAG_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.rag_chunk_size = int(os.getenv("RAG_CHUNK_SIZE", "1800"))
+        self.rag_chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", "180"))
+        self.rag_max_context_items = int(os.getenv("RAG_MAX_CONTEXT_ITEMS", "8"))
+        self.rag_hybrid_enabled = (
+            os.getenv("RAG_HYBRID_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.rag_lexical_weight = float(os.getenv("RAG_LEXICAL_WEIGHT", "0.55"))
+        self.rag_vector_weight = float(os.getenv("RAG_VECTOR_WEIGHT", "0.45"))
+        self.rag_vector_candidate_limit = int(os.getenv("RAG_VECTOR_CANDIDATE_LIMIT", "40"))
+        self.rag_lexical_candidate_limit = int(os.getenv("RAG_LEXICAL_CANDIDATE_LIMIT", "40"))
+        self.embedding_provider = os.getenv("EMBEDDING_PROVIDER", "hash").strip().lower()
+        self.embedding_model = os.getenv("EMBEDDING_MODEL", "local-hash-embedding").strip()
+        self.embedding_dimension = int(os.getenv("EMBEDDING_DIMENSION", "384"))
+        self.embedding_base_url = os.getenv("EMBEDDING_BASE_URL", "").strip().rstrip("/")
+        self.embedding_api_key = os.getenv("EMBEDDING_API_KEY", "").strip()
+        self.embedding_batch_size = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+        self.embedding_local_model_path = os.getenv("EMBEDDING_LOCAL_MODEL_PATH", "").strip()
+        self.embedding_device = os.getenv("EMBEDDING_DEVICE", "auto").strip().lower()
+        self.embedding_max_length = int(os.getenv("EMBEDDING_MAX_LENGTH", "8192"))
         self.remote_search_enabled = (
             os.getenv("REMOTE_SEARCH_ENABLED", "true").strip().lower()
             in {"1", "true", "yes", "on"}
@@ -99,12 +132,37 @@ class Settings:
         self.canlii_database_pages = _split_csv(os.getenv("CANLII_DATABASE_PAGES", ""))
         self.canlii_remote_database_page_limit = int(os.getenv("CANLII_REMOTE_DATABASE_PAGE_LIMIT", "80"))
         self.canlii_database_discovery_ttl_seconds = int(os.getenv("CANLII_DATABASE_DISCOVERY_TTL_SECONDS", "21600"))
+        self.canlii_http_proxy = os.getenv("CANLII_HTTP_PROXY", "").strip()
+        self.canlii_request_delay_seconds = float(os.getenv("CANLII_REQUEST_DELAY_SECONDS", "2.0"))
+        self.canlii_case_text_char_limit = int(os.getenv("CANLII_CASE_TEXT_CHAR_LIMIT", "6000"))
+        self.canlii_api_base_url = os.getenv("CANLII_API_BASE_URL", "http://api.canlii.org/v1").strip().rstrip("/")
+        self.canlii_api_page_size = int(os.getenv("CANLII_API_PAGE_SIZE", "100"))
         self.canada_federal_sync_max_items = int(os.getenv("CANADA_FEDERAL_SYNC_MAX_ITEMS", "0"))
         self.ontario_legislation_sync_max_items = int(os.getenv("ONTARIO_LEGISLATION_SYNC_MAX_ITEMS", "0"))
         self.ontario_legislation_include_full_text = (
             os.getenv("ONTARIO_LEGISLATION_INCLUDE_FULL_TEXT", "false").strip().lower()
             in {"1", "true", "yes", "on"}
         )
+
+        # 数据源配置 - 支持多种数据源
+        self.canada_legislation_source = os.getenv("CANADA_LEGISLATION_SOURCE", "demo").strip().lower()
+        self.canada_case_source = os.getenv("CANADA_CASE_SOURCE", "demo").strip().lower()
+        self.canlii_api_key = os.getenv("CANLII_API_KEY", "").strip()
+        self.keyword_extraction_use_llm = (
+            os.getenv("KEYWORD_EXTRACTION_USE_LLM", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.canlii_realtime_search_enabled = (
+            os.getenv("CANLII_REALTIME_SEARCH_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.canlii_realtime_search_max_items = int(
+            os.getenv("CANLII_REALTIME_SEARCH_MAX_ITEMS", "20")
+        )
+        self.pipeline_search_timeout_seconds = int(
+            os.getenv("PIPELINE_SEARCH_TIMEOUT_SECONDS", "30")
+        )
+        self.canada_open_data_api_url = os.getenv("CANADA_OPEN_DATA_API_URL", "").strip()
 
         self.ofac_sdn_csv_url = os.getenv("OFAC_SDN_CSV_URL", "").strip()
         self.ofac_add_csv_url = os.getenv("OFAC_ADD_CSV_URL", "").strip()
@@ -129,6 +187,22 @@ class Settings:
             "wss://spark-api.xf-yun.com/v4.0/chat",
         ).strip()
         self.spark_temperature = float(os.getenv("SPARK_TEMPERATURE", "0.2"))
+
+        # 自定义模型配置 (OpenAI-compatible API)
+        self.custom_api_key = os.getenv("CUSTOM_API_KEY", "").strip()
+        self.custom_model = os.getenv("CUSTOM_MODEL", "").strip()
+        self.custom_base_url = os.getenv("CUSTOM_BASE_URL", "").strip().rstrip("/")
+        self.custom_temperature = float(os.getenv("CUSTOM_TEMPERATURE", "0.3"))
+        self.custom_max_tokens = int(os.getenv("CUSTOM_MAX_TOKENS", "4096"))
+        self.custom_strict_json_mode = (
+            os.getenv("CUSTOM_STRICT_JSON_MODE", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        # 本地模型地址 (同一台机器时使用，设为 true 则忽略 CUSTOM_BASE_URL 使用 127.0.0.1)
+        self.custom_use_local = (
+            os.getenv("CUSTOM_USE_LOCAL", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
 
 
 settings = Settings()

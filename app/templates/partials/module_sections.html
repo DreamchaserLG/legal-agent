@@ -14,24 +14,28 @@
     </div>
 </section>
 
-{% if module_code == "canada" %}
+{% if module_code == "canada" or module_packet.module_code == "canada" %}
 <section class="band band-alt">
     <div class="shell">
         <div class="band-head">
             <div>
                 <p class="eyebrow">法规</p>
                 <h2>当前输入对应的法律法规</h2>
+                <p class="muted">按关联案例数量和关键词匹配度排序，高亮显示最相关的法条。</p>
             </div>
         </div>
         {% if module_packet.relevant_laws %}
         <div class="law-shell">
             <div class="law-list-grid">
                 {% for law in module_packet.relevant_laws %}
-                <article class="law-mini-card">
+                <article class="law-mini-card {% if law.linked_case_count and law.linked_case_count >= 3 %}law-key-card{% endif %}">
                     <div class="result-head">
                         <span class="source-tag">{{ law.rule_level or law.legal_type or "法规" }}</span>
                         {% if law.linked_case_count is defined %}
-                        <span class="meta-inline">关联案例 {{ law.linked_case_count }}</span>
+                        <span class="meta-inline law-case-count">
+                            <span class="law-case-count-icon">{% if law.linked_case_count >= 5 %}★★★{% elif law.linked_case_count >= 3 %}★★{% elif law.linked_case_count >= 1 %}★{% endif %}</span>
+                            关联案例 {{ law.linked_case_count }}
+                        </span>
                         {% endif %}
                     </div>
                     <h3>
@@ -107,8 +111,11 @@
         {% if module_packet.case_law_rows %}
         {% set national_cases = module_packet.case_law_rows | selectattr('scope', 'equalto', 'national_federal') | list %}
         {% set local_cases = module_packet.case_law_rows | selectattr('scope', 'equalto', 'provincial_local') | list %}
+        {% set national_cases_with_rules = national_cases | selectattr('rules') | list %}
+        {% set local_cases_with_rules = local_cases | selectattr('rules') | list %}
 
-        {% if national_cases %}
+        <div class="case-groups-dual">
+        {% if national_cases_with_rules %}
         <section class="case-group-section">
             <div class="band-head case-group-head">
                 <div>
@@ -116,14 +123,23 @@
                     <h3>国家 / 联邦案例</h3>
                 </div>
             </div>
-            <div class="case-law-combo-stack">
-                {% for case in national_cases if case.rules %}
+            <div class="case-slider" data-case-slider>
+                <div class="case-slider-toolbar">
+                    <span class="case-slider-count">共 {{ national_cases_with_rules|length }} 条</span>
+                    <div class="case-slider-actions">
+                        <button type="button" class="case-slider-btn" data-slider-prev aria-label="上一条国家或联邦案例">‹</button>
+                        <span class="case-slider-status" data-slider-status>1 / {{ national_cases_with_rules|length }}</span>
+                        <button type="button" class="case-slider-btn" data-slider-next aria-label="下一条国家或联邦案例">›</button>
+                    </div>
+                </div>
+                <div class="case-law-combo-stack case-slider-track" data-slider-track tabindex="0" aria-label="国家或联邦案例滑动列表">
+                {% for case in national_cases_with_rules %}
                 <article class="case-law-combo">
                     <section class="case-card-panel">
                         <div class="result-head">
                             <span class="source-tag">{{ case.court_level or "案例" }}</span>
                             {% if case.match_score is defined %}
-                            <span class="score-tag">匹配 {{ '%.2f'|format(case.match_score or 0) }}</span>
+                            <span class="score-tag {{ case.relevance_level or '' }}">{{ case.relevance_label or '相关度' }} {{ '%.2f'|format(case.match_score or 0) }}</span>
                             {% endif %}
                         </div>
                         <h3>{{ case.title }}</h3>
@@ -131,6 +147,7 @@
                             <span class="chip">{{ case.country or "加拿大" }}</span>
                             {% if case.case_type %}<span class="chip">{{ case.case_type }}</span>{% endif %}
                             {% if case.judgment_date %}<span class="chip">{{ case.judgment_date }}</span>{% endif %}
+                            {% if case.relation_status == "retrieved_pending_relation" %}<span class="chip">待确认关联</span>{% endif %}
                         </div>
                         {% if case.summary %}
                         <p class="result-copy">{{ case.summary }}</p>
@@ -140,6 +157,46 @@
                         {% endif %}
                         {% if case.match_reason %}
                         <p class="muted">匹配依据：{{ case.match_reason }}</p>
+                        {% endif %}
+                        {% set relevance_item = case %}
+                        {% include "partials/relevance_highlights.html" %}
+                        {% if case.supporting_arguments or case.opposing_arguments %}
+                        <div class="case-arguments-panel">
+                            {% if case.supporting_arguments %}
+                            <div class="argument-group argument-supporting">
+                                <p class="argument-label">支持观点</p>
+                                <ul class="argument-list">
+                                    {% for arg in case.supporting_arguments %}
+                                    <li class="argument-item supporting">{{ arg }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if case.opposing_arguments %}
+                            <div class="argument-group argument-opposing">
+                                <p class="argument-label">反对观点</p>
+                                <ul class="argument-list">
+                                    {% for arg in case.opposing_arguments %}
+                                    <li class="argument-item opposing">{{ arg }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                        {% if not case.is_retrieved_result and case.case_id %}
+                        <div class="case-vote-bar" data-case-id="{{ case.case_id }}">
+                            <button class="vote-btn upvote-btn" onclick="voteCase(this, '{{ case.case_id }}', 'upvote')" title="赞成">👍 <span class="vote-count zero">0</span></button>
+                            <button class="vote-btn downvote-btn" onclick="voteCase(this, '{{ case.case_id }}', 'downvote')" title="反对">👎 <span class="vote-count zero">0</span></button>
+                            <button class="vote-reason-btn" onclick="toggleVoteReason(this)">添加理由</button>
+                        </div>
+                        <div class="vote-reason-form" data-case-id="{{ case.case_id }}">
+                            <textarea placeholder="请输入赞成或反对的理由..."></textarea>
+                            <div class="vote-form-actions">
+                                <button class="cancel-vote" onclick="cancelVoteReason(this)">取消</button>
+                                <button class="submit-vote" onclick="submitVoteWithReason(this)">提交</button>
+                            </div>
+                        </div>
                         {% endif %}
                         <div class="card-actions">
                             {% if case.source_url %}
@@ -185,11 +242,12 @@
                     </aside>
                 </article>
                 {% endfor %}
+                </div>
             </div>
         </section>
         {% endif %}
 
-        {% if local_cases %}
+        {% if local_cases_with_rules %}
         <section class="case-group-section">
             <div class="band-head case-group-head">
                 <div>
@@ -197,14 +255,23 @@
                     <h3>地区 / 地方案例</h3>
                 </div>
             </div>
-            <div class="case-law-combo-stack">
-                {% for case in local_cases if case.rules %}
+            <div class="case-slider" data-case-slider>
+                <div class="case-slider-toolbar">
+                    <span class="case-slider-count">共 {{ local_cases_with_rules|length }} 条</span>
+                    <div class="case-slider-actions">
+                        <button type="button" class="case-slider-btn" data-slider-prev aria-label="上一条地区或地方案例">‹</button>
+                        <span class="case-slider-status" data-slider-status>1 / {{ local_cases_with_rules|length }}</span>
+                        <button type="button" class="case-slider-btn" data-slider-next aria-label="下一条地区或地方案例">›</button>
+                    </div>
+                </div>
+                <div class="case-law-combo-stack case-slider-track" data-slider-track tabindex="0" aria-label="地区或地方案例滑动列表">
+                {% for case in local_cases_with_rules %}
                 <article class="case-law-combo">
                     <section class="case-card-panel">
                         <div class="result-head">
                             <span class="source-tag">{{ case.court_level or "案例" }}</span>
                             {% if case.match_score is defined %}
-                            <span class="score-tag">匹配 {{ '%.2f'|format(case.match_score or 0) }}</span>
+                            <span class="score-tag {{ case.relevance_level or '' }}">{{ case.relevance_label or '相关度' }} {{ '%.2f'|format(case.match_score or 0) }}</span>
                             {% endif %}
                         </div>
                         <h3>{{ case.title }}</h3>
@@ -212,6 +279,7 @@
                             <span class="chip">{{ case.country or "加拿大" }}</span>
                             {% if case.case_type %}<span class="chip">{{ case.case_type }}</span>{% endif %}
                             {% if case.judgment_date %}<span class="chip">{{ case.judgment_date }}</span>{% endif %}
+                            {% if case.relation_status == "retrieved_pending_relation" %}<span class="chip">待确认关联</span>{% endif %}
                         </div>
                         {% if case.summary %}
                         <p class="result-copy">{{ case.summary }}</p>
@@ -221,6 +289,46 @@
                         {% endif %}
                         {% if case.match_reason %}
                         <p class="muted">匹配依据：{{ case.match_reason }}</p>
+                        {% endif %}
+                        {% set relevance_item = case %}
+                        {% include "partials/relevance_highlights.html" %}
+                        {% if case.supporting_arguments or case.opposing_arguments %}
+                        <div class="case-arguments-panel">
+                            {% if case.supporting_arguments %}
+                            <div class="argument-group argument-supporting">
+                                <p class="argument-label">支持观点</p>
+                                <ul class="argument-list">
+                                    {% for arg in case.supporting_arguments %}
+                                    <li class="argument-item supporting">{{ arg }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if case.opposing_arguments %}
+                            <div class="argument-group argument-opposing">
+                                <p class="argument-label">反对观点</p>
+                                <ul class="argument-list">
+                                    {% for arg in case.opposing_arguments %}
+                                    <li class="argument-item opposing">{{ arg }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                        {% if not case.is_retrieved_result and case.case_id %}
+                        <div class="case-vote-bar" data-case-id="{{ case.case_id }}">
+                            <button class="vote-btn upvote-btn" onclick="voteCase(this, '{{ case.case_id }}', 'upvote')" title="赞成">👍 <span class="vote-count zero">0</span></button>
+                            <button class="vote-btn downvote-btn" onclick="voteCase(this, '{{ case.case_id }}', 'downvote')" title="反对">👎 <span class="vote-count zero">0</span></button>
+                            <button class="vote-reason-btn" onclick="toggleVoteReason(this)">添加理由</button>
+                        </div>
+                        <div class="vote-reason-form" data-case-id="{{ case.case_id }}">
+                            <textarea placeholder="请输入赞成或反对的理由..."></textarea>
+                            <div class="vote-form-actions">
+                                <button class="cancel-vote" onclick="cancelVoteReason(this)">取消</button>
+                                <button class="submit-vote" onclick="submitVoteWithReason(this)">提交</button>
+                            </div>
+                        </div>
                         {% endif %}
                         <div class="card-actions">
                             {% if case.source_url %}
@@ -266,9 +374,11 @@
                     </aside>
                 </article>
                 {% endfor %}
+                </div>
             </div>
         </section>
         {% endif %}
+        </div>
         {% else %}
         <div class="empty-state">
             <h2>未找到与当前案情匹配的案例及法律法规</h2>

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import socket
 import threading
@@ -121,23 +123,39 @@ def _count_local_matches(keywords: list[str], source_filter: str) -> int:
         params[key] = f"%{keyword.lower()}%"
         params[exact_key] = keyword.lower()
         params[sim_key] = _similarity_threshold(keyword)
-        conditions.append(
-            f"""
-            LOWER(COALESCE(si.title, '')) LIKE :{key}
-            OR LOWER(COALESCE(si.summary, '')) LIKE :{key}
-            OR LOWER(COALESCE(si.raw_text, '')) LIKE :{key}
-            OR word_similarity(LOWER(COALESCE(si.title, '')), :{exact_key}) >= :{sim_key}
-            OR EXISTS (
-                SELECT 1
-                FROM item_keywords ik
-                WHERE ik.item_id = si.id
-                  AND (
-                      LOWER(ik.keyword) LIKE :{key}
-                      OR word_similarity(LOWER(ik.keyword), :{exact_key}) >= :{sim_key}
-                  )
+        from app.core.database import is_sqlite
+        if is_sqlite():
+            conditions.append(
+                f"""
+                LOWER(COALESCE(si.title, '')) LIKE :{key}
+                OR LOWER(COALESCE(si.summary, '')) LIKE :{key}
+                OR LOWER(COALESCE(si.raw_text, '')) LIKE :{key}
+                OR EXISTS (
+                    SELECT 1
+                    FROM item_keywords ik
+                    WHERE ik.item_id = si.id
+                      AND LOWER(ik.keyword) LIKE :{key}
+                )
+                """
             )
-            """
-        )
+        else:
+            conditions.append(
+                f"""
+                LOWER(COALESCE(si.title, '')) LIKE :{key}
+                OR LOWER(COALESCE(si.summary, '')) LIKE :{key}
+                OR LOWER(COALESCE(si.raw_text, '')) LIKE :{key}
+                OR word_similarity(LOWER(COALESCE(si.title, '')), :{exact_key}) >= :{sim_key}
+                OR EXISTS (
+                    SELECT 1
+                    FROM item_keywords ik
+                    WHERE ik.item_id = si.id
+                      AND (
+                          LOWER(ik.keyword) LIKE :{key}
+                          OR word_similarity(LOWER(ik.keyword), :{exact_key}) >= :{sim_key}
+                      )
+                )
+                """
+            )
 
     source_clause = ""
     normalized_source = _normalize_source(source_filter)

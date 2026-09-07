@@ -58,6 +58,16 @@
                 <h3>置信度</h3>
                 <p>{{ prediction_result.prediction.confidence_percent }}% (原始值 {{ prediction_result.prediction.confidence }})</p>
             </div>
+            {% if prediction_result.prediction.evidence_quality %}
+            <div class="memo-block">
+                <h3>证据质量</h3>
+                <p>
+                    {{ prediction_result.prediction.evidence_quality.status }}
+                    / {{ (prediction_result.prediction.evidence_quality.score * 100)|round|int }}%
+                    ，建议置信度上限 {{ (prediction_result.prediction.evidence_quality.max_recommended_confidence * 100)|round|int }}%
+                </p>
+            </div>
+            {% endif %}
             <div class="memo-block memo-block-wide">
                 <h3>预测理由</h3>
                 <p>{{ prediction_result.prediction.reasoning }}</p>

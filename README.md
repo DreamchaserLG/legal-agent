@@ -180,6 +180,44 @@ The current compliant strategy is:
 - keep local copies only for materials already retrieved through the application workflow
 - export locally stored CanLII records from PostgreSQL into local archive files
 
+Operational command:
+
+```powershell
+# Show database/archive coverage
+python canlii_ingest.py status
+
+# Sync CanLII RSS metadata, rebuild per-item archive files, and export JSONL
+python canlii_ingest.py run
+
+# Run through a single local outbound proxy
+python canlii_ingest.py --proxy http://127.0.0.1:7897 run
+
+# Add keyword-scoped hydration with limited case text
+python canlii_ingest.py run --keywords "tenant eviction" --target-count 20
+
+# Import CanLII official API case metadata.
+# Requires CANLII_API_KEY and does not bulk-download case full text.
+python canlii_ingest.py api-metadata --database onca --database scc
+
+# Test the API importer with small limits before a long run
+python canlii_ingest.py api-metadata --max-databases 1 --max-cases-per-database 20
+```
+
+Optional network settings:
+
+```dotenv
+# Optional single outbound proxy, for example a local corporate/Clash proxy.
+# This is not used for multi-IP rotation or bypassing rate limits.
+CANLII_HTTP_PROXY=http://127.0.0.1:7897
+CANLII_REQUEST_DELAY_SECONDS=2.0
+CANLII_CASE_TEXT_CHAR_LIMIT=6000
+CANLII_API_KEY=your_canlii_api_key
+CANLII_API_BASE_URL=http://api.canlii.org/v1
+CANLII_API_PAGE_SIZE=100
+```
+
+Legacy full-site or distributed CanLII crawler scripts should not be used for this project. `crawl_distributed.py` now exits with a deprecation message and points to `canlii_ingest.py`.
+
 Official references:
 
 - CanLII Terms of Use: https://www.canlii.org/info/terms.html
@@ -226,6 +264,80 @@ LOCAL_ARCHIVE_EXPORT_DIR=data_archive/exports
 ```
 
 If model credentials are empty, retrieval still works. Analysis, deep analysis, and prediction fall back to weaker local behavior.
+
+## Reliability Guardrails
+
+The app now exposes `data_readiness` in analysis and prediction responses. Treat prediction fields as guarded unless `data_readiness.status` is `ready`.
+
+Key fields:
+
+- `data_readiness.status`: `ready`, `partial`, or `insufficient`
+- `data_readiness.corpus`: local corpus counts and CanLII quality indicators
+- `data_readiness.evidence`: matched laws, matched cases, and retrieval keywords for the current query
+- `data_readiness.missing`: missing data classes such as `canlii_case_metadata`, `case_text_or_authorized_summaries`, or `case_law_relations`
+- `data_readiness.recommended_actions`: concrete import or enrichment actions
+- `data_readiness.field_contract.guarded_fields`: fields that must not be trusted unless the data status is ready
+
+Useful checks:
+
+```powershell
+python llm_healthcheck.py
+python canlii_ingest.py --json status
+```
+
+## Local RAG Index
+
+The model should not receive the whole database or be fine-tuned just to "know" the local corpus. The executable path is:
+
+```text
+local PostgreSQL data -> rag_chunks -> retrieval evidence_context -> 8B model prompt
+```
+
+Build and inspect the local RAG index:
+
+```powershell
+# Rebuild chunks from source_items, legal_cases, legal_rules, and canada_laws
+python rag_manage.py rebuild --source canada
+
+# Check index coverage
+python rag_manage.py status
+
+# Test retrieval before trusting model output
+python rag_manage.py search "Ontario tenant eviction unpaid rent repair issue" --module canada --limit 8
+
+# Export JSONL for a server-side vector database or embedding job
+python rag_manage.py export --source canada
+
+# Compatibility wrapper: rebuild then export
+python export_rag_data.py --source canada
+```
+
+Runtime APIs:
+
+- `GET /api/rag/status`
+- `GET /api/rag/search?query=...&module=canada`
+- `POST /api/rag/rebuild?source=canada`
+- `POST /api/rag/export?source=canada`
+
+`analysis_result.rag_context` is now passed into prediction and agent-chat calls as `evidence_context`. The model prompt explicitly instructs the 8B model to use only retrieved local evidence and return insufficient evidence when the chunks do not support an answer.
+
+For small remote 8B models, prefer deterministic settings:
+
+```dotenv
+LLM_PROVIDER=custom
+CUSTOM_TEMPERATURE=0.1
+CUSTOM_STRICT_JSON_MODE=true
+LLM_TIMEOUT=30
+LLM_RETRY_COUNT=1
+LLM_CIRCUIT_BREAKER_SECONDS=120
+RELIABLE_ANSWER_MODE=true
+RELIABLE_MIN_SUPPORT_ITEMS=1
+RELIABLE_MAX_CONFIDENCE_WITHOUT_CASES=0.25
+RAG_ENABLED=true
+RAG_CHUNK_SIZE=1800
+RAG_CHUNK_OVERLAP=180
+RAG_MAX_CONTEXT_ITEMS=8
+```
 
 The repository does not seed demo accounts by default. If you need /admin on a fresh database, set INITIAL_ADMIN_* before the first startup.
 
@@ -329,8 +441,12 @@ This prevents task duplication and keeps the ingestion pipeline independent from
 - `POST /api/agent-chat`
 - `GET /api/ingestion-tasks/{task_id}`
 - `GET /api/archive/status`
+- `GET /api/rag/status`
+- `GET /api/rag/search`
 - `POST /api/archive/export`
 - `POST /api/archive/rebuild`
+- `POST /api/rag/rebuild`
+- `POST /api/rag/export`
 - `POST /api/sync/ofac`
 - `POST /api/sync/canlii`
 - `POST /api/sync/all`

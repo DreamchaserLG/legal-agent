@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import hashlib
 import hmac
@@ -787,10 +789,20 @@ def _safe_list(values: Any, limit: int | None = None) -> list[str]:
 
 def _split_case_sentences(text: str) -> list[str]:
     return [
-        part.strip(" ，,；;。")
-        for part in re.split(r"[。！？!?；;\n]+", repair_text(text))
-        if part.strip(" ，,；;。")
+        part.strip(" ，,；;。.！?!")
+        for part in re.split(r"[。！？!?；;\n\.]+", repair_text(text))
+        if part.strip(" ，,；;。.！?!")
     ]
+
+
+def _text_overlap_ratio(text_a: str, text_b: str) -> float:
+    """计算两段文本的词元重叠比例"""
+    tokens_a = set(re.findall(r"[\w一-鿿]+", text_a.lower()))
+    tokens_b = set(re.findall(r"[\w一-鿿]+", text_b.lower()))
+    if not tokens_a or not tokens_b:
+        return 0.0
+    overlap = tokens_a & tokens_b
+    return len(overlap) / min(len(tokens_a), len(tokens_b))
 
 
 def normalize_case_text(text: str) -> str:
@@ -944,24 +956,187 @@ def _build_rule_entries(module_packet: dict, default_country: str) -> list[dict]
     return rules
 
 
+def _law_ref_from_module_law(law: dict, default_country: str) -> dict:
+    return {
+        "rule_id": law.get("rule_id"),
+        "title": repair_text(law.get("title")),
+        "article_no": repair_text(law.get("article_no") or law.get("citation")),
+        "article_summary": repair_text(law.get("article_summary") or law.get("summary") or law.get("reason")),
+        "summary": repair_text(law.get("article_summary") or law.get("summary") or law.get("reason")),
+        "country": repair_text(law.get("country") or default_country),
+        "legal_type": repair_text(law.get("legal_type") or law.get("rule_level") or law.get("level")),
+        "source_url": repair_text(law.get("source_url")),
+        "detail_url": repair_text(law.get("detail_url")),
+    }
+
+
+def _case_ref_from_module_case(case: dict, linked_law_titles: list[str] | None = None) -> dict:
+    return {
+        "case_id": case.get("case_id"),
+        "external_id": repair_text(case.get("external_id")),
+        "title": repair_text(case.get("title")),
+        "court_level": repair_text(case.get("court_level")),
+        "court_rank": _to_int(case.get("court_rank")),
+        "case_type": repair_text(case.get("case_type")),
+        "judgment_date": str(case.get("judgment_date") or "")[:10],
+        "summary": repair_text(case.get("summary") or case.get("facts")),
+        "judgment_result": repair_text(case.get("judgment_result")),
+        "source_url": repair_text(case.get("source_url")),
+        "scope": repair_text(case.get("scope")),
+        "match_score": _to_float(case.get("match_score")),
+        "raw_match_score": _to_float(case.get("raw_match_score")),
+        "relevance_score": _to_float(case.get("relevance_score") or case.get("match_score")),
+        "relevance_label": repair_text(case.get("relevance_label")),
+        "relevance_level": repair_text(case.get("relevance_level")),
+        "relevance_highlights": _safe_list(case.get("relevance_highlights") or [], limit=6),
+        "match_reason": repair_text(case.get("match_reason")),
+        "relation_status": repair_text(case.get("relation_status")),
+        "is_retrieved_result": bool(case.get("is_retrieved_result")),
+        "linked_law_titles": _safe_list(linked_law_titles or case.get("linked_law_titles") or [], limit=6),
+    }
+
+
+def _module_packet_history_snapshot(module_packet: dict, default_country: str) -> dict:
+    packet = module_packet or {}
+    laws = [_law_ref_from_module_law(law, default_country) for law in (packet.get("relevant_laws") or [])[:12]]
+    case_rows = []
+    for case in (packet.get("case_law_rows") or [])[:30]:
+        rules = [
+            _law_ref_from_module_law(rule, default_country)
+            for rule in (case.get("rules") or [])[:8]
+            if repair_text(rule.get("title"))
+        ]
+        row = _case_ref_from_module_case(case, [rule.get("title") for rule in rules if rule.get("title")])
+        row["rules"] = rules
+        case_rows.append(row)
+    return {
+        "relevant_laws": laws,
+        "case_law_rows": case_rows,
+    }
+
+
+def _supporting_case_groups_from_module_packet(module_packet: dict, default_country: str, limit_laws: int = 8, cases_per_law: int = 12) -> list[dict]:
+    packet = module_packet or {}
+    law_lookup: dict[str, dict] = {}
+    for law in packet.get("relevant_laws") or []:
+        law_ref = _law_ref_from_module_law(law, default_country)
+        for key in {str(law_ref.get("rule_id") or ""), repair_text(law_ref.get("title")).lower()}:
+            if key:
+                law_lookup[key] = law_ref
+
+    groups: dict[str, dict] = {}
+    seen_cases_by_group: dict[str, set[str]] = {}
+    for case in packet.get("case_law_rows") or []:
+        case_rules = [rule for rule in (case.get("rules") or []) if repair_text(rule.get("title"))]
+        if not case_rules and packet.get("relevant_laws"):
+            case_rules = list(packet.get("relevant_laws") or [])[:1]
+        linked_titles = [repair_text(rule.get("title")) for rule in case_rules if repair_text(rule.get("title"))]
+        case_ref = _case_ref_from_module_case(case, linked_titles)
+        if not case_ref.get("title") and not case_ref.get("case_id"):
+            continue
+        case_key = str(case_ref.get("case_id") or case_ref.get("external_id") or case_ref.get("title")).lower()
+        for rule in case_rules[:limit_laws]:
+            raw_rule_ref = _law_ref_from_module_law(rule, default_country)
+            lookup_key = str(raw_rule_ref.get("rule_id") or "") or repair_text(raw_rule_ref.get("title")).lower()
+            law_ref = law_lookup.get(lookup_key) or law_lookup.get(repair_text(raw_rule_ref.get("title")).lower()) or raw_rule_ref
+            group_key = str(law_ref.get("rule_id") or "") or repair_text(law_ref.get("title")).lower()
+            if not group_key:
+                continue
+            group = groups.setdefault(
+                group_key,
+                {
+                    "rule_id": law_ref.get("rule_id"),
+                    "title": repair_text(law_ref.get("title")),
+                    "article_no": repair_text(law_ref.get("article_no")),
+                    "article_summary": repair_text(law_ref.get("article_summary") or law_ref.get("summary")),
+                    "country": repair_text(law_ref.get("country") or default_country),
+                    "legal_type": repair_text(law_ref.get("legal_type")),
+                    "detail_url": repair_text(law_ref.get("detail_url")),
+                    "source_url": repair_text(law_ref.get("source_url")),
+                    "linked_case_count": 0,
+                    "cases": [],
+                },
+            )
+            seen = seen_cases_by_group.setdefault(group_key, set())
+            if case_key in seen:
+                continue
+            seen.add(case_key)
+            group["cases"].append(case_ref)
+
+    result = []
+    for group in groups.values():
+        group["cases"] = sorted(
+            group.get("cases") or [],
+            key=lambda entry: (
+                _to_float(entry.get("match_score")),
+                _to_int(entry.get("court_rank")),
+                entry.get("judgment_date") or "",
+            ),
+            reverse=True,
+        )[:cases_per_law]
+        group["linked_case_count"] = len(group["cases"])
+        if group["cases"]:
+            result.append(group)
+        if len(result) >= limit_laws:
+            break
+    return result
+
+
 def _build_risk_point_entries(analysis: dict, prediction: dict) -> list[dict]:
-    points = _safe_list(
+    raw_flags = _safe_list(
         (analysis or {}).get("risk_flags") or [],
         limit=6,
     )
-    points = _safe_list(points + _safe_list((prediction or {}).get("risk_points") or [], limit=6), limit=6)
-    if not points:
+    raw_flags = _safe_list(raw_flags + _safe_list((prediction or {}).get("risk_points") or [], limit=6), limit=6)
+    if not raw_flags:
         fallback = repair_text((prediction or {}).get("predicted_outcome") or (prediction or {}).get("reasoning"))
         if fallback:
-            points = [fallback[:48]]
+            raw_flags = [fallback[:48]]
+
+    # 风险名称映射: 提取关键词作为名称，原文作为描述
+    risk_name_map = {
+        "证据": "证据风险",
+        "举证": "举证风险",
+        "合同": "合同风险",
+        "时效": "时效风险",
+        "程序": "程序风险",
+        "管辖": "管辖风险",
+        "赔偿": "赔偿风险",
+        "执行": "执行风险",
+        "事实": "事实认定风险",
+        "法律适用": "法律适用风险",
+        "evidence": "Evidence Risk",
+        "contract": "Contract Risk",
+        "limitation": "Limitation Risk",
+        "procedure": "Procedural Risk",
+        "jurisdiction": "Jurisdiction Risk",
+    }
+
     result = []
-    for item in points[:6]:
+    for item in raw_flags[:6]:
         level = _guess_risk_level(item)
+        item_text = repair_text(item)
+
+        # 从风险描述中提取风险名称
+        name = ""
+        for key, mapped_name in risk_name_map.items():
+            if key in item_text.lower():
+                name = mapped_name
+                break
+        if not name:
+            # 取前15个字符作为名称
+            name = item_text[:15] + ("..." if len(item_text) > 15 else "")
+
+        # 生成分析性描述: 如果原文太短或太泛化，补充分析
+        description = item_text
+        if len(item_text) < 20:
+            description = f"{item_text}。建议提前准备相关证据材料，评估对案件结果的潜在影响。"
+
         result.append(
             {
-                "name": item[:24],
+                "name": name,
                 "level": level or "中风险",
-                "description": item,
+                "description": description,
             }
         )
     return result
@@ -1142,16 +1317,44 @@ def _build_legal_relation_entries(
     rules: list[dict],
     module_code: str,
     requested_relief: str,
+    disputed_issues: list[str] | None = None,
 ) -> list[str]:
     relations: list[str] = []
     compact_case_type = _compact_case_type(case_type)
-    if compact_case_type:
-        relations.append(f"{compact_case_type}案件的核心法律关系")
 
+    # 基于案件类型生成核心法律关系
+    if compact_case_type:
+        type_relations = {
+            "contract": "合同法律关系：双方基于合意产生的权利义务关系",
+            "employment": "劳动法律关系：用人单位与劳动者之间的雇佣关系",
+            "tort": "侵权法律关系：因过错行为导致损害赔偿的权利义务",
+            "criminal": "刑事法律关系：国家公诉机关与被告人之间的追诉关系",
+            "intellectual": "知识产权法律关系：智力成果的专有权利保护关系",
+            "property": "物权法律关系：对不动产或动产的占有、使用、收益关系",
+            "family": "婚姻家庭法律关系：基于婚姻、血缘产生的权利义务",
+            "corporate": "公司法律关系：股东、董事与公司之间的治理关系",
+            "trust": "信托法律关系：委托人、受托人与受益人之间的信义义务",
+            "administrative": "行政法律关系：行政机关与相对人之间的管理关系",
+            "sanction": "制裁合规法律关系：受制裁主体与监管机构之间的合规义务",
+        }
+        relations.append(type_relations.get(compact_case_type, f"{compact_case_type}案件的核心法律关系"))
+
+    # 基于法规生成具体法律依据
     for rule in rules[:3]:
         title = repair_text(rule.get("title"))
+        article_no = repair_text(rule.get("article_no"))
         if title:
-            relations.append(f"与《{title}》直接相关")
+            if article_no:
+                relations.append(f"适用《{title}》第{article_no}条的规定")
+            else:
+                relations.append(f"与《{title}》的适用直接相关")
+
+    # 基于争议焦点生成法律关系维度
+    if disputed_issues:
+        for issue in disputed_issues[:2]:
+            issue_text = repair_text(issue)
+            if issue_text and len(issue_text) > 8:
+                relations.append(f"争议维度：{issue_text[:40]}")
 
     if normalize_case_text(module_code) == "us_sanctions":
         relations.append("优先核对 OFAC 规则、许可路径和除名程序")
@@ -1377,6 +1580,18 @@ def build_case_history_payload(
     )
     country = "United States" if repair_text(module_code).lower() == "us_sanctions" else "Canada"
     rules = _build_rule_entries(module_packet, country)
+    module_packet_snapshot = _module_packet_history_snapshot(module_packet, country)
+    module_supporting_case_groups = _supporting_case_groups_from_module_packet(module_packet, country)
+    raw_supporting_case_groups = prediction.get("supporting_case_groups") or analysis.get("supporting_case_groups") or []
+    raw_groups_have_cases = any(isinstance(group, dict) and group.get("cases") for group in raw_supporting_case_groups)
+    snapshot_supporting_case_groups = raw_supporting_case_groups if raw_groups_have_cases else module_supporting_case_groups
+    snapshot_supporting_case_rows = (
+        prediction.get("supporting_case_rows")
+        or analysis.get("supporting_case_rows")
+        or module_packet_snapshot.get("case_law_rows")
+        or []
+    )
+    snapshot_linked_laws = prediction.get("linked_laws") or analysis.get("linked_laws") or rules
     risk_points = _build_risk_point_entries(analysis_block, prediction)
 
     case_title = _derive_case_title(query_text, analysis_block.get("summary") or prediction.get("predicted_outcome") or "")
@@ -1394,12 +1609,31 @@ def build_case_history_payload(
     node_label = _build_history_node_label(case_type, risk_points, conclusion, case_title)
     court_level = repair_text(analysis_block.get("jurisdiction") or "")
     requested_relief = repair_text(intake_outline.get("requested_relief") or analysis_block.get("requested_relief") or "")
+
+    # 后处理: 检测 case_summary 是否只是复制了原文
+    query_lower = query_text.lower().strip()
+    if case_summary and query_lower:
+        summary_lower = case_summary.lower().strip()
+        if summary_lower == query_lower[:len(summary_lower)] or _text_overlap_ratio(summary_lower, query_lower) > 0.7:
+            parts = []
+            if issues:
+                parts.append(f"争议焦点: {issues[0]}")
+            if legal_topics:
+                parts.append(f"法律领域: {legal_topics[0]}")
+            if requested_relief:
+                parts.append(f"请求事项: {requested_relief[:30]}")
+            if parts:
+                case_summary = "；".join(parts) + "。"
+            else:
+                case_summary = intake_outline.get("facts", "")[:200] or query_text[:200]
+
     legal_relations = _build_legal_relation_entries(
         case_type=case_type,
         legal_topics=legal_topics,
         rules=rules,
         module_code=module_code,
         requested_relief=requested_relief,
+        disputed_issues=issues,
     )
     evidence_focus = _build_evidence_focus_entries(
         case_type=case_type,
@@ -1465,8 +1699,10 @@ def build_case_history_payload(
                 "suggested_actions": suggested_actions,
             },
             "rules": rules,
-            "linked_laws": prediction.get("linked_laws") or [],
-            "supporting_case_groups": prediction.get("supporting_case_groups") or [],
+            "module_packet": module_packet_snapshot,
+            "linked_laws": snapshot_linked_laws,
+            "supporting_case_groups": snapshot_supporting_case_groups,
+            "supporting_case_rows": snapshot_supporting_case_rows,
             "risk_points": risk_points,
             "legal_relations": legal_relations,
             "evidence_focus": evidence_focus,
@@ -2550,9 +2786,10 @@ def list_user_histories(
     start_date: str = "",
     end_date: str = "",
     limit: int = 50,
+    offset: int = 0,
 ) -> list[dict]:
     conditions = ["sh.user_id = :user_id"]
-    params: dict[str, Any] = {"user_id": int(user_id), "limit": max(1, min(int(limit), 200))}
+    params: dict[str, Any] = {"user_id": int(user_id), "limit": max(1, min(int(limit), 200)), "offset": max(0, int(offset))}
     if query_type:
         conditions.append("LOWER(sh.query_type) = LOWER(:query_type)")
         params["query_type"] = repair_text(query_type)
@@ -2579,11 +2816,59 @@ def list_user_histories(
         params["end_date"] = repair_text(end_date)
     sql = _history_base_sql(conditions) + """
     ORDER BY COALESCE(sh.last_viewed_at, sh.updated_at, sh.created_at) DESC
-    LIMIT :limit
+    LIMIT :limit OFFSET :offset
     """
     with engine.connect() as conn:
         rows = conn.execute(text(sql), params).mappings().all()
     return [dict(row) for row in rows]
+
+
+def count_user_histories(
+    *,
+    user_id: int,
+    query_type: str = "",
+    case_type: str = "",
+    country: str = "",
+    court_level: str = "",
+    legal_type: str = "",
+    legal_rule: str = "",
+    start_date: str = "",
+    end_date: str = "",
+) -> int:
+    conditions = ["sh.user_id = :user_id"]
+    params: dict[str, Any] = {"user_id": int(user_id)}
+    if query_type:
+        conditions.append("LOWER(sh.query_type) = LOWER(:query_type)")
+        params["query_type"] = repair_text(query_type)
+    if case_type:
+        conditions.append("LOWER(sh.case_type) LIKE LOWER(:case_type)")
+        params["case_type"] = f"%{repair_text(case_type)}%"
+    if country:
+        conditions.append("LOWER(sh.country) = LOWER(:country)")
+        params["country"] = repair_text(country)
+    if court_level:
+        conditions.append("LOWER(sh.court_level) LIKE LOWER(:court_level)")
+        params["court_level"] = f"%{repair_text(court_level)}%"
+    if legal_type:
+        conditions.append("LOWER(sh.legal_type) LIKE LOWER(:legal_type)")
+        params["legal_type"] = f"%{repair_text(legal_type)}%"
+    if legal_rule:
+        conditions.append("CAST(sh.legal_rules_json AS TEXT) ILIKE :legal_rule")
+        params["legal_rule"] = f"%{repair_text(legal_rule)}%"
+    if start_date:
+        conditions.append("sh.created_at >= :start_date")
+        params["start_date"] = repair_text(start_date)
+    if end_date:
+        conditions.append("sh.created_at <= :end_date")
+        params["end_date"] = repair_text(end_date)
+    sql = f"""
+    SELECT COUNT(*) AS total
+    FROM search_histories sh
+    WHERE {' AND '.join(conditions)}
+    """
+    with engine.connect() as conn:
+        row = conn.execute(text(sql), params).mappings().first()
+    return int(row["total"]) if row else 0
 
 
 def get_history(history_id: int, *, user_id: int | None = None, admin: bool = False, touch: bool = True) -> dict | None:
@@ -2612,6 +2897,7 @@ def _normalize_rule_entry(item: Any) -> dict | None:
         return None
     return {
         "id": item.get("rule_id") or item.get("id") or "",
+        "rule_id": item.get("rule_id") or item.get("id") or "",
         "title": title,
         "article_no": repair_text(item.get("article_no")),
         "summary": repair_text(item.get("summary") or item.get("article_summary")),
@@ -2714,6 +3000,11 @@ def _normalize_support_case_entry(item: Any) -> dict | None:
         "scope": scope,
         "scope_label": _history_scope_label(scope),
         "match_score": _to_float(item.get("match_score")),
+        "raw_match_score": _to_float(item.get("raw_match_score")),
+        "relevance_score": _to_float(item.get("relevance_score") or item.get("match_score")),
+        "relevance_label": repair_text(item.get("relevance_label")),
+        "relevance_level": repair_text(item.get("relevance_level")),
+        "relevance_highlights": _safe_list(item.get("relevance_highlights") or [], limit=6),
         "match_reason": repair_text(item.get("match_reason")),
         "linked_law_titles": _safe_list(item.get("linked_law_titles") or [], limit=4),
     }
@@ -2822,7 +3113,17 @@ def _history_supporting_case_groups(history: dict) -> list[dict]:
     groups: list[dict] = []
     for item in snapshot.get("supporting_case_groups") or []:
         normalized = _normalize_support_group_entry(item)
-        if normalized:
+        if normalized and normalized.get("cases"):
+            groups.append(normalized)
+    if groups:
+        return groups
+    module_packet_groups = _supporting_case_groups_from_module_packet(
+        snapshot.get("module_packet") or {},
+        repair_text(history.get("country") or "Canada") or "Canada",
+    )
+    for item in module_packet_groups:
+        normalized = _normalize_support_group_entry(item)
+        if normalized and normalized.get("cases"):
             groups.append(normalized)
     if groups:
         return groups
@@ -2830,6 +3131,50 @@ def _history_supporting_case_groups(history: dict) -> list[dict]:
 
 
 def _history_supporting_case_rows(history: dict, groups: list[dict] | None = None) -> list[dict]:
+    snapshot = history.get("result_snapshot") or {}
+    snapshot_rows = snapshot.get("supporting_case_rows") or (snapshot.get("module_packet") or {}).get("case_law_rows") or []
+    if snapshot_rows and not groups:
+        rows: list[dict] = []
+        seen_rows: set[str] = set()
+        for raw_case in snapshot_rows:
+            normalized = _normalize_support_case_entry(raw_case)
+            if not normalized:
+                continue
+            row_key = str(normalized.get("case_id") or raw_case.get("external_id") or normalized.get("title")).lower()
+            if row_key in seen_rows:
+                continue
+            seen_rows.add(row_key)
+            rules = []
+            for raw_rule in (raw_case.get("rules") or [])[:8]:
+                title = repair_text(raw_rule.get("title"))
+                if not title:
+                    continue
+                rules.append(
+                    {
+                        "rule_id": raw_rule.get("rule_id") or raw_rule.get("id"),
+                        "title": title,
+                        "article_no": repair_text(raw_rule.get("article_no")),
+                        "article_summary": repair_text(raw_rule.get("article_summary") or raw_rule.get("summary")),
+                        "country": repair_text(raw_rule.get("country")),
+                        "legal_type": repair_text(raw_rule.get("legal_type")),
+                        "detail_url": repair_text(raw_rule.get("detail_url")),
+                        "source_url": repair_text(raw_rule.get("source_url")),
+                    }
+                )
+            normalized["rules"] = rules
+            rows.append(normalized)
+        if rows:
+            return sorted(
+                rows,
+                key=lambda entry: (
+                    1 if repair_text(entry.get("scope")) == "national_federal" else 0,
+                    _to_float(entry.get("match_score")),
+                    _to_int(entry.get("court_rank")),
+                    repair_text(entry.get("judgment_date")),
+                ),
+                reverse=True,
+            )
+
     case_map: dict[str, dict] = {}
     for group in (groups or _history_supporting_case_groups(history)):
         law_ref = {
@@ -2919,6 +3264,12 @@ def _history_rules(history: dict) -> list[dict]:
     for item in snapshot.get("rules") or []:
         normalized = _normalize_rule_entry(item)
         if normalized and _history_rule_is_active(normalized, valid_rule_ids, valid_rule_titles):
+            rules.append(normalized)
+    if rules:
+        return rules
+    for item in (snapshot.get("module_packet") or {}).get("relevant_laws") or []:
+        normalized = _normalize_rule_entry(item)
+        if normalized:
             rules.append(normalized)
     return rules
 

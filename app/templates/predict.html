@@ -87,6 +87,26 @@
             <span class="chip">案例 {{ prediction_result.retrieval_summary.case_count or 0 }}</span>
         </div>
         {% endif %}
+        {% if prediction_result.data_readiness %}
+        <div class="task-banner">
+            <div class="task-banner-head">
+                <div>
+                    <p class="eyebrow">数据可靠性</p>
+                    <h2>{{ '当前数据不足以支撑可靠预测' if prediction_result.data_readiness.status != 'ready' else '当前数据可支撑研究型判断' }}</h2>
+                </div>
+                <span class="task-status">{{ prediction_result.data_readiness.status }}</span>
+            </div>
+            <div class="chip-row">
+                <span class="chip">命中法规 {{ prediction_result.data_readiness.evidence.matched_laws }}</span>
+                <span class="chip">命中案例 {{ prediction_result.data_readiness.evidence.matched_cases }}</span>
+                <span class="chip">CanLII {{ prediction_result.data_readiness.corpus.canlii_total }}</span>
+                <span class="chip">可疑全文 {{ prediction_result.data_readiness.corpus.canlii_full_text_like }}</span>
+            </div>
+            {% if prediction_result.data_readiness.recommended_actions %}
+            <p class="task-copy">{{ prediction_result.data_readiness.recommended_actions[0] }}</p>
+            {% endif %}
+        </div>
+        {% endif %}
         <div class="snapshot-grid">
             <article class="snapshot-card snapshot-wide">
                 <p class="panel-kicker">事实摘要</p>
@@ -117,6 +137,106 @@
 </section>
 
 {% include "partials/module_sections.html" %}
+
+{% set prediction_evidence = prediction_result.prediction.get('prediction_evidence', {}) %}
+{% if prediction_evidence.get('cases') or prediction_evidence.get('laws') %}
+<section class="band">
+    <div class="shell">
+        <div class="band-head">
+            <div>
+                <p class="eyebrow">预测依据</p>
+                <h2>本次预测使用的案情分析案例与法律法规</h2>
+                <p class="muted">以下案例和法规来自案情分析阶段的命中结果，预测结论会优先围绕这些材料展开，而不是脱离案例空凭判断。</p>
+            </div>
+            <div class="status-cluster">
+                <span class="chip">法规 {{ prediction_evidence.get('law_count') or (prediction_evidence.get('laws') or [])|length }}</span>
+                <span class="chip">案例 {{ prediction_evidence.get('case_count') or (prediction_evidence.get('cases') or [])|length }}</span>
+            </div>
+        </div>
+
+        {% if prediction_evidence.get('laws') %}
+        <div class="legal-rules-grid">
+            {% for law in prediction_evidence.get('laws', [])[:6] %}
+            <article class="legal-rule-card">
+                <div class="result-head">
+                    <strong>{{ law.title }}</strong>
+                    {% if law.article_no %}<span class="meta-inline">{{ law.article_no }}</span>{% endif %}
+                </div>
+                {% if law.article_summary %}
+                <p class="result-copy">{{ law.article_summary }}</p>
+                {% endif %}
+                <div class="chip-row">
+                    {% if law.legal_type %}<span class="chip">{{ law.legal_type }}</span>{% endif %}
+                    {% if law.linked_case_count %}<span class="chip">关联案例 {{ law.linked_case_count }}</span>{% endif %}
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if prediction_evidence.get('cases') %}
+        {% set prediction_case_cards = prediction_evidence.get('cases', [])[:12] %}
+        <div class="case-slider compact" data-case-slider>
+            <div class="case-slider-toolbar">
+                <span class="case-slider-count">共 {{ prediction_case_cards|length }} 条</span>
+                <div class="case-slider-actions">
+                    <button type="button" class="case-slider-btn" data-slider-prev aria-label="上一条预测依据案例">‹</button>
+                    <span class="case-slider-status" data-slider-status>1 / {{ prediction_case_cards|length }}</span>
+                    <button type="button" class="case-slider-btn" data-slider-next aria-label="下一条预测依据案例">›</button>
+                </div>
+            </div>
+            <div class="case-groups-grid case-slider-track compact" data-slider-track tabindex="0" aria-label="预测依据案例滑动列表">
+            {% for case in prediction_case_cards %}
+            <article class="case-group-card">
+                <div class="result-head">
+                    <strong>{{ case.title }}</strong>
+                    {% if case.match_score is defined %}<span class="score-tag {{ case.relevance_level or '' }}">{{ case.relevance_label or '相关度' }} {{ '%.2f'|format(case.match_score or 0) }}</span>{% endif %}
+                </div>
+                <div class="chip-row">
+                    {% if case.court_level %}<span class="chip">{{ case.court_level }}</span>{% endif %}
+                    {% if case.case_type %}<span class="chip">{{ case.case_type }}</span>{% endif %}
+                    {% if case.judgment_date %}<span class="chip">{{ case.judgment_date }}</span>{% endif %}
+                    {% for title in case.law_titles or [] %}
+                    <span class="chip">{{ title }}</span>
+                    {% endfor %}
+                </div>
+                {% if case.summary %}
+                <p class="result-copy">{{ case.summary }}</p>
+                {% endif %}
+                {% if case.match_reason %}
+                <p class="muted">匹配依据：{{ case.match_reason }}</p>
+                {% endif %}
+                {% set relevance_item = case %}
+                {% include "partials/relevance_highlights.html" %}
+                {% if case.similarities %}
+                <ul class="memo-list">
+                    {% for item in case.similarities[:2] %}
+                    <li>{{ item }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                {% if case.differences %}
+                <ul class="memo-list memo-risk-list">
+                    {% for item in case.differences[:2] %}
+                    <li>{{ item }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                {% if case.source_url %}
+                <div class="card-actions">
+                    <a class="text-link" href="{{ case.source_url }}" target="_blank">查看案例来源</a>
+                </div>
+                {% endif %}
+            </article>
+            {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+{% include "partials/agent_chat_panel.html" %}
 
 <section class="band band-alt">
     <div class="shell">
@@ -163,6 +283,30 @@
                 </div>
 
                 <div class="memo-grid">
+                    {% if prediction_result.prediction.reliability_warnings %}
+                    <article class="memo-card memo-outcome">
+                        <p class="panel-kicker">可靠性警告</p>
+                        <ul class="memo-list memo-risk-list">
+                            {% for warning in prediction_result.prediction.reliability_warnings %}
+                            <li>{{ warning }}</li>
+                            {% endfor %}
+                        </ul>
+                    </article>
+                    {% endif %}
+                    {% if prediction_result.prediction.evidence_quality %}
+                    <article class="memo-card">
+                        <p class="panel-kicker">证据质量</p>
+                        <p class="memo-copy">
+                            {{ prediction_result.prediction.evidence_quality.status }}
+                            / {{ (prediction_result.prediction.evidence_quality.score * 100)|round|int }}%
+                        </p>
+                        <div class="chip-row">
+                            <span class="chip">案例 {{ prediction_result.prediction.evidence_quality.case_count }}</span>
+                            <span class="chip">法规 {{ prediction_result.prediction.evidence_quality.law_count }}</span>
+                            <span class="chip">上限 {{ (prediction_result.prediction.evidence_quality.max_recommended_confidence * 100)|round|int }}%</span>
+                        </div>
+                    </article>
+                    {% endif %}
                     <article class="memo-card memo-outcome">
                         <p class="panel-kicker">结论说明</p>
                         <p class="memo-copy">{{ prediction_bilingual.get('reasoning_zh') or prediction_result.prediction.reasoning }}</p>
@@ -256,5 +400,59 @@
         {% endif %}
     </div>
 </section>
+{% endif %}
+{% if prediction_result %}
+<script>
+let currentVoteType = {};
+function voteCase(btn, caseId, voteType) {
+    const bar = btn.closest('.case-vote-bar');
+    const reasonForm = bar.nextElementSibling;
+    const existingVote = currentVoteType[caseId];
+    if (existingVote === voteType) {
+        fetch('/api/cases/' + caseId + '/vote', { method: 'DELETE' })
+            .then(r => r.json())
+            .then(data => { updateVoteUI(bar, data.votes); delete currentVoteType[caseId]; });
+        return;
+    }
+    currentVoteType[caseId] = voteType;
+    fetch('/api/cases/' + caseId + '/vote', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ vote_type: voteType, reason: '' }),
+    }).then(r => r.json()).then(data => { updateVoteUI(bar, data.votes); });
+}
+function updateVoteUI(bar, votes) {
+    const upBtn = bar.querySelector('.upvote-btn .vote-count');
+    const downBtn = bar.querySelector('.downvote-btn .vote-count');
+    upBtn.textContent = votes.upvotes;
+    downBtn.textContent = votes.downvotes;
+    upBtn.className = 'vote-count ' + (votes.upvotes > 0 ? 'positive' : 'zero');
+    downBtn.className = 'vote-count ' + (votes.downvotes > 0 ? 'negative' : 'zero');
+    bar.querySelectorAll('.vote-btn').forEach(b => b.classList.remove('active-upvote', 'active-downvote'));
+}
+function toggleVoteReason(btn) {
+    const form = btn.closest('.case-vote-bar').nextElementSibling;
+    form.classList.toggle('open');
+}
+function cancelVoteReason(btn) {
+    btn.closest('.vote-reason-form').classList.remove('open');
+}
+function submitVoteWithReason(btn) {
+    const form = btn.closest('.vote-reason-form');
+    const caseId = form.dataset.caseId;
+    const reason = form.querySelector('textarea').value.trim();
+    const bar = form.previousElementSibling;
+    const voteType = currentVoteType[caseId] || 'upvote';
+    fetch('/api/cases/' + caseId + '/vote', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ vote_type: voteType, reason: reason }),
+    }).then(r => r.json()).then(data => {
+        updateVoteUI(bar, data.votes);
+        form.classList.remove('open');
+        form.querySelector('textarea').value = '';
+    });
+}
+</script>
 {% endif %}
 {% endblock %}

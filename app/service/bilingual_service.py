@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import json
 import re
@@ -214,29 +216,30 @@ def build_bilingual_keyword_bundle(keywords_input: str | list[str], module: str 
         "translation_status": "fallback",
     }
 
-    if is_llm_configured() and raw_text.strip() and query_language in {"zh", "mixed"}:
-        try:
-            data = _call_structured(
-                "bilingual_keyword_query",
-                KEYWORD_TRANSLATION_SCHEMA,
-                (
-                    "You are preparing legal retrieval keywords for a bilingual Chinese-English workflow. "
-                    "Translate the query faithfully between Chinese and English. Keep legal names, agencies, "
-                    "and statutes accurate. Return 4 to 10 retrieval-friendly keywords in both languages."
-                ),
-                {"module": module, "query": raw_text, "keywords": original_keywords},
-            )
-            payload.update(
-                {
-                    "query_zh": str(data.get("query_zh") or payload["query_zh"]).strip(),
-                    "query_en": str(data.get("query_en") or payload["query_en"]).strip(),
-                    "keywords_zh": _dedupe_strings(data.get("keywords_zh"), limit=10) or payload["keywords_zh"],
-                    "keywords_en": _dedupe_strings(data.get("keywords_en"), limit=10) or payload["keywords_en"],
-                    "translation_status": "model",
-                }
-            )
-        except LLMServiceError:
-            pass
+    # 暂时禁用 LLM 关键词翻译，避免超时
+    # if is_llm_configured() and raw_text.strip() and query_language in {"zh", "mixed"}:
+    #     try:
+    #         data = _call_structured(
+    #             "bilingual_keyword_query",
+    #             KEYWORD_TRANSLATION_SCHEMA,
+    #             (
+    #                 "You are preparing legal retrieval keywords for a bilingual Chinese-English workflow. "
+    #                 "Translate the query faithfully between Chinese and English. Keep legal names, agencies, "
+    #                 "and statutes accurate. Return 4 to 10 retrieval-friendly keywords in both languages."
+    #             ),
+    #             {"module": module, "query": raw_text, "keywords": original_keywords},
+    #         )
+    #         payload.update(
+    #             {
+    #                 "query_zh": str(data.get("query_zh") or payload["query_zh"]).strip(),
+    #                 "query_en": str(data.get("query_en") or payload["query_en"]).strip(),
+    #                 "keywords_zh": _dedupe_strings(data.get("keywords_zh"), limit=10) or payload["keywords_zh"],
+    #                 "keywords_en": _dedupe_strings(data.get("keywords_en"), limit=10) or payload["keywords_en"],
+    #                 "translation_status": "model",
+    #             }
+    #         )
+    #     except LLMServiceError:
+    #         pass
 
     retrieval_keywords = _dedupe_strings(payload.get("keywords_en") + payload.get("keywords_zh") + original_keywords, limit=14)
     payload["retrieval_keywords"] = retrieval_keywords or original_keywords
@@ -270,49 +273,50 @@ def build_bilingual_analysis_pack(input_text: str, analysis: dict, module: str =
     }
 
     payload = copy.deepcopy(fallback)
-    if is_llm_configured() and raw_text:
-        try:
-            data = _call_structured(
-                "bilingual_case_analysis",
-                ANALYSIS_BILINGUAL_SCHEMA,
-                (
-                    "You are preparing a bilingual Chinese-English legal analysis pack. "
-                    "Translate the input and each structured field faithfully. "
-                    "Keep party names, statute names, court names, and legal terms precise. "
-                    "The English side should be retrieval-friendly."
-                ),
-                {"module": module, "input_text": raw_text, "analysis": analysis},
-            )
-            payload = {
-                "query_language": query_language,
-                "input_texts": {
-                    "zh": str(data.get("input_zh") or fallback["input_texts"]["zh"]).strip(),
-                    "en": str(data.get("input_en") or fallback["input_texts"]["en"]).strip(),
-                },
-                "facts": {
-                    "zh": str(data.get("facts_zh") or fallback["facts"]["zh"]).strip(),
-                    "en": str(data.get("facts_en") or fallback["facts"]["en"]).strip(),
-                },
-                "summary": {
-                    "zh": str(data.get("summary_zh") or fallback["summary"]["zh"]).strip(),
-                    "en": str(data.get("summary_en") or fallback["summary"]["en"]).strip(),
-                },
-                "requested_relief": {
-                    "zh": str(data.get("requested_relief_zh") or fallback["requested_relief"]["zh"]).strip(),
-                    "en": str(data.get("requested_relief_en") or fallback["requested_relief"]["en"]).strip(),
-                },
-                "disputed_issues": {
-                    "zh": _dedupe_strings(data.get("disputed_issues_zh"), limit=6) or fallback["disputed_issues"]["zh"],
-                    "en": _dedupe_strings(data.get("disputed_issues_en"), limit=6) or fallback["disputed_issues"]["en"],
-                },
-                "keywords": {
-                    "zh": _dedupe_strings(data.get("keywords_zh"), limit=8) or fallback["keywords"]["zh"],
-                    "en": _dedupe_strings(data.get("keywords_en"), limit=8) or fallback["keywords"]["en"],
-                },
-                "translation_status": "model",
-            }
-        except LLMServiceError:
-            payload = fallback
+    # 暂时禁用 LLM 双语分析，避免超时
+    # if is_llm_configured() and raw_text:
+    #     try:
+    #         data = _call_structured(
+    #             "bilingual_case_analysis",
+    #             ANALYSIS_BILINGUAL_SCHEMA,
+    #             (
+    #                 "You are preparing a bilingual Chinese-English legal analysis pack. "
+    #                 "Translate the input and each structured field faithfully. "
+    #                 "Keep party names, statute names, court names, and legal terms precise. "
+    #                 "The English side should be retrieval-friendly."
+    #             ),
+    #             {"module": module, "input_text": raw_text, "analysis": analysis},
+    #         )
+    #         payload = {
+    #             "query_language": query_language,
+    #             "input_texts": {
+    #                 "zh": str(data.get("input_zh") or fallback["input_texts"]["zh"]).strip(),
+    #                 "en": str(data.get("input_en") or fallback["input_texts"]["en"]).strip(),
+    #             },
+    #             "facts": {
+    #                 "zh": str(data.get("facts_zh") or fallback["facts"]["zh"]).strip(),
+    #                 "en": str(data.get("facts_en") or fallback["facts"]["en"]).strip(),
+    #             },
+    #             "summary": {
+    #                 "zh": str(data.get("summary_zh") or fallback["summary"]["zh"]).strip(),
+    #                 "en": str(data.get("summary_en") or fallback["summary"]["en"]).strip(),
+    #             },
+    #             "requested_relief": {
+    #                 "zh": str(data.get("requested_relief_zh") or fallback["requested_relief"]["zh"]).strip(),
+    #                 "en": str(data.get("requested_relief_en") or fallback["requested_relief"]["en"]).strip(),
+    #             },
+    #             "disputed_issues": {
+    #                 "zh": _dedupe_strings(data.get("disputed_issues_zh"), limit=6) or fallback["disputed_issues"]["zh"],
+    #                 "en": _dedupe_strings(data.get("disputed_issues_en"), limit=6) or fallback["disputed_issues"]["en"],
+    #             },
+    #             "keywords": {
+    #                 "zh": _dedupe_strings(data.get("keywords_zh"), limit=8) or fallback["keywords"]["zh"],
+    #                 "en": _dedupe_strings(data.get("keywords_en"), limit=8) or fallback["keywords"]["en"],
+    #             },
+    #             "translation_status": "model",
+    #         }
+    #     except LLMServiceError:
+    #         payload = fallback
 
     payload["retrieval_keywords"] = _dedupe_strings(
         payload.get("keywords", {}).get("en") + payload.get("keywords", {}).get("zh") + analysis.get("search_keywords", []),

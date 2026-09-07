@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import base64
 import hashlib
 import hmac
 import json
+import time
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from urllib.parse import quote, urlparse
@@ -22,22 +25,74 @@ class LLMNotConfiguredError(LLMServiceError):
 
 _HTTP_SESSION = requests.Session()
 _HTTP_SESSION.trust_env = False
+_CIRCUIT_OPEN_UNTIL: dict[str, float] = {}
 
 
 def _timeout_value() -> int:
     return max(settings.request_timeout, settings.llm_timeout, 30)
 
 
+def _circuit_key(provider: str) -> str:
+    if provider == "custom":
+        return f"custom:{_get_custom_base_url()}:{settings.custom_model}"
+    if provider == "openai":
+        return f"openai:{settings.openai_base_url}:{settings.openai_model}"
+    return f"spark:{settings.spark_base_url}:{settings.spark_model}"
+
+
+def _circuit_failure_seconds() -> int:
+    return max(0, int(getattr(settings, "llm_circuit_breaker_seconds", 120)))
+
+
+def _check_circuit(provider: str):
+    key = _circuit_key(provider)
+    open_until = float(_CIRCUIT_OPEN_UNTIL.get(key) or 0)
+    if open_until > time.time():
+        wait_seconds = int(open_until - time.time())
+        raise LLMServiceError(f"{provider} model endpoint is temporarily marked unavailable for {wait_seconds}s.")
+
+
+def _mark_circuit_failure(provider: str, error_message: str):
+    seconds = _circuit_failure_seconds()
+    if seconds <= 0:
+        return
+    lowered = str(error_message or "").lower()
+    transient_markers = [
+        "request failed",
+        "connect failed",
+        "receive failed",
+        "timed out",
+        "timeout",
+        "connection",
+        "ssl",
+        "eof",
+        "refused",
+        "reset",
+        "502",
+        "503",
+        "504",
+    ]
+    if any(marker in lowered for marker in transient_markers):
+        _CIRCUIT_OPEN_UNTIL[_circuit_key(provider)] = time.time() + seconds
+
+
+def _mark_circuit_success(provider: str):
+    _CIRCUIT_OPEN_UNTIL.pop(_circuit_key(provider), None)
+
+
 def get_llm_provider() -> str:
     provider = (settings.llm_provider or "spark").strip().lower()
-    if provider in {"openai", "spark"}:
+    if provider in {"openai", "spark", "custom"}:
         return provider
     return "spark"
 
 
 def get_llm_model_name() -> str:
-    if get_llm_provider() == "openai":
+    provider = get_llm_provider()
+    if provider == "openai":
         return settings.openai_model
+    if provider == "custom":
+        return settings.custom_model
     return settings.spark_model
 
 
@@ -45,7 +100,16 @@ def is_llm_configured() -> bool:
     provider = get_llm_provider()
     if provider == "openai":
         return bool(settings.openai_api_key)
+    if provider == "custom":
+        base_url = "http://127.0.0.1:8000/v1" if settings.custom_use_local else settings.custom_base_url
+        return bool(settings.custom_api_key and settings.custom_model and base_url)
     return bool(settings.spark_api_key and settings.spark_api_secret and settings.spark_app_id)
+
+
+def _get_custom_base_url() -> str:
+    if settings.custom_use_local:
+        return "http://127.0.0.1:8000/v1"
+    return settings.custom_base_url
 
 
 def _extract_openai_output_text(payload: dict) -> str:
@@ -116,31 +180,34 @@ def _create_openai_structured_response(
     instructions: str,
     user_input: str,
 ) -> dict:
+    schema_text = json.dumps(schema, ensure_ascii=False)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"{instructions}\n\n"
+                "You must return one JSON object only. Do not use markdown fences. "
+                "Do not add commentary before or after the JSON. "
+                f"The JSON must satisfy the following schema:\n{schema_text}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": user_input,
+        },
+    ]
+
     payload = {
         "model": settings.openai_model,
-        "instructions": instructions,
-        "input": [
-            {
-                "role": "user",
-                "content": user_input,
-            }
-        ],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": schema_name,
-                "schema": schema,
-                "strict": True,
-            }
-        },
+        "messages": messages,
+        "temperature": 0.3,
+        "max_tokens": 4096,
+        "response_format": {"type": "json_object"},
     }
-
-    if settings.openai_reasoning_effort:
-        payload["reasoning"] = {"effort": settings.openai_reasoning_effort}
 
     try:
         response = _HTTP_SESSION.post(
-            f"{settings.openai_base_url}/responses",
+            f"{settings.openai_base_url}/chat/completions",
             headers={
                 "Authorization": f"Bearer {settings.openai_api_key}",
                 "Content-Type": "application/json",
@@ -157,7 +224,7 @@ def _create_openai_structured_response(
         )
 
     data = response.json()
-    output_text = _extract_openai_output_text(data)
+    output_text = _extract_chat_output_text(data)
     parsed = _parse_json_text(output_text)
 
     return {
@@ -319,6 +386,84 @@ def _create_spark_structured_response(
     }
 
 
+def _create_custom_structured_response(
+    schema_name: str,
+    schema: dict,
+    instructions: str,
+    user_input: str,
+) -> dict:
+    schema_text = json.dumps(schema, ensure_ascii=False)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"{instructions}\n\n"
+                "You must return one JSON object only. Do not use markdown fences. "
+                "Do not add commentary before or after the JSON. "
+                f"The JSON must satisfy the following schema:\n{schema_text}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": user_input,
+        },
+    ]
+
+    payload = {
+        "model": settings.custom_model,
+        "messages": messages,
+        "temperature": settings.custom_temperature,
+        "max_tokens": settings.custom_max_tokens,
+    }
+    if getattr(settings, "custom_strict_json_mode", True):
+        payload["response_format"] = {"type": "json_object"}
+
+    base_url = _get_custom_base_url()
+    headers = {
+        "Authorization": f"Bearer {settings.custom_api_key}",
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
+    }
+    try:
+        response = _HTTP_SESSION.post(
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=_timeout_value(),
+        )
+    except requests.RequestException as exc:
+        raise LLMServiceError(f"Custom model request failed: {exc}") from exc
+
+    if response.status_code >= 400 and "response_format" in response.text and "response_format" in payload:
+        retry_payload = dict(payload)
+        retry_payload.pop("response_format", None)
+        try:
+            response = _HTTP_SESSION.post(
+                f"{base_url}/chat/completions",
+                headers=headers,
+                json=retry_payload,
+                timeout=_timeout_value(),
+            )
+        except requests.RequestException as exc:
+            raise LLMServiceError(f"Custom model request failed: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise LLMServiceError(
+            f"Custom model API request failed with status {response.status_code}: {response.text}"
+        )
+
+    data = response.json()
+    output_text = _extract_chat_output_text(data)
+    parsed = _parse_json_text(output_text)
+
+    return {
+        "data": parsed,
+        "model": data.get("model", settings.custom_model),
+        "response_id": data.get("id", ""),
+        "provider": "custom",
+    }
+
+
 def create_structured_response(
     schema_name: str,
     schema: dict,
@@ -329,11 +474,26 @@ def create_structured_response(
         provider = get_llm_provider()
         if provider == "openai":
             raise LLMNotConfiguredError("OPENAI_API_KEY is not configured.")
+        if provider == "custom":
+            raise LLMNotConfiguredError(
+                "Custom model is not configured. Set CUSTOM_API_KEY, CUSTOM_MODEL, and CUSTOM_BASE_URL."
+            )
         raise LLMNotConfiguredError(
             "Spark WebSocket credentials are not configured. Set SPARK_API_KEY, SPARK_API_SECRET, and SPARK_APP_ID."
         )
 
     provider = get_llm_provider()
-    if provider == "openai":
-        return _create_openai_structured_response(schema_name, schema, instructions, user_input)
-    return _create_spark_structured_response(schema_name, schema, instructions, user_input)
+    _check_circuit(provider)
+    try:
+        if provider == "openai":
+            response = _create_openai_structured_response(schema_name, schema, instructions, user_input)
+        elif provider == "custom":
+            response = _create_custom_structured_response(schema_name, schema, instructions, user_input)
+        else:
+            response = _create_spark_structured_response(schema_name, schema, instructions, user_input)
+    except LLMServiceError as exc:
+        _mark_circuit_failure(provider, str(exc))
+        raise
+
+    _mark_circuit_success(provider)
+    return response

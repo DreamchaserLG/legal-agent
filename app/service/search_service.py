@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import time
 from datetime import datetime
@@ -5,7 +7,7 @@ from datetime import datetime
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.core.database import engine, fetch_all
+from app.core.database import engine, fetch_all, is_sqlite
 from app.service.bilingual_service import (
     build_bilingual_keyword_bundle,
     build_display_pair,
@@ -17,6 +19,10 @@ from app.service.ingestion_task_service import (
     enqueue_or_reuse_hydration_task,
     get_recent_terminal_hydration_task,
 )
+from app.service.legal_skill_service import (
+    apply_legal_result_verification,
+    enhance_legal_retrieval_keywords,
+)
 from app.service.module_service import build_module_packet, get_module_definition, normalize_module, resolve_source_for_module
 from app.service.ofac_service import OFAC_DISCOVERY_PAGE, OFAC_SEARCH_PORTAL
 
@@ -24,6 +30,13 @@ VALID_SOURCES = {"all", "ofac", "canlii", "canada"}
 VALID_SORTS = {"relevance", "recent"}
 _SEARCH_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MAX_SCORE_PER_KEYWORD = 13.0
+
+
+def _word_similarity_expr(column: str, keyword_param: str, threshold_param: str) -> str:
+    """返回 word_similarity 表达式，兼容 SQLite"""
+    if is_sqlite():
+        return f"0"  # SQLite 不支持 word_similarity，用 LIKE 替代
+    return f"word_similarity({column}, :{keyword_param}) >= :{threshold_param}"
 _CANADA_SOURCE_CODES = {
     "canlii",
     "ca_federal_act",
@@ -40,6 +53,19 @@ _SUPREME_COURT_CODES = {"scc", "uksc"}
 _APPEAL_COURT_CODES = {"fca", "onca", "abca", "bcca", "mbca", "nbca", "nlca", "nsca", "ntca", "nuca", "qcca", "skca", "ykca", "pescad"}
 _SUPERIOR_COURT_CODES = {"fc", "onsc", "abkb", "abqb", "bcsc", "mbkb", "mbqb", "nbkb", "nbqb", "nlsc", "nssc", "ntsc", "qccs", "skkb", "skqb", "yksc", "pecsc"}
 _PROVINCIAL_COURT_CODES = {"oncj", "ocj", "qccq", "skpc", "yktc", "nstc", "nspc", "pecp", "ntpc", "nupc"}
+
+
+def _source_code_in_clause(codes: set[str], params: dict, prefix: str = "source_code") -> str:
+    values = sorted(codes)
+    if is_sqlite():
+        placeholders = []
+        for index, value in enumerate(values):
+            key = f"{prefix}_{index}"
+            params[key] = value
+            placeholders.append(f":{key}")
+        return f"si.source_code IN ({', '.join(placeholders)})"
+    params[prefix] = values
+    return f"si.source_code = ANY(:{prefix})"
 
 
 
@@ -426,12 +452,21 @@ def search_items(
     module: str = "canada",
     refresh: bool = False,
     display_language: str | None = None,
+    keyword_weights: dict[str, float] | None = None,
 ):
+    module = normalize_module(module)
     keyword_bundle = build_bilingual_keyword_bundle(keywords_input, module)
     keywords = keyword_bundle.get("retrieval_keywords") or split_keywords(keywords_input)
+    skill_profile = enhance_legal_retrieval_keywords(
+        keywords_input,
+        module=module,
+        base_keywords=keywords,
+        keyword_weights=keyword_weights,
+    )
+    keywords = skill_profile.get("keywords") or keywords
+    keyword_weights = skill_profile.get("keyword_weights") or keyword_weights or {}
     limit = _normalize_limit(limit)
     offset = _normalize_offset(offset)
-    module = normalize_module(module)
     source = resolve_source_for_module(module, source)
     sort = _normalize_sort(sort)
     query_language = str(display_language or keyword_bundle.get("query_language") or "zh")
@@ -458,6 +493,9 @@ def search_items(
             "previous_offset": 0,
             "next_offset": 0,
             "cache_status": "miss",
+            "legal_skill_profile": skill_profile,
+            "retrieval_entities": skill_profile.get("entities", {}),
+            "legal_skills": skill_profile.get("skills", []),
             "module_packet": build_module_packet(
                 module,
                 {
@@ -490,55 +528,88 @@ def search_items(
         params[exact_key] = keyword.lower()
         params[key] = f"%{keyword.lower()}%"
         params[sim_key] = _similarity_threshold(keyword)
-        conditions.append(
-            f"""
-            LOWER(COALESCE(si.title, '')) LIKE :{key}
-            OR LOWER(COALESCE(si.summary, '')) LIKE :{key}
-            OR LOWER(COALESCE(si.raw_text, '')) LIKE :{key}
-            OR word_similarity(LOWER(COALESCE(si.title, '')), :{exact_key}) >= :{sim_key}
-            OR EXISTS (
-                SELECT 1
-                FROM item_keywords ik
-                WHERE ik.item_id = si.id
-                  AND (
-                      LOWER(ik.keyword) LIKE :{key}
-                      OR word_similarity(LOWER(ik.keyword), :{exact_key}) >= :{sim_key}
-                  )
+        try:
+            weight = float((keyword_weights or {}).get(keyword, (keyword_weights or {}).get(keyword.lower(), 1.0)))
+        except (TypeError, ValueError):
+            weight = 1.0
+        if is_sqlite():
+            # SQLite: 只用 LIKE 匹配
+            conditions.append(
+                f"""
+                LOWER(COALESCE(si.title, '')) LIKE :{key}
+                OR LOWER(COALESCE(si.summary, '')) LIKE :{key}
+                OR LOWER(COALESCE(si.raw_text, '')) LIKE :{key}
+                OR EXISTS (
+                    SELECT 1
+                    FROM item_keywords ik
+                    WHERE ik.item_id = si.id
+                      AND LOWER(ik.keyword) LIKE :{key}
+                )
+                """
             )
-            """
-        )
-        score_parts.append(
-            f"""
-            CASE WHEN LOWER(COALESCE(si.title, '')) LIKE :{key} THEN 5 ELSE 0 END
-            + CASE WHEN LOWER(COALESCE(si.summary, '')) LIKE :{key} THEN 3 ELSE 0 END
-            + CASE WHEN LOWER(COALESCE(si.raw_text, '')) LIKE :{key} THEN 1 ELSE 0 END
-            + CASE WHEN word_similarity(LOWER(COALESCE(si.title, '')), :{exact_key}) >= :{sim_key} THEN 2 ELSE 0 END
-            + CASE WHEN EXISTS (
-                SELECT 1
-                FROM item_keywords ik
-                WHERE ik.item_id = si.id
-                  AND (
-                      LOWER(ik.keyword) LIKE :{key}
-                      OR word_similarity(LOWER(ik.keyword), :{exact_key}) >= :{sim_key}
-                  )
-            ) THEN 2 ELSE 0 END
-            """
-        )
+            score_parts.append(
+                f"""
+                (CASE WHEN LOWER(COALESCE(si.title, '')) LIKE :{key} THEN 5 ELSE 0 END
+                + CASE WHEN LOWER(COALESCE(si.summary, '')) LIKE :{key} THEN 3 ELSE 0 END
+                + CASE WHEN LOWER(COALESCE(si.raw_text, '')) LIKE :{key} THEN 1 ELSE 0 END
+                + CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM item_keywords ik
+                    WHERE ik.item_id = si.id
+                      AND LOWER(ik.keyword) LIKE :{key}
+                  ) THEN 2 ELSE 0 END) * {weight}
+                """
+            )
+        else:
+            # PostgreSQL: 使用 word_similarity
+            conditions.append(
+                f"""
+                LOWER(COALESCE(si.title, '')) LIKE :{key}
+                OR LOWER(COALESCE(si.summary, '')) LIKE :{key}
+                OR LOWER(COALESCE(si.raw_text, '')) LIKE :{key}
+                OR word_similarity(LOWER(COALESCE(si.title, '')), :{exact_key}) >= :{sim_key}
+                OR EXISTS (
+                    SELECT 1
+                    FROM item_keywords ik
+                    WHERE ik.item_id = si.id
+                      AND (
+                          LOWER(ik.keyword) LIKE :{key}
+                          OR word_similarity(LOWER(ik.keyword), :{exact_key}) >= :{sim_key}
+                      )
+                )
+                """
+            )
+            score_parts.append(
+                f"""
+                (CASE WHEN LOWER(COALESCE(si.title, '')) LIKE :{key} THEN 5 ELSE 0 END
+                + CASE WHEN LOWER(COALESCE(si.summary, '')) LIKE :{key} THEN 3 ELSE 0 END
+                + CASE WHEN LOWER(COALESCE(si.raw_text, '')) LIKE :{key} THEN 1 ELSE 0 END
+                + CASE WHEN word_similarity(LOWER(COALESCE(si.title, '')), :{exact_key}) >= :{sim_key} THEN 2 ELSE 0 END
+                + CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM item_keywords ik
+                    WHERE ik.item_id = si.id
+                      AND (
+                          LOWER(ik.keyword) LIKE :{key}
+                          OR word_similarity(LOWER(ik.keyword), :{exact_key}) >= :{sim_key}
+                      )
+                ) THEN 2 ELSE 0 END) * {weight}
+                """
+            )
 
     source_clause = ""
     if source in {"ofac", "canlii"}:
         source_clause = "AND si.source_code = :source"
         params["source"] = source
     elif source == "canada":
-        source_clause = "AND si.source_code = ANY(:canada_sources)"
-        params["canada_sources"] = list(_CANADA_SOURCE_CODES)
+        source_clause = f"AND {_source_code_in_clause(_CANADA_SOURCE_CODES, params, 'canada_source')}"
 
     where_clause = f"({' OR '.join(conditions)}) {source_clause}"
     score_expr = " + ".join(score_parts)
     order_clause = (
-        "court_level DESC, score DESC, COALESCE(si.published_at, si.updated_at, si.created_at) DESC"
+        "score DESC, court_level DESC, COALESCE(si.published_at, si.updated_at, si.created_at) DESC"
         if sort == "relevance"
-        else "court_level DESC, COALESCE(si.published_at, si.updated_at, si.created_at) DESC, score DESC"
+        else "COALESCE(si.published_at, si.updated_at, si.created_at) DESC, score DESC, court_level DESC"
     )
 
     count_sql = f"""
@@ -596,6 +667,7 @@ def search_items(
     for row in rows:
         row["query_language"] = query_language
     rows = enrich_result_rows_bilingual(rows, query_language=query_language)
+    rows = apply_legal_result_verification(rows, skill_profile, sort=sort)
     grouped_results = _prepare_cards(rows, query_language)
     _insert_search_log(keywords_input, len(rows))
 
@@ -622,6 +694,9 @@ def search_items(
         "previous_offset": previous_offset,
         "next_offset": next_offset,
         "cache_status": "miss",
+        "legal_skill_profile": skill_profile,
+        "retrieval_entities": skill_profile.get("entities", {}),
+        "legal_skills": skill_profile.get("skills", []),
     }
     payload["module_packet"] = build_module_packet(module, payload, refresh=refresh)
     _set_cached_result(_SEARCH_CACHE, cache_key, payload)
@@ -686,6 +761,7 @@ def search_with_remote_hydration(
     hydration_reason: str = "",
     display_language: str | None = None,
     local_only: bool = False,
+    keyword_weights: dict[str, float] | None = None,
 ):
     normalized_limit = _normalize_limit(limit)
     normalized_offset = _normalize_offset(offset)
@@ -702,6 +778,7 @@ def search_with_remote_hydration(
         module=normalized_module,
         refresh=refresh,
         display_language=display_language,
+        keyword_weights=keyword_weights,
     )
 
     remote_fetch = {
@@ -785,6 +862,113 @@ def search_with_remote_hydration(
     return payload
 
 
+def _merge_local_and_realtime(local_result: dict, canlii_realtime: dict) -> dict:
+    """Merge local DB results with real-time CanLII results."""
+    realtime_items = canlii_realtime.get("items") or []
+    if not realtime_items:
+        return local_result
+
+    existing_urls = {
+        (row.get("item_url") or row.get("url") or "").rstrip("/")
+        for row in local_result.get("results", [])
+    }
+
+    new_canlii_cards = []
+    for item in realtime_items:
+        url = (item.get("url") or "").rstrip("/")
+        if url and url in existing_urls:
+            continue
+        existing_urls.add(url)
+        new_canlii_cards.append({
+            "id": f"rt_{hash(url) % 10**8}",
+            "source_code": "canlii",
+            "source_label": "Case (Real-time)",
+            "title": repair_text(item.get("title", "")),
+            "title_primary": repair_text(item.get("title", "")),
+            "title_secondary": "",
+            "subtitle": repair_text(item.get("citation", "")),
+            "published_at": _fmt_dt(item.get("date", "")),
+            "summary": _clip(item.get("summary", ""), 260),
+            "summary_primary": _clip(item.get("summary", ""), 260),
+            "summary_secondary": "",
+            "excerpt": "",
+            "url": item.get("url", ""),
+            "source_url": item.get("database", ""),
+            "score": 0.5,
+            "fields": [],
+            "realtime_source": item.get("source", "canlii"),
+        })
+
+    result = dict(local_result)
+    result["results"] = list(local_result.get("results", [])) + new_canlii_cards
+
+    grouped = dict(result.get("grouped_results", {}))
+    grouped["canlii"] = list(grouped.get("canlii", [])) + new_canlii_cards
+    result["grouped_results"] = grouped
+
+    result["total"] = int(result.get("total") or 0) + len(new_canlii_cards)
+    source_counts = dict(result.get("source_counts", {}))
+    source_counts["canlii"] = int(source_counts.get("canlii") or 0) + len(new_canlii_cards)
+    result["source_counts"] = source_counts
+
+    return result
+
+
+def search_with_canlii_realtime(
+    keywords_input: str | list[str],
+    limit: int = 30,
+    offset: int = 0,
+    source: str = "all",
+    sort: str = "relevance",
+    module: str = "canada",
+    refresh: bool = False,
+    display_language: str | None = None,
+    keyword_weights: dict[str, float] | None = None,
+) -> dict:
+    """
+    Combined search: local DB + real-time CanLII API/RSS.
+    Returns merged results with source attribution.
+    """
+    local_result = search_items(
+        keywords_input,
+        limit=limit,
+        offset=offset,
+        source=source,
+        sort=sort,
+        module=module,
+        refresh=refresh,
+        display_language=display_language,
+        keyword_weights=keyword_weights,
+    )
+
+    canlii_realtime = {"items": [], "method": "none", "count": 0}
+    keywords = local_result.get("keywords") or split_keywords(keywords_input)
+
+    if (
+        keywords
+        and getattr(settings, "canlii_realtime_search_enabled", True)
+        and module in ("canada", "all")
+        and source in ("all", "canlii", "canada")
+    ):
+        from app.service.canlii_service import search_canlii_by_keywords_realtime
+        max_realtime = max(5, int(getattr(settings, "canlii_realtime_search_max_items", 20)))
+        canlii_realtime = search_canlii_by_keywords_realtime(
+            keywords,
+            max_items=max_realtime,
+            use_api=bool(settings.canlii_api_key),
+            use_rss=True,
+        )
+
+    merged_result = _merge_local_and_realtime(local_result, canlii_realtime)
+    merged_result["canlii_realtime"] = {
+        "method": canlii_realtime.get("method", "none"),
+        "count": canlii_realtime.get("count", 0),
+    }
+    merged_result["search_strategy"] = "local_plus_realtime"
+
+    return merged_result
+
+
 
 def search_and_optionally_sync(
     keywords_input: str | list[str],
@@ -799,6 +983,7 @@ def search_and_optionally_sync(
     display_language: str | None = None,
 ):
     sync_info = None
+    keyword_weights = None
     normalized_limit = _normalize_limit(limit)
     normalized_offset = _normalize_offset(offset)
     normalized_sort = _normalize_sort(sort)
@@ -817,6 +1002,7 @@ def search_and_optionally_sync(
             module=normalized_module,
             refresh=True,
             display_language=display_language,
+            keyword_weights=keyword_weights,
         )
         result["remote_fetch"] = {
             "status": "manual_sync",

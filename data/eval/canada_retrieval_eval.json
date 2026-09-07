@@ -1,0 +1,156 @@
+{
+  "name": "canada_residential_tenancy_retrieval_v1",
+  "description": "Initial retrieval evaluation set for Ontario residential tenancy, eviction, repair, and vital-services scenarios.",
+  "module": "canada",
+  "default_limit": 10,
+  "cases": [
+    {
+      "id": "tenant_eviction_repair_001",
+      "query": "Ontario tenant eviction repair issue",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Ottawa Community Housing Corporation", "Morrison"]},
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "pest_clutter_access_002",
+      "query": "tenant eviction pest infestation excessive clutter barred access Ontario LTB",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Ottawa Community Housing Corporation", "Morrison"]}
+      ]
+    },
+    {
+      "id": "vital_services_hydro_003",
+      "query": "tenant hydro disconnected vital services landlord Ontario residential tenancy",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Mckenzie", "McLean"]},
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "rent_arrears_n4_004",
+      "query": "Ontario tenant rent arrears N4 notice eviction section 69",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Abai", "Cisse"]},
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "serious_impairment_safety_005",
+      "query": "tenant conduct laundry room mobility scooter serious impairment safety eviction",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Housing York", "Hayton"]}
+      ]
+    },
+    {
+      "id": "coop_nonpayment_n4c_006",
+      "query": "co-operative housing nonpayment N4C notice occupancy arrears eviction",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Willow Park", "Chambers"]}
+      ]
+    },
+    {
+      "id": "n12_good_faith_007",
+      "query": "N12 landlord own use good faith possession another unit Ontario tenancy",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Birks", "Cornakovic"]}
+      ]
+    },
+    {
+      "id": "automatic_stay_ltb_008",
+      "query": "Divisional Court certificate stay interlocutory LTB order proceeding",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Interrent", "El-Guindy"]}
+      ]
+    },
+    {
+      "id": "smoke_detector_clutter_009",
+      "query": "missing smoke detector excessive clutter residential tenancy termination",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Ottawa Community Housing Corporation", "Morrison"]}
+      ]
+    },
+    {
+      "id": "section_83_relief_010",
+      "query": "Ontario LTB relief from eviction section 83 rent arrears tenant in possession",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Abai", "Cisse"]},
+        {"source_kind": "case", "title_contains": ["Willow Park", "Chambers"]}
+      ]
+    },
+    {
+      "id": "rta_unauthorized_subletting_011",
+      "query": "Ontario residential tenancy termination possession unauthorized subletting statute",
+      "expected": [
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "residential_evictions_reg_012",
+      "query": "Ontario residential evictions regulation",
+      "expected": [
+        {"source_kind": "law", "title_contains": ["RESIDENTIAL EVICTIONS"]}
+      ]
+    },
+    {
+      "id": "commercial_tenancies_013",
+      "query": "Ontario commercial tenancies landlord and tenant act statute",
+      "expected": [
+        {"source_kind": "law", "title_contains": ["Commercial Tenancies Act"]},
+        {"source_kind": "law", "title_contains": ["Landlord and Tenant Act"]}
+      ]
+    },
+    {
+      "id": "uninhabitable_unit_014",
+      "query": "rental unit uninhabitable repairs maintenance Ontario tenant",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Ottawa Community Housing Corporation", "Morrison"]},
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "illegal_act_safety_015",
+      "query": "guest assault illegal act serious impairment safety residential tenancy eviction",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Khachapuridze"]},
+        {"source_kind": "case", "title_contains": ["Housing York", "Hayton"]}
+      ]
+    },
+    {
+      "id": "tenant_absent_hearing_016",
+      "query": "tenant did not attend LTB hearing eviction relief denied social housing",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Housing York", "Hayton"]}
+      ]
+    },
+    {
+      "id": "monthly_housing_charges_017",
+      "query": "monthly housing charges arrears order terminate unless voided by payment",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Willow Park", "Chambers"]}
+      ]
+    },
+    {
+      "id": "good_faith_other_unit_018",
+      "query": "good faith occupation possession another unit undermining intent application dismissed",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Birks", "Cornakovic"]}
+      ]
+    },
+    {
+      "id": "access_refused_pest_019",
+      "query": "termination ongoing pest infestation access refused tenant clutter",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Ottawa Community Housing Corporation", "Morrison"]}
+      ]
+    },
+    {
+      "id": "rta_s31_vital_services_020",
+      "query": "Residential Tenancies Act section 31 vital services hydro disconnected",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Mckenzie", "McLean"]},
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    }
+  ]
+}

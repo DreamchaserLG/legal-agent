@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -6,6 +8,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.routes import router
 from app.core.config import settings
+from app.core.database import is_sqlite
 from app.service.archive_service import bootstrap_database_from_archive, ensure_archive_directories
 from app.service.ingestion_task_service import ensure_ingestion_tables
 from app.service.legal_data_service import ensure_legal_data_tables, schedule_canada_legal_data_sync, sync_canada_legal_data
@@ -38,18 +41,27 @@ async def add_no_store_headers(request, call_next):
 
 @app.on_event("startup")
 def on_startup():
-    ensure_ingestion_tables()
-    ensure_user_tables()
-    ensure_module_support_tables()
-    ensure_legal_data_tables()
+    if is_sqlite():
+        # SQLite: 使用简化的表初始化
+        from app.core.sqlite_init import init_sqlite_tables
+        init_sqlite_tables()
+    else:
+        # PostgreSQL: 使用完整初始化
+        ensure_ingestion_tables()
+        ensure_user_tables()
+        ensure_module_support_tables()
+        ensure_legal_data_tables()
+
     ensure_archive_directories()
     if settings.archive_bootstrap_enabled:
         bootstrap_database_from_archive()
-    startup_sync_mode = str(getattr(settings, "startup_canada_sync_mode", "background") or "background").strip().lower()
-    if startup_sync_mode == "blocking":
-        sync_canada_legal_data(force=False)
-    elif startup_sync_mode == "background":
-        schedule_canada_legal_data_sync(force=False)
+    # SQLite 模式下跳过数据同步（需要 PostgreSQL）
+    if not is_sqlite():
+        startup_sync_mode = str(getattr(settings, "startup_canada_sync_mode", "background") or "background").strip().lower()
+        if startup_sync_mode == "blocking":
+            sync_canada_legal_data(force=False)
+        elif startup_sync_mode == "background":
+            schedule_canada_legal_data_sync(force=False)
 
 
 @app.get("/health")

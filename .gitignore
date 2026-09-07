@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+!.env.clean.example
+!.env.sqlite.example
 
 # Python
 venv/
@@ -25,8 +27,13 @@ htmlcov/
 *.log
 *.err
 *.out
+*.sqlite
+*.sqlite3
+*.db
 
 # Temporary exports and artifacts
+dist/
+tmp/
 tmp-*.pdf
 *.tmp
 *.bak

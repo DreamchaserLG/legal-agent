@@ -1,0 +1,15 @@
+{% if relevance_item and relevance_item.relevance_highlights %}
+<div class="relevance-highlight-panel">
+    <p class="panel-kicker">关联片段</p>
+    <div class="relevance-highlight-list">
+        {% for hit in relevance_item.relevance_highlights[:4] %}
+        <p class="relevance-highlight">
+            <span class="highlight-source">{{ hit.label }}</span>
+            {% if hit.before %}<span>{{ hit.before }}</span>{% endif %}
+            <mark>{{ hit.term }}</mark>
+            {% if hit.after %}<span>{{ hit.after }}</span>{% endif %}
+        </p>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}

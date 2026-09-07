@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+.env.local
+.env.production
+*.md
+*.docx
+*.doc
+data_archive/
+sql/
+drivers/
+*.py
+!app/*.py
+!app/**/*.py

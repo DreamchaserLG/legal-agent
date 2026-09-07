@@ -51,6 +51,7 @@
                 {% if law_detail.law.source_url %}
                 <a class="pager-link" href="{{ law_detail.law.source_url }}" target="_blank">查看法规原文</a>
                 {% endif %}
+                <a class="pager-link secondary" href="javascript:history.back()">返回上一页</a>
                 <a class="pager-link secondary" href="/home">返回首页</a>
             </div>
         </div>
@@ -100,6 +101,8 @@
                         {% if case.match_reason %}
                         <p class="muted">关联理由：{{ case.match_reason }}</p>
                         {% endif %}
+                        {% set relevance_item = case %}
+                        {% include "partials/relevance_highlights.html" %}
                         <div class="card-actions">
                             {% if case.source_url %}
                             <a class="text-link" href="{{ case.source_url }}" target="_blank">查看案例</a>

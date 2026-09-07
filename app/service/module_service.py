@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import json
 import re
@@ -12,6 +14,7 @@ from app.service.bilingual_service import build_display_pair
 from app.service.canada_case_law_service import ensure_canada_law_tables
 from app.service.common_service import plain_text_preview, repair_text
 from app.service.legal_data_service import build_canada_case_rule_packet, get_canada_rule_detail_packet, sync_canada_legal_data
+from app.service.legal_relevance_service import apply_case_law_relevance
 from app.service.llm_service import (
     LLMServiceError,
     create_structured_response,
@@ -107,9 +110,11 @@ MODULE_DEFINITIONS["canada"].update(
         "agent_title": "关联深度分析",
         "agent_placeholder": "例如：当前最关键的法规是哪一条？哪些省级案例最接近当前事实？",
         "question_prompts": [
-            "当前最关键的法律法规是哪一条？",
+            "当前最关键的法律法规是哪一条？为什么？",
             "国家 / 联邦层面的案例和地方层面的案例，哪一边更关键？",
             "现有事实里最可能改变结果的点是什么？",
+            "当前案情的风险等级应该如何评估？",
+            "如果要补充证据，最优先补充哪一类？",
         ],
     }
 )
@@ -382,12 +387,34 @@ def _case_scope(case_row: dict) -> str:
     return "other"
 
 
+def _safe_int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_float(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _case_entry_from_row(row: dict) -> dict:
     meta = row.get("raw_json") or {}
     preview = _row_preview(row)
     court_code = _derive_court_code(row)
-    court_level = int(row.get("court_level") or 0) or _derive_court_level(court_code)
+    court_level = _safe_int(row.get("court_level")) or _derive_court_level(court_code)
     court_level_label = repair_text(row.get("court_level_label") or "") or _court_level_label(court_level, court_code)
+    source_url = (
+        row.get("item_url")
+        or row.get("url")
+        or row.get("source_url")
+        or meta.get("database_page")
+        or meta.get("source_csv_url")
+        or ""
+    )
     entry = {
         "id": row.get("id"),
         "title": repair_text(row.get("title")),
@@ -397,10 +424,10 @@ def _case_entry_from_row(row: dict) -> dict:
         "summary_primary": preview["summary_primary"],
         "summary_secondary": preview["summary_secondary"],
         "excerpt": plain_text_preview(row.get("raw_text"))[:900],
-        "url": row.get("item_url", ""),
-        "source_url": meta.get("database_page") or meta.get("source_csv_url") or "",
+        "url": source_url,
+        "source_url": source_url,
         "published_at": str(row.get("published_at") or "")[:10],
-        "score": float(row.get("score") or 0),
+        "score": _safe_float(row.get("score")),
         "court_level": court_level,
         "court_level_label": court_level_label,
         "court_code": court_code.upper(),
@@ -555,6 +582,174 @@ def _law_record_from_legislation_row(row: dict, results: list[dict]) -> dict:
     }
 
 
+def _rule_entry_from_law_for_retrieved_case(law: dict) -> dict:
+    title = repair_text(law.get("title"))
+    return {
+        "rule_id": _safe_int(law.get("rule_id") or law.get("law_id")),
+        "title": title,
+        "country": repair_text(law.get("country") or "Canada"),
+        "legal_type": repair_text(law.get("legal_type") or law.get("rule_level") or law.get("level") or "law"),
+        "article_no": repair_text(law.get("article_no") or law.get("citation")),
+        "article_text": repair_text(law.get("article_text")),
+        "article_summary": repair_text(law.get("article_summary") or law.get("reason")),
+        "source_url": repair_text(law.get("source_url")),
+        "source_site": repair_text(law.get("source_site")),
+        "slug": repair_text(law.get("slug")),
+        "rule_level": repair_text(law.get("rule_level") or law.get("level")),
+        "match_score": _safe_float(law.get("match_score") or law.get("keyword_score") or 0.45),
+        "match_reason": "本次案情分析检索命中，暂按当前相关法规展示，待正式关系表确认。",
+        "detail_url": repair_text(law.get("detail_url")) or (f"/law/canada/{repair_text(law.get('slug'))}" if law.get("slug") else ""),
+        "relation_status": "retrieved_pending_relation",
+    }
+
+
+def _ensure_law_case_columns(law: dict) -> list[dict]:
+    columns = law.get("case_columns") or []
+    if columns:
+        return columns
+    columns = [
+        {"key": "national_federal", "label": "国家 / 联邦法院", "items": []},
+        {"key": "provincial_local", "label": "省级 / 地方法院", "items": []},
+    ]
+    law["case_columns"] = columns
+    return columns
+
+
+def _case_key(value: dict) -> str:
+    case_id = _safe_int(value.get("case_id") or value.get("id"))
+    if case_id:
+        return f"id:{case_id}"
+    title = repair_text(value.get("title")).lower()
+    url = repair_text(value.get("source_url") or value.get("url")).lower()
+    return f"title:{title}|url:{url}"
+
+
+def _append_retrieved_case_to_law(law: dict, case_row: dict) -> None:
+    case_key = _case_key(case_row)
+    related_cases = law.setdefault("related_cases", [])
+    existing_keys = {_case_key(item) for item in related_cases}
+    if case_key not in existing_keys:
+        related_cases.append(
+            {
+                "case_id": case_row.get("case_id"),
+                "title": repair_text(case_row.get("title")),
+                "court_level": repair_text(case_row.get("court_level")),
+                "court_rank": _safe_int(case_row.get("court_rank")),
+                "case_type": repair_text(case_row.get("case_type")),
+                "judgment_date": repair_text(case_row.get("judgment_date")),
+                "summary": plain_text_preview(case_row.get("summary") or case_row.get("facts"))[:120],
+                "source_url": repair_text(case_row.get("source_url")),
+                "scope": repair_text(case_row.get("scope")),
+                "relation_status": "retrieved_pending_relation",
+                "match_score": case_row.get("match_score"),
+                "raw_match_score": case_row.get("raw_match_score"),
+                "relevance_score": case_row.get("relevance_score"),
+                "relevance_label": case_row.get("relevance_label"),
+                "relevance_level": case_row.get("relevance_level"),
+                "relevance_highlights": case_row.get("relevance_highlights") or [],
+            }
+        )
+        law["linked_case_count"] = _safe_int(law.get("linked_case_count")) + 1
+        if case_row.get("scope") == "national_federal":
+            law["national_case_count"] = _safe_int(law.get("national_case_count")) + 1
+        elif case_row.get("scope") == "provincial_local":
+            law["local_case_count"] = _safe_int(law.get("local_case_count")) + 1
+
+    for column in _ensure_law_case_columns(law):
+        if column.get("key") != case_row.get("scope"):
+            continue
+        column_items = column.setdefault("items", [])
+        if case_key in {_case_key(item) for item in column_items}:
+            continue
+        column_items.append(
+            {
+                "case_id": case_row.get("case_id"),
+                "title": repair_text(case_row.get("title")),
+                "court_level": repair_text(case_row.get("court_level")),
+                "court_rank": _safe_int(case_row.get("court_rank")),
+                "case_type": repair_text(case_row.get("case_type")),
+                "judgment_date": repair_text(case_row.get("judgment_date")),
+                "summary": plain_text_preview(case_row.get("summary") or case_row.get("facts"))[:120],
+                "source_url": repair_text(case_row.get("source_url")),
+                "scope": repair_text(case_row.get("scope")),
+                "relation_status": "retrieved_pending_relation",
+                "match_score": case_row.get("match_score"),
+                "raw_match_score": case_row.get("raw_match_score"),
+                "relevance_score": case_row.get("relevance_score"),
+                "relevance_label": case_row.get("relevance_label"),
+                "relevance_level": case_row.get("relevance_level"),
+                "relevance_highlights": case_row.get("relevance_highlights") or [],
+            }
+        )
+
+
+def _merge_retrieved_cases_with_laws(
+    results: list[dict],
+    laws: list[dict],
+    case_rows: list[dict],
+    limit: int = 12,
+    keywords: list[str] | None = None,
+) -> list[dict]:
+    if not laws:
+        return case_rows
+
+    merged_rows = list(case_rows or [])
+    existing_keys = {_case_key(item) for item in merged_rows}
+    law_refs = [_rule_entry_from_law_for_retrieved_case(law) for law in laws[:3] if repair_text(law.get("title"))]
+    if not law_refs:
+        return merged_rows
+
+    added = 0
+    for row in results or []:
+        if row.get("source_code") != "canlii":
+            continue
+        entry = _case_entry_from_row(row)
+        if not repair_text(entry.get("title")):
+            continue
+        entry_key = _case_key(entry)
+        if entry_key in existing_keys:
+            continue
+        scope = repair_text(entry.get("scope"))
+        if scope not in {"national_federal", "provincial_local"}:
+            scope = "provincial_local"
+        case_row = {
+            "case_id": _safe_int(entry.get("id")),
+            "external_id": entry.get("id"),
+            "title": repair_text(entry.get("title")),
+            "country": "Canada",
+            "court_name": "",
+            "court_level": repair_text(entry.get("court_level_label")),
+            "court_rank": _safe_int(entry.get("court_level")),
+            "case_type": "Retrieved Case",
+            "summary": plain_text_preview(entry.get("summary") or entry.get("excerpt"))[:360],
+            "facts": plain_text_preview(entry.get("excerpt"))[:900],
+            "judgment_result": "",
+            "judgment_date": repair_text(entry.get("published_at")),
+            "source_url": repair_text(entry.get("source_url") or entry.get("url")),
+            "source_site": "CanLII",
+            "match_score": _safe_float(entry.get("score")) or 0.45,
+            "keyword_score": _safe_float(entry.get("score")) or 0.45,
+            "match_reason": "本次案情分析检索命中，暂按当前相关法规展示，待正式关系表确认。",
+            "scope": scope,
+            "rules": [dict(rule) for rule in law_refs],
+            "relation_status": "retrieved_pending_relation",
+            "is_retrieved_result": True,
+        }
+        case_row = apply_case_law_relevance(
+            case_row,
+            keywords=keywords or [],
+        )
+        merged_rows.append(case_row)
+        existing_keys.add(entry_key)
+        for law in laws[:3]:
+            _append_retrieved_case_to_law(law, case_row)
+        added += 1
+        if added >= limit:
+            break
+
+    return merged_rows
+
+
 def _extract_canada_laws_from_results(results: list[dict]) -> list[dict]:
     mentions = Counter()
     support_map: dict[str, list[dict]] = {}
@@ -650,7 +845,7 @@ def _llm_canada_law_fallback(analysis: dict) -> list[dict]:
     return items[:5]
 
 
-def _build_canada_packet(analysis_result: dict, refresh: bool = False) -> dict:
+def _build_canada_packet_graph_legacy(analysis_result: dict, refresh: bool = False) -> dict:
     results = analysis_result.get("results", [])
     definition = MODULE_DEFINITIONS["canada"]
     graph = build_canada_result_graph(results, refresh=refresh)
@@ -720,6 +915,12 @@ def _build_canada_packet(analysis_result: dict, refresh: bool = False) -> dict:
             law["local_case_count"] = 0
             law["origin"] = "fallback"
         laws = fallback_laws
+    case_rows = _merge_retrieved_cases_with_laws(
+        results,
+        laws,
+        case_rows,
+        limit=max(12, int(getattr(settings, "default_search_limit", 8) or 8)),
+    )
 
     return {
         "module_code": "canada",
@@ -729,7 +930,7 @@ def _build_canada_packet(analysis_result: dict, refresh: bool = False) -> dict:
         "focus_title_en": "List Likely Laws First, Then Show Case-to-Law Mapping",
         "focus_copy": "页面会先收拢当前案情对应的法律法规，再逐条展示案例，并把每个案例右侧对应的法规明确列出来。点击法规后，会进入该法规的案例详情页。",
         "focus_copy_en": "The page starts with the laws most likely implicated by the input, then shows each case once with its linked laws on the right.",
-        "notice": "这里不再用“关键词相近”就强行挂接法规，而是优先依据案例正文里直接出现的法规名称来建立关系；法规详情页再按国家/联邦与省级/地方拆开案例。",
+        "notice": "正式关系优先来自 case_rule_relations；如果本次案情分析已经检索到相关 CanLII 案例但正式关系暂未入库，系统会先把这些案例挂到当前相关法规下展示，并标记为待确认关联。",
         "notice_en": "",
         "relevant_laws": laws[:8],
         "case_law_rows": case_rows,
@@ -1015,10 +1216,16 @@ def get_canada_law_detail_packet(law_slug: str, refresh: bool = False) -> dict |
 def _build_canada_packet(analysis_result: dict, refresh: bool = False) -> dict:
     results = analysis_result.get("results", [])
     definition = MODULE_DEFINITIONS["canada"]
+    retrieval_keywords = (
+        analysis_result.get("retrieval_keywords")
+        or analysis_result.get("extracted_keywords")
+        or analysis_result.get("keywords")
+        or []
+    )
     relation_packet = build_canada_case_rule_packet(
         results,
         refresh=refresh,
-        keywords=analysis_result.get("retrieval_keywords") or analysis_result.get("extracted_keywords") or [],
+        keywords=retrieval_keywords,
     )
     laws = relation_packet.get("relevant_laws", [])
     case_rows = relation_packet.get("case_law_rows", [])
@@ -1043,6 +1250,14 @@ def _build_canada_packet(analysis_result: dict, refresh: bool = False) -> dict:
             law["rule_level"] = law.get("level", "")
         laws = fallback_laws
 
+    case_rows = _merge_retrieved_cases_with_laws(
+        results,
+        laws,
+        case_rows,
+        limit=max(12, int(getattr(settings, "default_search_limit", 8) or 8)),
+        keywords=retrieval_keywords,
+    )
+
     return {
         "module_code": "canada",
         "module_label": definition["label"],
@@ -1051,11 +1266,11 @@ def _build_canada_packet(analysis_result: dict, refresh: bool = False) -> dict:
         "focus_title_en": "List Likely Laws First, Then Show Case-to-Law Mapping",
         "focus_copy": "页面顶部会先收拢当前案情对应的法律法规，下面每一条结果都以“左侧案例、右侧法律法规”的配对大卡片展示，只保留已经建立明确关联的内容。",
         "focus_copy_en": "The page starts with the laws most likely implicated by the input, then shows each case once with its linked laws on the right.",
-        "notice": "当前结果以 case_rule_relations 为准。没有对应法规关系的案例不会展示；点击法规后会进入该法规的详情页，并按国家 / 联邦与省级 / 地方分栏展示相关案例。",
         "notice_en": "",
+        "notice": "正式关系优先来自 case_rule_relations；如果本次案情分析已经检索到相关 CanLII 案例但正式关系暂未入库，系统会先把这些案例挂到当前相关法规下展示，并标记为待确认关联。",
         "relevant_laws": laws[:8],
         "case_law_rows": case_rows,
-        "authority_groups": [],
+        "authority_groups": _canada_authority_groups(results),
         "transition_playbook": [],
         "suggested_questions": definition["question_prompts"],
         "suggested_questions_en": definition["question_prompts_en"],
@@ -1099,6 +1314,10 @@ def _build_reference_pack(module_packet: dict) -> dict:
             if len(cases) >= 4:
                 break
     return {"laws": laws, "cases": cases}
+
+
+def _reference_count(references: dict) -> int:
+    return len((references or {}).get("laws") or []) + len((references or {}).get("cases") or [])
 
 
 def _fallback_chat_answer(module_packet: dict, question: str, analysis_result: dict) -> dict:
@@ -1147,6 +1366,33 @@ def _fallback_chat_answer(module_packet: dict, question: str, analysis_result: d
         "model_status": "fallback",
         "model_name": "fallback",
     }
+
+
+def _insufficient_context_chat_answer(module_packet: dict, question: str, analysis_result: dict) -> dict:
+    payload = _fallback_chat_answer(module_packet, question, analysis_result)
+    payload["answer_zh"] = (
+        "当前本地检索上下文不足，不能给出可靠的法律结论。"
+        f"你的问题是：{repair_text(question)}。"
+        "建议先导入或补齐授权数据，再基于命中的法条、案例和出处继续分析。"
+    )
+    payload["answer_en"] = (
+        "The local retrieval context is too thin for a reliable legal answer. "
+        f"Question: {repair_text(question)}. "
+        "Import or hydrate authorized source data first, then answer from cited laws and cases."
+    )
+    payload["support_points_zh"] = []
+    payload["support_points_en"] = []
+    payload["caution_points_zh"] = [
+        "可靠模式已阻止模型在缺少证据材料时直接下结论。",
+        "当前回答只说明数据缺口和下一步，不构成法律意见。",
+    ]
+    payload["caution_points_en"] = [
+        "Reliable mode blocked the model from giving a conclusion without source evidence.",
+        "This response only identifies the data gap and next step; it is not legal advice.",
+    ]
+    payload["model_status"] = "skipped_insufficient_context"
+    payload["model_name"] = "reliable_guard"
+    return payload
 
 
 def _persist_chat_log(module_code: str, input_text: str, question: str, payload: dict):
@@ -1245,6 +1491,14 @@ def answer_module_question(
 
     module_packet = build_module_packet(normalized_module, analysis_result, refresh=refresh)
     references = _build_reference_pack(module_packet)
+    data_readiness = analysis_result.get("data_readiness") or {}
+    insufficient_data = data_readiness.get("status") and data_readiness.get("status") != "ready"
+    if bool(getattr(settings, "reliable_answer_mode", True)) and (_reference_count(references) <= 0 or insufficient_data):
+        payload = _insufficient_context_chat_answer(module_packet, clean_question, analysis_result)
+        payload["references"] = references
+        payload["data_readiness"] = data_readiness
+        _persist_chat_log(normalized_module, analysis_result.get("input_text", ""), clean_question, payload)
+        return payload
     if not is_llm_configured():
         payload = _fallback_chat_answer(module_packet, clean_question, analysis_result)
         _persist_chat_log(normalized_module, analysis_result.get("input_text", ""), clean_question, payload)
@@ -1257,6 +1511,7 @@ def answer_module_question(
             "analysis": analysis_result.get("analysis", {}),
             "intake_outline": analysis_result.get("intake_outline", {}),
             "bilingual_context": analysis_result.get("bilingual_context", {}),
+            "evidence_context": analysis_result.get("rag_context", {}),
             "question": clean_question,
         },
         ensure_ascii=False,

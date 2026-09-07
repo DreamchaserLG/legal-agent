@@ -68,6 +68,17 @@
                 <span class="task-status">{{ analysis_status_label }}</span>
             </div>
             <p class="task-copy">{{ analysis_result.coverage_note if analysis_result else '当前结果基于本地案例、法律法规和模型推理生成，不会实时抓取远程网页。' }}</p>
+            {% if analysis_result and analysis_result.data_readiness %}
+            <div class="chip-row">
+                <span class="chip">数据状态 {{ analysis_result.data_readiness.status }}</span>
+                <span class="chip">命中法规 {{ analysis_result.data_readiness.evidence.matched_laws }}</span>
+                <span class="chip">命中案例 {{ analysis_result.data_readiness.evidence.matched_cases }}</span>
+                <span class="chip">CanLII {{ analysis_result.data_readiness.corpus.canlii_total }}</span>
+            </div>
+            {% if analysis_result.data_readiness.recommended_actions %}
+            <p class="notice-text">{{ analysis_result.data_readiness.recommended_actions[0] }}</p>
+            {% endif %}
+            {% endif %}
             {% if analysis_result and analysis_result.history_reused %}
             <p class="notice-text">命中已有历史记录，系统已直接复用原记录，不会新增重复历史。</p>
             {% endif %}
@@ -181,22 +192,15 @@
                 {% endif %}
             </article>
 
-            <article class="info-panel">
-                <p class="panel-kicker">初步结论</p>
-                <div class="prediction-summary-card">
-                    <h3>{{ item.prediction.label or '综合判断' }}</h3>
-                    <p class="memo-copy">{{ item.prediction.conclusion or '当前暂无稳定预测结论。' }}</p>
-                    <p class="result-copy">{{ item.prediction.explanation or item.case_summary }}</p>
-                    <div class="chip-row">
-                        <span class="chip">置信度 {{ (item.prediction.confidence * 100)|round(0)|int }}%</span>
-                        <span class="chip">{{ item.prediction.risk_level or item.risk_level or '未知风险' }}</span>
-                    </div>
-                    {% if item.prediction.suggested_actions %}
-                    <div class="prediction-action-list">
-                        {% for action in item.prediction.suggested_actions %}
-                        <span class="chip chip-ghost">{{ action }}</span>
-                        {% endfor %}
-                    </div>
+            <article class="info-panel prediction-cta-card">
+                <p class="panel-kicker">下一步</p>
+                <h3>结构化分析已完成</h3>
+                <p class="memo-copy">当前案情已完成结构化梳理，包括关键事实、争议焦点、法律关系和风险点。</p>
+                <p class="result-copy">如需获取预测结论、置信度评估和支撑案例，请进入案情预测页面。</p>
+                <div class="action-row">
+                    <a class="pager-link" href="/predict?text={{ submitted_text|urlencode }}&module={{ module_code }}">进入案情预测</a>
+                    {% if history_id %}
+                    <a class="pager-link secondary" href="/histories/{{ history_id }}">查看历史详情</a>
                     {% endif %}
                 </div>
             </article>
@@ -205,6 +209,88 @@
 </section>
 
 {% set module_packet = analysis_result.get('module_packet', {}) if analysis_result else {} %}
+{% set supporting_case_groups = analysis_result.get('supporting_case_groups', []) if analysis_result else [] %}
+{% set linked_laws = analysis_result.get('linked_laws', []) if analysis_result else [] %}
+
+{% if linked_laws or supporting_case_groups %}
+<section class="band">
+    <div class="shell">
+        <div class="band-head">
+            <div>
+                <p class="eyebrow">相关法律法规与案例</p>
+                <h2>与本案相关的法律法规和案例</h2>
+            </div>
+        </div>
+
+        {% if linked_laws %}
+        <div class="info-panel">
+            <p class="panel-kicker">关联法规</p>
+            <div class="legal-rules-grid">
+                {% for law in linked_laws[:6] %}
+                <div class="legal-rule-card">
+                    <div class="result-head">
+                        <strong>{{ law.title }}</strong>
+                        {% if law.article_no %}<span class="meta-inline">{{ law.article_no }}</span>{% endif %}
+                    </div>
+                    {% if law.article_summary %}
+                    <p class="result-copy">{{ law.article_summary[:200] }}{% if law.article_summary|length > 200 %}...{% endif %}</p>
+                    {% endif %}
+                    <div class="chip-row">
+                        {% if law.legal_type %}<span class="chip">{{ law.legal_type }}</span>{% endif %}
+                        {% if law.country %}<span class="chip">{{ law.country }}</span>{% endif %}
+                        {% if law.linked_case_count %}<span class="chip">关联案例 {{ law.linked_case_count }}</span>{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if supporting_case_groups %}
+        <div class="info-panel">
+            <p class="panel-kicker">相关案例</p>
+            {% set analysis_case_cards = supporting_case_groups[:5] %}
+            <div class="case-slider compact" data-case-slider>
+                <div class="case-slider-toolbar">
+                    <span class="case-slider-count">共 {{ analysis_case_cards|length }} 条</span>
+                    <div class="case-slider-actions">
+                        <button type="button" class="case-slider-btn" data-slider-prev aria-label="上一条相关案例">‹</button>
+                        <span class="case-slider-status" data-slider-status>1 / {{ analysis_case_cards|length }}</span>
+                        <button type="button" class="case-slider-btn" data-slider-next aria-label="下一条相关案例">›</button>
+                    </div>
+                </div>
+                <div class="case-groups-grid case-slider-track compact" data-slider-track tabindex="0" aria-label="相关案例滑动列表">
+                {% for case in analysis_case_cards %}
+                <div class="case-group-card">
+                    <div class="result-head">
+                        <strong>{{ case.title }}</strong>
+                        {% if case.court_level %}<span class="meta-inline">{{ case.court_level }}</span>{% endif %}
+                    </div>
+                    {% if case.summary %}
+                    <p class="result-copy">{{ case.summary[:200] }}{% if case.summary|length > 200 %}...{% endif %}</p>
+                    {% endif %}
+                    {% if case.linked_law_titles %}
+                    <div class="chip-row">
+                        {% for law_title in case.linked_law_titles[:2] %}
+                        <span class="chip">{{ law_title }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if case.match_reason %}
+                    <p class="result-copy muted">匹配原因：{{ case.match_reason }}</p>
+                    {% endif %}
+                    {% set relevance_item = case %}
+                    {% include "partials/relevance_highlights.html" %}
+                </div>
+                {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
 {% include "partials/module_sections.html" %}
 
 {% include "partials/agent_chat_panel.html" %}

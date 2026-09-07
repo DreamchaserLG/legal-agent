@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 import io
 import ssl
@@ -253,7 +255,18 @@ def _extract_keywords_from_ofac_record(title: str, program: str, sdn_type: str, 
 
 def _matches_keywords(keywords: List[str], *values) -> bool:
     haystack = " ".join([str(value or "") for value in values]).lower()
-    return any(str(keyword or "").strip().lower() in haystack for keyword in keywords if str(keyword or "").strip())
+    if not haystack.strip():
+        return False
+    for keyword in keywords:
+        keyword_str = str(keyword or "").strip().lower()
+        if not keyword_str:
+            continue
+        if keyword_str in haystack:
+            return True
+        tokens = keyword_str.split()
+        if len(tokens) > 1 and all(token in haystack for token in tokens if len(token) >= 2):
+            return True
+    return False
 
 
 
@@ -415,9 +428,9 @@ def sync_ofac_by_keywords(keywords: List[str], target_count: int | None = None):
         urls = _discover_ofac_csv_urls()
         sdn_rows, address_map, alias_map, comment_map = _load_ofac_reference_maps(urls)
         processed = 0
-        configured_limit = max(1, int(getattr(settings, "remote_search_max_items_per_source", 12)))
+        configured_limit = max(1, int(getattr(settings, "remote_search_max_items_per_source", 30)))
         requested_limit = max(1, int(target_count or 0)) if target_count else 0
-        match_limit = max(configured_limit, requested_limit * 2 if requested_limit else 0)
+        match_limit = max(configured_limit, requested_limit * 3 if requested_limit else 0)
 
         for row in sdn_rows:
             if processed >= match_limit:

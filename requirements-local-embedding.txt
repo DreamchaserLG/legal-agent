@@ -1,0 +1,5 @@
+# Optional dependencies for EMBEDDING_PROVIDER=local.
+# Install these only when you want to use a local BGE-M3 embedding model.
+torch
+transformers>=4.33.0
+sentencepiece
