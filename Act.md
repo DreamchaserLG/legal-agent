@@ -37,3 +37,4 @@
 - 执行编译检查、RAG 状态检查、向量状态检查、混合检索检查、结构化过滤检查，均通过。
 - 启动本地 Uvicorn 临时服务并访问 `/health`，返回 HTTP 200；测试后关闭临时进程。
 - 将进度文档和后续写入约定统一为中文；代码标识符、命令、环境变量和 API 路径保留英文以保证运行兼容。
+- 提交并推送 Git：`f4b4fb0 Implement legal agent pgvector demo pipeline` 已推送到 `origin/main`。

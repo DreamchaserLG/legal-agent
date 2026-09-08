@@ -71,6 +71,11 @@
 - 最小可运行压缩包：`dist/legal-demo-pgvector-agent-minimal-20260908-134817.zip`
 - 压缩包不包含 `.env`、API key、数据库备份、原始导入数据、parquet、模型权重、隔离区、虚拟环境和 Git 历史。
 
+## Git 同步
+
+- 已提交并推送到 `origin/main`。
+- 提交号：`f4b4fb0`
+
 ## 尚未完成
 
 - A2AJ parquet 直连下载在当前网络环境下连接 HuggingFace 超时；已保留代码能力和 demo 默认数据，后续可在网络畅通时继续。
