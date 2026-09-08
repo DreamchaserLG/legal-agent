@@ -47,6 +47,27 @@ DATA_SOURCE_TYPES = {
         "requires_api_key": False,
         "requires_network": True,
     },
+    "laws_lois_xml": {
+        "label": "Justice Laws XML",
+        "label_en": "Justice Laws XML",
+        "description": "Use the official justicecanada/laws-lois-xml repository for federal laws and regulations.",
+        "requires_api_key": False,
+        "requires_network": False,
+    },
+    "a2aj_hf": {
+        "label": "A2AJ HuggingFace",
+        "label_en": "A2AJ HuggingFace",
+        "description": "Use A2AJ Canadian Legal Data datasets on HuggingFace for case law and legislation.",
+        "requires_api_key": False,
+        "requires_network": True,
+    },
+    "a2aj_api": {
+        "label": "A2AJ API",
+        "label_en": "A2AJ API",
+        "description": "Use the public A2AJ API for query-scoped Canadian legal data access.",
+        "requires_api_key": False,
+        "requires_network": True,
+    },
     "ontario_elaws": {
         "label": "Ontario e-Laws",
         "label_en": "Ontario e-Laws",

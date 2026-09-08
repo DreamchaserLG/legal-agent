@@ -13,7 +13,9 @@ from app.service.archive_service import bootstrap_database_from_archive, ensure_
 from app.service.ingestion_task_service import ensure_ingestion_tables
 from app.service.legal_data_service import ensure_legal_data_tables, schedule_canada_legal_data_sync, sync_canada_legal_data
 from app.service.module_service import ensure_module_support_tables
+from app.service.risk_assessment_service import ensure_risk_assessment_tables
 from app.service.user_service import ensure_user_tables
+from app.service.vector_store_service import ensure_vector_tables
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -51,6 +53,8 @@ def on_startup():
         ensure_user_tables()
         ensure_module_support_tables()
         ensure_legal_data_tables()
+        ensure_risk_assessment_tables()
+        ensure_vector_tables()
 
     ensure_archive_directories()
     if settings.archive_bootstrap_enabled:

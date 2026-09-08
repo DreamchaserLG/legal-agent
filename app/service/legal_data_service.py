@@ -22,12 +22,15 @@ from app.service.common_service import plain_text_preview, repair_text, sha256_t
 from app.service.legal_relevance_service import apply_case_law_relevance
 from app.service.legal_relation_ranking_service import rank_case_rule_relation
 
-CANADA_CASE_SOURCE_CODES = {"canlii", "manual_canada_case", "url_canada_case"}
+CANADA_CASE_SOURCE_CODES = {"canlii", "a2aj_case", "manual_canada_case", "url_canada_case"}
 CANADA_RULE_SOURCE_CODES = {
     "ca_federal_act",
     "ca_federal_regulation",
     "on_statute",
     "on_regulation",
+    "a2aj_law",
+    "a2aj_regulation",
+    "laws_lois_xml",
     "manual_canada_rule",
     "url_canada_rule",
 }

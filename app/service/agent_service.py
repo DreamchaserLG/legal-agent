@@ -24,6 +24,7 @@ from app.service.llm_service import (
     is_llm_configured,
 )
 from app.service.module_service import get_module_definition, normalize_module
+from app.service.risk_assessment_service import record_risk_assessment_sample
 
 PREDICTION_SCHEMA = {
     "type": "object",
@@ -2072,7 +2073,7 @@ def _persist_agent_run(payload: dict, prediction: dict):
             if not run_row:
                 return
 
-            conn.execute(
+            prediction_row = conn.execute(
                 text(
                     """
                     INSERT INTO agent_predictions (
@@ -2103,6 +2104,7 @@ def _persist_agent_run(payload: dict, prediction: dict):
                         CAST(:supporting_items AS jsonb),
                         CAST(:raw_json AS jsonb)
                     )
+                    RETURNING id
                     """
                 ),
                 {
@@ -2119,6 +2121,13 @@ def _persist_agent_run(payload: dict, prediction: dict):
                     "supporting_items": json.dumps(prediction.get("supporting_case_titles", []), ensure_ascii=False),
                     "raw_json": json.dumps(prediction, ensure_ascii=False),
                 },
+            ).mappings().first()
+            record_risk_assessment_sample(
+                analysis_payload=payload,
+                prediction=prediction,
+                agent_run_id=int(run_row["id"]),
+                agent_prediction_id=int(prediction_row["id"]) if prediction_row else None,
+                db_conn=conn,
             )
     except Exception:
         return

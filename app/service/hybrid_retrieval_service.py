@@ -133,6 +133,7 @@ def hybrid_search(
     limit: int | None = None,
     lexical_limit: int | None = None,
     vector_limit: int | None = None,
+    filters: dict | None = None,
 ) -> dict:
     clean_query = repair_text(query)
     if not clean_query:
@@ -155,17 +156,19 @@ def hybrid_search(
     vector_pgvector_enabled = False
     for partition_name, partition_source, partition_query in _retrieval_partitions(source_filter, query_plan):
         lexical_result = rag_search(
-            partition_query,
-            keywords=expanded_keywords,
+            clean_query,
+            keywords=keywords or [],
             module=module,
             source_filter=partition_source,
             limit=lexical_limit,
+            filters=filters,
         )
         vector_result = vector_search(
             partition_query,
             module=module,
             source_filter=partition_source,
             limit=vector_limit,
+            filters=filters,
         )
         for item in lexical_result.get("items") or []:
             current = dict(item)
@@ -259,6 +262,7 @@ def hybrid_search(
         "structured_query": query_plan,
         "module": normalize_module(module),
         "source_filter": source_filter,
+        "filters": filters or {},
         "items": items,
         "total": len(items),
         "status": "ok",

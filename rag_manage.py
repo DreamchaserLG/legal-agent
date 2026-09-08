@@ -28,6 +28,15 @@ def _print(payload: dict, as_json: bool) -> None:
         print(f"{key}: {value}")
 
 
+def _filters_from_args(args) -> dict:
+    filters = {}
+    for key in ("jurisdiction", "document_type", "court_level", "language", "date_from", "date_to"):
+        value = getattr(args, key, None)
+        if value:
+            filters[key] = value
+    return filters
+
+
 def cmd_status(args) -> int:
     _print(get_rag_status(), args.json)
     return 0
@@ -46,6 +55,7 @@ def cmd_search(args) -> int:
         module=args.module,
         source_filter=args.source,
         limit=args.limit,
+        filters=_filters_from_args(args),
     )
     if args.json:
         _print(result, True)
@@ -87,6 +97,7 @@ def cmd_vector_search(args) -> int:
         module=args.module,
         source_filter=args.source,
         limit=args.limit,
+        filters=_filters_from_args(args),
     )
     if args.json:
         _print(result, True)
@@ -108,6 +119,7 @@ def cmd_hybrid_search(args) -> int:
         module=args.module,
         source_filter=args.source,
         limit=args.limit,
+        filters=_filters_from_args(args),
     )
     if args.json:
         _print(result, True)
@@ -180,6 +192,15 @@ def cmd_export(args) -> int:
     return 0
 
 
+def _add_filter_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--jurisdiction", default="", help="Structured filter, for example Canada or Ontario.")
+    parser.add_argument("--document-type", dest="document_type", default="", help="Structured filter, for example case, statute, or regulation.")
+    parser.add_argument("--court-level", dest="court_level", default="", help="Structured court/tribunal filter.")
+    parser.add_argument("--language", default="", help="Structured language filter, for example en or fr.")
+    parser.add_argument("--date-from", dest="date_from", default="", help="Filter published_at on or after YYYY-MM-DD.")
+    parser.add_argument("--date-to", dest="date_to", default="", help="Filter published_at on or before YYYY-MM-DD.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build, inspect, search, and export the local RAG index.")
     parser.add_argument("--json", action="store_true", help="Print JSON output.")
@@ -199,6 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--module", default="canada", choices=["canada", "us_sanctions"])
     search.add_argument("--source", default="all", help="all, canada, ofac, canlii, case, law, or a source_code.")
     search.add_argument("--limit", type=int, default=8)
+    _add_filter_args(search)
     search.set_defaults(func=cmd_search)
 
     plan_query = sub.add_parser("plan-query", help="Show structured legal retrieval query plan.")
@@ -220,6 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
     vector_search_parser.add_argument("--module", default="canada", choices=["canada", "us_sanctions"])
     vector_search_parser.add_argument("--source", default="all", help="all, canada, ofac, canlii, case, law, or a source_code.")
     vector_search_parser.add_argument("--limit", type=int, default=8)
+    _add_filter_args(vector_search_parser)
     vector_search_parser.set_defaults(func=cmd_vector_search)
 
     hybrid_search_parser = sub.add_parser("hybrid-search", help="Search with lexical + vector retrieval.")
@@ -228,6 +251,7 @@ def build_parser() -> argparse.ArgumentParser:
     hybrid_search_parser.add_argument("--module", default="canada", choices=["canada", "us_sanctions"])
     hybrid_search_parser.add_argument("--source", default="all", help="all, canada, ofac, canlii, case, law, or a source_code.")
     hybrid_search_parser.add_argument("--limit", type=int, default=8)
+    _add_filter_args(hybrid_search_parser)
     hybrid_search_parser.set_defaults(func=cmd_hybrid_search)
 
     rebuild_hybrid = sub.add_parser("rebuild-hybrid", help="Rebuild RAG chunks and embeddings together.")

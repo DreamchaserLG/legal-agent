@@ -10,6 +10,7 @@ from app.core.database import engine
 from app.service.common_service import plain_text_preview, repair_text
 
 LEGISLATION_SOURCE_CODES = {"ca_federal_act", "ca_federal_regulation", "on_statute", "on_regulation"}
+CASE_SOURCE_CODES = {"canlii", "a2aj_case", "manual_canada_case", "url_canada_case"}
 
 _LAW_NAME_PATTERN = re.compile(
     r"\b([A-Z][A-Za-z0-9\u2018\u2019'().,&/\-]*(?:\s+(?:[A-Z][A-Za-z0-9\u2018\u2019'().,&/\-]*|of|and|the|for|to|in|on|de|du|des|la|le|et)){0,8}\s+(?:Act|Code|Rules|Regulation(?:s)?|Charter|Convention|Order))\b"
@@ -576,7 +577,7 @@ def _fetch_case_links(case_ids: list[int]) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def _fetch_all_canlii_cases() -> list[dict]:
+def _fetch_all_canada_cases() -> list[dict]:
     sql = """
     SELECT
         id,
@@ -591,17 +592,17 @@ def _fetch_all_canlii_cases() -> list[dict]:
         created_at,
         updated_at
     FROM source_items
-    WHERE source_code = 'canlii'
+    WHERE source_code = ANY(:source_codes)
     ORDER BY published_at DESC NULLS LAST, id DESC
     """
     with engine.connect() as conn:
-        rows = conn.execute(text(sql)).mappings().all()
+        rows = conn.execute(text(sql), {"source_codes": sorted(CASE_SOURCE_CODES)}).mappings().all()
     return [dict(row) for row in rows]
 
 
 def build_canada_result_graph(results: list[dict], refresh: bool = False) -> dict:
     ensure_canada_law_tables()
-    case_rows = [row for row in results if row.get("source_code") == "canlii"]
+    case_rows = [row for row in results if row.get("source_code") in CASE_SOURCE_CODES]
     law_rows_from_results = [row for row in results if row.get("source_code") in LEGISLATION_SOURCE_CODES]
 
     _seed_official_laws(law_rows_from_results)
@@ -675,7 +676,7 @@ def refresh_law_links_for_all_cases(law_slug: str):
     law_row = _fetch_law_by_slug(law_slug)
     if not law_row:
         return None
-    case_rows = _fetch_all_canlii_cases()
+    case_rows = _fetch_all_canada_cases()
     _replace_links_for_single_law(case_rows, law_row)
     return law_row
 
@@ -736,7 +737,7 @@ def _prune_orphan_inferred_laws():
 
 def bootstrap_canada_law_graph(force: bool = False) -> dict:
     ensure_canada_law_tables()
-    case_rows = _fetch_all_canlii_cases()
+    case_rows = _fetch_all_canada_cases()
 
     official_sql = """
     SELECT

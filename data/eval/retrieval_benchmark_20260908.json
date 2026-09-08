@@ -1,0 +1,133 @@
+{
+  "状态": "完成",
+  "重复次数": 2,
+  "limit": 5,
+  "查询": [
+    {
+      "query": "contract good faith appeal",
+      "关键词检索": {
+        "最小毫秒": 261.215,
+        "平均毫秒": 304.636,
+        "中位毫秒": 304.636,
+        "最大毫秒": 348.058,
+        "返回数量": 5,
+        "状态": "ok",
+        "样例标题": [
+          "New Brunswick Criminal Appeal Rule 63 with Respect to Criminal Appeals to the Court of Appeal",
+          "New Brunswick Criminal Appeal Rule 63 with Respect to Criminal Appeals to the Court of Appeal",
+          "Criminal Appeal Rules"
+        ]
+      },
+      "向量检索": {
+        "最小毫秒": 28.307,
+        "平均毫秒": 66.893,
+        "中位毫秒": 66.893,
+        "最大毫秒": 105.479,
+        "返回数量": 5,
+        "状态": "ok",
+        "样例标题": [
+          "Décret relatif aux oignons de l’Ontario",
+          "Décret relatif au fromage de l’Ontario",
+          "International Bridges and Tunnels Regulations"
+        ]
+      },
+      "混合检索": {
+        "最小毫秒": 335.166,
+        "平均毫秒": 349.958,
+        "中位毫秒": 349.958,
+        "最大毫秒": 364.75,
+        "返回数量": 5,
+        "状态": "ok",
+        "样例标题": [
+          "R. v. Taylor",
+          "Rickards (Estate of) v. Diebold Election Systems Inc.",
+          "New Brunswick Criminal Appeal Rule 63 with Respect to Criminal Appeals to the Court of Appeal"
+        ]
+      }
+    },
+    {
+      "query": "tenant eviction unpaid rent repairs Ontario",
+      "关键词检索": {
+        "最小毫秒": 112.449,
+        "平均毫秒": 126.442,
+        "中位毫秒": 126.442,
+        "最大毫秒": 140.434,
+        "返回数量": 5,
+        "状态": "ok",
+        "样例标题": [
+          "Loi sur l’augmentation du rendement des rentes sur l’État",
+          "Loi sur l’augmentation du rendement des rentes sur l’État",
+          "Règlement relatif aux rentes sur l’État"
+        ]
+      },
+      "向量检索": {
+        "最小毫秒": 23.144,
+        "平均毫秒": 25.778,
+        "中位毫秒": 25.778,
+        "最大毫秒": 28.412,
+        "返回数量": 5,
+        "状态": "ok",
+        "样例标题": [
+          "R-12",
+          "R-12",
+          "A-11.4"
+        ]
+      },
+      "混合检索": {
+        "最小毫秒": 364.534,
+        "平均毫秒": 366.231,
+        "中位毫秒": 366.231,
+        "最大毫秒": 367.927,
+        "返回数量": 5,
+        "状态": "ok",
+        "样例标题": [
+          "Squamish Nation Residential Tenancy Regulations",
+          "Prohibition on the Purchase of Residential Property by Non-Canadians Act",
+          "Order Designating the Minister of Infrastructure and Communities as the Minister for the Purposes of the Prohibition on the Purchase of Residential Property by Non-Canadians Act"
+        ]
+      }
+    },
+    {
+      "query": "federal regulation administrative appeal",
+      "关键词检索": {
+        "最小毫秒": 747.705,
+        "平均毫秒": 820.924,
+        "中位毫秒": 820.924,
+        "最大毫秒": 894.143,
+        "返回数量": 5,
+        "状态": "ok",
+        "样例标题": [
+          "New Brunswick Criminal Appeal Rule 63 with Respect to Criminal Appeals to the Court of Appeal",
+          "New Brunswick Criminal Appeal Rule 63 with Respect to Criminal Appeals to the Court of Appeal",
+          "Criminal Appeal Rules"
+        ]
+      },
+      "向量检索": {
+        "最小毫秒": 19.359,
+        "平均毫秒": 23.605,
+        "中位毫秒": 23.605,
+        "最大毫秒": 27.851,
+        "返回数量": 5,
+        "状态": "ok",
+        "样例标题": [
+          "Prospectus (Federal Credit Unions) Regulations",
+          "Remission Order of Federal Administrative Fees Paid or Payable by the Yukon and the Northwest Territories",
+          "Federal Real Property and Federal Immovables Act"
+        ]
+      },
+      "混合检索": {
+        "最小毫秒": 829.41,
+        "平均毫秒": 877.832,
+        "中位毫秒": 877.832,
+        "最大毫秒": 926.254,
+        "返回数量": 5,
+        "状态": "ok",
+        "样例标题": [
+          "Federal Courts Act",
+          "Lloyd's Underwriters v. Cominco Ltd.",
+          "Courts Administration Service Act"
+        ]
+      }
+    }
+  ]
+}

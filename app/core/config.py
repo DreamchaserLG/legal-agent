@@ -62,8 +62,12 @@ class Settings:
         )
         self.rag_lexical_weight = float(os.getenv("RAG_LEXICAL_WEIGHT", "0.55"))
         self.rag_vector_weight = float(os.getenv("RAG_VECTOR_WEIGHT", "0.45"))
-        self.rag_vector_candidate_limit = int(os.getenv("RAG_VECTOR_CANDIDATE_LIMIT", "40"))
-        self.rag_lexical_candidate_limit = int(os.getenv("RAG_LEXICAL_CANDIDATE_LIMIT", "40"))
+        self.rag_vector_candidate_limit = int(os.getenv("RAG_VECTOR_CANDIDATE_LIMIT", "24"))
+        self.rag_lexical_candidate_limit = int(os.getenv("RAG_LEXICAL_CANDIDATE_LIMIT", "24"))
+        self.rag_vector_index_type = os.getenv("RAG_VECTOR_INDEX_TYPE", "hnsw").strip().lower()
+        self.rag_hnsw_m = int(os.getenv("RAG_HNSW_M", "16"))
+        self.rag_hnsw_ef_construction = int(os.getenv("RAG_HNSW_EF_CONSTRUCTION", "64"))
+        self.rag_hnsw_ef_search = int(os.getenv("RAG_HNSW_EF_SEARCH", "80"))
         self.embedding_provider = os.getenv("EMBEDDING_PROVIDER", "hash").strip().lower()
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "local-hash-embedding").strip()
         self.embedding_dimension = int(os.getenv("EMBEDDING_DIMENSION", "384"))
@@ -147,6 +151,22 @@ class Settings:
         # 数据源配置 - 支持多种数据源
         self.canada_legislation_source = os.getenv("CANADA_LEGISLATION_SOURCE", "demo").strip().lower()
         self.canada_case_source = os.getenv("CANADA_CASE_SOURCE", "demo").strip().lower()
+        self.a2aj_api_base_url = os.getenv("A2AJ_API_BASE_URL", "https://api.a2aj.ca").strip().rstrip("/")
+        self.a2aj_hf_case_dataset = os.getenv("A2AJ_HF_CASE_DATASET", "a2aj/canadian-case-law").strip()
+        self.a2aj_hf_law_dataset = os.getenv("A2AJ_HF_LAW_DATASET", "a2aj/canadian-laws").strip()
+        self.a2aj_demo_case_configs = _split_csv(os.getenv("A2AJ_DEMO_CASE_CONFIGS", "default"))
+        self.a2aj_demo_law_configs = _split_csv(os.getenv("A2AJ_DEMO_LAW_CONFIGS", "default"))
+        self.a2aj_demo_cases_per_config = int(os.getenv("A2AJ_DEMO_CASES_PER_CONFIG", "5"))
+        self.a2aj_demo_laws_per_config = int(os.getenv("A2AJ_DEMO_LAWS_PER_CONFIG", "5"))
+        self.laws_lois_xml_repo_url = os.getenv(
+            "LAWS_LOIS_XML_REPO_URL",
+            "https://github.com/justicecanada/laws-lois-xml.git",
+        ).strip()
+        self.laws_lois_xml_local_dir = os.getenv(
+            "LAWS_LOIS_XML_LOCAL_DIR",
+            "data/imports/laws-lois-xml",
+        ).strip()
+        self.laws_lois_xml_demo_limit = int(os.getenv("LAWS_LOIS_XML_DEMO_LIMIT", "10"))
         self.canlii_api_key = os.getenv("CANLII_API_KEY", "").strip()
         self.keyword_extraction_use_llm = (
             os.getenv("KEYWORD_EXTRACTION_USE_LLM", "true").strip().lower()

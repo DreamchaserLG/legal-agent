@@ -1,62 +1,30 @@
-# Legal Retrieval Skills
+# 法律检索技能说明
 
-This project keeps legal retrieval skills as lightweight internal rules instead of adding heavy runtime dependencies.
+本项目把法律检索技能实现为轻量内部规则，避免在当前 demo 阶段引入过重运行时依赖。后续如果需要，可把这些规则升级为独立 MCP 工具或 Agent 技能。
 
-## Included skills
+## 当前内置思路
 
-- LawThinker Explore-Verify-Memorize
-  - Source: https://github.com/yxy-919/LawThinker-agent
-  - Use in this project: keep retrieval evidence explicit, verify whether hits contain matching legal entities, and preserve reusable context for later prediction.
+- 探索-验证-记忆：检索时保留查询意图、证据来源和可复用上下文。
+- 法律引用优先：优先匹配法规标题、引用号、章节号、法院层级和权威片段。
+- 法律实体抽取：从输入中抽取案例引用、法规标题、section、法院、辖区和争议焦点。
+- 权威感知 rerank：对更高法院层级、明确法规来源、case-rule 关联更强的结果加权。
+- 引用校验：生成回答时标记缺少本地证据支持的案例、法规或引用。
+- 证据质量门控：证据不足时降低预测置信度，避免高置信度编造。
 
-- LegalBench-RAG passage precision
-  - Source: https://github.com/zeroentropy-cc/legalbenchrag
-  - Use in this project: prefer exact citations, statute titles, sections, and authority snippets over broad keyword overlap.
+## 代码入口
 
-- LexNLP-style legal entity extraction
-  - Source: https://github.com/LexPredict/lexpredict-lexnlp
-  - Use in this project: extract case citations, statute titles, section references, and court signals before search.
+- `app/service/legal_skill_service.py`：技能目录、法律实体抽取、领域关键词扩展、结果验证和 rerank 信号。
+- `app/service/evidence_quality_service.py`：预测证据质量评分、未支持引用检测、置信度上限。
+- `app/service/analysis_service.py`：分析阶段应用增强关键词。
+- `app/service/search_service.py`：搜索阶段应用增强关键词和结果验证。
+- `app/service/rag_service.py`：RAG chunk、关键词检索、结构化过滤。
+- `app/service/vector_store_service.py`：向量检索和 pgvector/HNSW。
+- `app/service/hybrid_retrieval_service.py`：关键词 + 向量混合检索。
+- `app/templates/predict.html`：展示预测理由和证据质量。
 
-- CaseLink authority-aware reranking
-  - Source: https://github.com/yanran-tang/CaseLink
-  - Use in this project: boost cases with stronger authority signals and clearer case-to-rule links.
+## 当前限制
 
-- eyecite citation validation
-  - Source: https://github.com/freelawproject/eyecite
-  - Use in this project: detect legal citations and authority mentions in generated reasoning so unsupported citations can be flagged.
-
-- RAGAS-style context precision
-  - Source: https://github.com/explodinggradients/ragas
-  - Use in this project: compute a lightweight evidence-quality score before allowing high-confidence prediction.
-
-- Guardrails grounded generation
-  - Source: https://github.com/NVIDIA/NeMo-Guardrails
-  - Use in this project: cap prediction confidence when retrieved cases, laws, or authority links are weak.
-
-## Code entry points
-
-- `app/service/legal_skill_service.py`
-  - skill catalog
-  - legal entity extraction
-  - domain keyword expansion
-  - result verification and reranking signals
-
-- `app/service/evidence_quality_service.py`
-  - prediction evidence-quality score
-  - unsupported case/citation/statute detection
-  - confidence cap from evidence strength
-
-- `app/service/analysis_service.py`
-  - applies skill-enhanced keywords during local and model-based analysis
-
-- `app/service/search_service.py`
-  - applies skill-enhanced keywords before SQL search
-  - applies skill verification to search results before grouping
-
-- `app/service/legal_data_service.py`
-  - keeps case-rule matching compatible with SQLite and PostgreSQL
-
-- `app/templates/predict.html`
-  - shows evidence quality next to prediction reasoning
-
-- `app/templates/partials/memo_content.html`
-  - includes evidence quality in exported prediction reports
+- 当前还不是完整 ReAct Agent。
+- 当前 rerank 是本地规则，不是 cross-encoder。
+- 当前 hash embedding 只用于 demo 管线验证。
+- 后续需要接入真实语义 embedding、引用校验器、人工评测集和 MCP 工具调度。

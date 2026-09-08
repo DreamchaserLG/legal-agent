@@ -1,69 +1,51 @@
-# Legal Retrieval Evaluation Summary
+# 法律检索评测摘要
 
-## Scope
+更新时间：2026-09-07
 
-This evaluation validates the current Canada legal hybrid retrieval stack after adding:
+## 评测范围
 
-- structured legal query planning
-- case/law split retrieval
-- BGE-M3 local vector search
-- local legal reranking
-- CanLII hydration and incremental vector rebuild pipeline
+本评测用于验证当前加拿大法律检索链路：
 
-Dataset:
+- PostgreSQL `tsvector + GIN` 关键词检索
+- pgvector HNSW cosine 向量检索
+- 结构化过滤
+- 关键词 + 向量混合检索
+- 本地法律 rerank
+- RAG 证据上下文
+
+## 当前基准
+
+基准输出：
 
 ```text
-data/eval/canada_retrieval_eval.json
+data/eval/retrieval_benchmark_20260908.json
 ```
 
-Report:
-
-```text
-docs/retrieval_eval_report_canada.json
-```
-
-## Test Command
+执行命令：
 
 ```powershell
-python rag_manage.py eval-retrieval --limit 10 --output docs\retrieval_eval_report_canada.json
+python scripts\benchmark_retrieval.py --repeat 2 --limit 5 --output data\eval\retrieval_benchmark_20260908.json
 ```
 
-## Result
+结果摘要：
 
-```text
-status: completed
-dataset: canada_residential_tenancy_retrieval_v1
-cases: 20
-hit@1: 0.9
-hit@3: 1.0
-hit@5: 1.0
-hit@10: 1.0
-mrr: 0.95
-misses@10: 0
-```
+- 向量检索：约 19-105 毫秒
+- 关键词检索：约 112-894 毫秒
+- 混合检索：约 335-926 毫秒
 
-## Interpretation
+## 已修复问题
 
-The current retrieval stack can reliably retrieve expected Ontario residential tenancy / ONLTB evidence within Top-3 for this initial evaluation set.
+首次全量导入后，关键词检索和混合检索存在 6-19 秒级慢查询。原因是 PostgreSQL 分支同时使用 `tsvector` 和正文 `LOWER(text_content) LIKE` 兜底，混合检索还把规划扩展词喂给关键词通道，导致超宽召回和全库 rank。
 
-One failure found during the first run was the query:
+修复后：
 
-```text
-Ontario commercial tenancies landlord and tenant act statute
-```
+- PostgreSQL 关键词检索改为 `tsvector + GIN`。
+- 移除正文 LIKE 全表扫描。
+- 混合检索关键词通道使用原始查询。
+- 混合检索向量通道保留扩展查询。
 
-It was initially misrouted toward residential tenancy results. The query planner and reranker were adjusted to recognize commercial tenancy, boost Commercial Tenancies Act / Landlord and Tenant Act title matches, and penalize residential drift for commercial queries. The final run passed all Top-10 checks.
+## 现有限制
 
-## Current Limitation
-
-This is an initial focused evaluation set, not a full legal benchmark. It mainly covers Ontario residential tenancy, eviction, repair, vital services, and a small commercial tenancy regression case.
-
-Next expansion should add labeled cases for:
-
-- employment termination
-- contract breach
-- negligence
-- fraud / misrepresentation
-- injunctions
-- administrative review
-- federal immigration or tax review
+- 当前 embedding 为 hash fallback，只验证管线和索引，不代表最终语义质量。
+- 当前评测是基础延迟基准，不是完整法律检索质量评测。
+- 后续需要加入人工标注的法律问题评测集、case/law 命中率、引用准确率和风险预测准确率。

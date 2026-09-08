@@ -12,13 +12,17 @@ from app.core.database import engine, is_sqlite
 from app.service.common_service import plain_text_preview, repair_text
 from app.service.embedding_service import create_embedding, create_embeddings, embedding_metadata
 from app.service.module_service import normalize_module
-from app.service.rag_service import ensure_rag_tables
+from app.service.rag_service import _structured_filter_clause, ensure_rag_tables
 
 
 CANADA_SOURCE_CODES = {
+    "a2aj_case",
+    "a2aj_law",
+    "a2aj_regulation",
     "canlii",
     "ca_federal_act",
     "ca_federal_regulation",
+    "laws_lois_xml",
     "on_statute",
     "on_regulation",
     "manual_canada_case",
@@ -38,6 +42,23 @@ def _json_text(payload) -> str:
 
 def _vector_text(vector: list[float]) -> str:
     return "[" + ",".join(str(float(value)) for value in vector) + "]"
+
+
+def _vector_index_type() -> str:
+    configured = repair_text(getattr(settings, "rag_vector_index_type", "hnsw")).lower()
+    return configured if configured in {"hnsw", "ivfflat"} else "hnsw"
+
+
+def _hnsw_m() -> int:
+    return max(2, min(int(getattr(settings, "rag_hnsw_m", 16) or 16), 100))
+
+
+def _hnsw_ef_construction() -> int:
+    return max(4, min(int(getattr(settings, "rag_hnsw_ef_construction", 64) or 64), 1000))
+
+
+def _hnsw_ef_search() -> int:
+    return max(1, min(int(getattr(settings, "rag_hnsw_ef_search", 80) or 80), 1000))
 
 
 def _parse_vector(value) -> list[float]:
@@ -167,6 +188,66 @@ def _try_enable_pgvector() -> bool:
         return False
 
 
+def _existing_vector_index_def(conn) -> str:
+    row = conn.execute(
+        text(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname = current_schema()
+              AND tablename = 'rag_chunk_embeddings'
+              AND indexname = 'idx_rag_chunk_embeddings_vector'
+            """
+        )
+    ).mappings().first()
+    return repair_text(row.get("indexdef")) if row else ""
+
+
+def _pgvector_column_available_in_conn(conn) -> bool:
+    if is_sqlite():
+        return False
+    return bool(
+        conn.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'rag_chunk_embeddings'
+                      AND column_name = 'embedding_vector'
+                )
+                """
+            )
+        ).scalar()
+    )
+
+
+def _ensure_pgvector_index(conn) -> None:
+    if not _pgvector_column_available_in_conn(conn):
+        return
+    index_type = _vector_index_type()
+    existing = _existing_vector_index_def(conn).lower()
+    if existing and f"using {index_type}" not in existing:
+        conn.execute(text("DROP INDEX IF EXISTS idx_rag_chunk_embeddings_vector"))
+        existing = ""
+    if index_type == "hnsw":
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_vector "
+                "ON rag_chunk_embeddings USING hnsw "
+                "(embedding_vector vector_cosine_ops) "
+                f"WITH (m = {_hnsw_m()}, ef_construction = {_hnsw_ef_construction()})"
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_vector "
+                "ON rag_chunk_embeddings USING ivfflat (embedding_vector vector_cosine_ops)"
+            )
+        )
+
+
 def ensure_vector_tables() -> None:
     ensure_rag_tables()
     use_pgvector = _try_enable_pgvector()
@@ -205,22 +286,12 @@ def ensure_vector_tables() -> None:
             """,
             "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_model ON rag_chunk_embeddings(embedding_model)",
         ]
-        if use_pgvector:
-            statements.append(
-                "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_vector "
-                "ON rag_chunk_embeddings USING ivfflat (embedding_vector vector_cosine_ops)"
-            )
     with engine.begin() as conn:
         for statement in statements:
             conn.execute(text(statement))
         if use_pgvector:
             _ensure_pgvector_dimension(conn, vector_dimension)
-            conn.execute(
-                text(
-                    "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_vector "
-                    "ON rag_chunk_embeddings USING ivfflat (embedding_vector vector_cosine_ops)"
-                )
-            )
+            _ensure_pgvector_index(conn)
 
 
 def _chunk_filter_clause(source_filter: str, module: str, params: dict, alias: str = "rc") -> str:
@@ -427,6 +498,7 @@ def get_vector_status() -> dict:
     ensure_vector_tables()
     with engine.connect() as conn:
         total = conn.execute(text("SELECT COUNT(*) FROM rag_chunk_embeddings")).scalar() or 0
+        index_def = "" if is_sqlite() else _existing_vector_index_def(conn)
         by_model = conn.execute(
             text(
                 """
@@ -440,6 +512,13 @@ def get_vector_status() -> dict:
     return {
         "enabled": True,
         "pgvector_enabled": _pgvector_column_available(),
+        "index_type": _vector_index_type() if _pgvector_column_available() else "json_fallback",
+        "index_definition": index_def,
+        "hnsw": {
+            "m": _hnsw_m(),
+            "ef_construction": _hnsw_ef_construction(),
+            "ef_search": _hnsw_ef_search(),
+        },
         "embedding": embedding_metadata(),
         "total_embeddings": int(total),
         "by_model": [dict(row) for row in by_model],
@@ -456,6 +535,11 @@ def _row_to_item(row: dict, score: float) -> dict:
         "source_uid": repair_text(row.get("source_uid")),
         "title": repair_text(row.get("title")),
         "source_url": repair_text(row.get("source_url")),
+        "jurisdiction": repair_text(row.get("jurisdiction")),
+        "document_type": repair_text(row.get("document_type")),
+        "court_level": repair_text(row.get("court_level")),
+        "language": repair_text(row.get("language")),
+        "citation": repair_text(row.get("citation")),
         "published_at": str(row.get("published_at") or "")[:10],
         "chunk_index": int(row.get("chunk_index") or 0),
         "excerpt": plain_text_preview(row.get("text_content"))[:900],
@@ -500,6 +584,7 @@ def vector_search(
     module: str = "canada",
     source_filter: str = "all",
     limit: int | None = None,
+    filters: dict | None = None,
 ) -> dict:
     ensure_vector_tables()
     clean_query = repair_text(query)
@@ -516,6 +601,8 @@ def vector_search(
         "embedding_provider": meta["provider"],
     }
     where_clause = _chunk_filter_clause(source_filter, module, params, alias="rc")
+    structured_clause, structured_params = _structured_filter_clause(filters, alias="rc")
+    params.update(structured_params)
 
     if _pgvector_column_available():
         params["query_vector"] = _vector_text(query_vector)
@@ -523,6 +610,7 @@ def vector_search(
         SELECT
             rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
             rc.source_uid, rc.title, rc.source_url, rc.published_at, rc.chunk_index,
+            rc.jurisdiction, rc.document_type, rc.court_level, rc.language, rc.citation,
             rc.text_content, rc.metadata_json,
             1 - (rce.embedding_vector <=> CAST(:query_vector AS vector)) AS score
         FROM rag_chunks rc
@@ -531,10 +619,16 @@ def vector_search(
           AND rce.embedding_model = :embedding_model
           AND rce.embedding_provider = :embedding_provider
           AND rce.embedding_vector IS NOT NULL
+          {structured_clause}
         ORDER BY rce.embedding_vector <=> CAST(:query_vector AS vector)
         LIMIT :limit
         """
         with engine.connect() as conn:
+            if _vector_index_type() == "hnsw":
+                try:
+                    conn.execute(text(f"SET hnsw.ef_search = {_hnsw_ef_search()}"))
+                except Exception:
+                    pass
             rows = [dict(row) for row in conn.execute(text(sql), params).mappings().all()]
         items = [_row_to_item(row, float(row.get("score") or 0)) for row in rows]
     else:
@@ -542,12 +636,14 @@ def vector_search(
         SELECT
             rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
             rc.source_uid, rc.title, rc.source_url, rc.published_at, rc.chunk_index,
+            rc.jurisdiction, rc.document_type, rc.court_level, rc.language, rc.citation,
             rc.text_content, rc.metadata_json, rce.embedding_json
         FROM rag_chunks rc
         JOIN rag_chunk_embeddings rce ON rce.chunk_id = rc.id
         WHERE {where_clause}
           AND rce.embedding_model = :embedding_model
           AND rce.embedding_provider = :embedding_provider
+          {structured_clause}
         ORDER BY rc.updated_at DESC
         LIMIT 2000
         """
@@ -569,10 +665,12 @@ def vector_search(
         "query": clean_query,
         "module": normalize_module(module),
         "source_filter": source_filter,
+        "filters": filters or {},
         "items": items,
         "total": len(items),
         "status": "ok",
         "embedding": meta,
         "diagnostic_only": diagnostic_only,
         "pgvector_enabled": _pgvector_column_available(),
+        "index_type": _vector_index_type() if _pgvector_column_available() else "json_fallback",
     }

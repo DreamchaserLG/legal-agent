@@ -38,6 +38,11 @@ tmp-*.pdf
 *.tmp
 *.bak
 data_archive/
+data/backups/
+data/imports/
+data/raw/
+*.parquet
+_cleanup_quarantine_*/
 
 # Local browser drivers
 drivers/

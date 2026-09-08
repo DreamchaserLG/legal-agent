@@ -1,23 +1,22 @@
-# Clean Package Setup
+# 最小可运行压缩包说明
 
-This package is a sanitized runtime package for the Legal Demo MVP.
+本压缩包是 `legal-demo` 的清理版运行包，用于拷贝到其他电脑后重新安装依赖、配置环境并运行。
 
-It intentionally excludes:
+## 不包含的内容
 
 - `.env`
-- API keys and private credentials
-- local databases
-- local model weights
-- logs
-- cache files
-- personal documents
-- historical debug HTML files
-- previous `dist` packages
-- virtual environments
+- API key 和私人凭据
+- 本地数据库文件或 PostgreSQL dump
+- 本地模型权重
+- 日志、缓存、临时文件
+- 旧调试 HTML
+- 旧压缩包
+- 虚拟环境
+- `data/imports/` 中的原始开放数据 clone
+- `data/backups/` 中的数据库备份
+- `_cleanup_quarantine_*/` 隔离区
 
-## 1. Install Dependencies
-
-Base application:
+## 安装依赖
 
 ```powershell
 python -m venv venv
@@ -25,132 +24,94 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-If you use local BGE-M3 embedding:
+如果使用本地 embedding 模型：
 
 ```powershell
 pip install -r requirements-local-embedding.txt
 ```
 
-For GPU PyTorch, install the correct CUDA build from the official PyTorch guide.
+GPU 版 PyTorch 请按 PyTorch 官方命令安装对应 CUDA 版本。
 
-## 2. Configure Environment
-
-Copy the clean template:
+## 配置环境
 
 ```powershell
 copy .env.clean.example .env
 ```
 
-Then edit `.env`.
+编辑 `.env`。
 
-Required database setting:
+PostgreSQL 示例：
 
 ```dotenv
 DATABASE_URL=postgresql+psycopg2://postgres:change_me@127.0.0.1:5432/legal_demo
-```
-
-For a lightweight SQLite run:
-
-```dotenv
-DATABASE_URL=sqlite:///./data/legal_demo.sqlite3
-```
-
-Required session setting:
-
-```dotenv
 SESSION_SECRET=replace-with-a-long-random-string
 ```
 
-## 3. Configure LLM
-
-Use one provider:
+Qwen/OpenAI-compatible 示例：
 
 ```dotenv
 LLM_PROVIDER=custom
 CUSTOM_API_KEY=your_api_key
-CUSTOM_MODEL=your_model_name
+CUSTOM_MODEL=qwen3.8-27b
 CUSTOM_BASE_URL=https://your-openai-compatible-endpoint/v1
 ```
 
-Or:
-
-```dotenv
-LLM_PROVIDER=openai
-OPENAI_API_KEY=your_api_key
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_BASE_URL=https://api.openai.com/v1
-```
-
-Do not commit `.env`.
-
-## 4. Configure Local BGE-M3 Embedding
-
-Download BGE-M3 separately. Model weights are not included in this package.
-
-Example:
-
-```dotenv
-EMBEDDING_PROVIDER=local
-EMBEDDING_MODEL=bge-m3
-EMBEDDING_DIMENSION=1024
-EMBEDDING_LOCAL_MODEL_PATH=D:\environment\embeddingModel\bge-m3
-EMBEDDING_DEVICE=auto
-EMBEDDING_MAX_LENGTH=2048
-EMBEDDING_BATCH_SIZE=16
-```
-
-If you do not have BGE-M3 yet, use diagnostic hash embedding:
+embedding demo 示例：
 
 ```dotenv
 EMBEDDING_PROVIDER=hash
 EMBEDDING_MODEL=local-hash-embedding
-EMBEDDING_DIMENSION=384
+EMBEDDING_DIMENSION=1024
 ```
 
-Hash embedding only verifies the pipeline. It is not semantic retrieval.
+生产语义检索应改为真实 embedding 服务或本地模型，并重建向量。
 
-## 5. Initialize and Run
+## 初始化数据库
 
-Run the web app:
+确认 PostgreSQL 已安装并创建数据库后执行：
 
 ```powershell
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+python scripts\db_maintenance.py init-vector
 ```
 
-Check RAG/vector status:
+如果需要查看状态：
 
 ```powershell
-python rag_manage.py status
-python rag_manage.py vector-status
+python scripts\db_maintenance.py status
+python rag_manage.py --json vector-status
 ```
 
-Rebuild indexes:
+## 导入 demo 数据
 
 ```powershell
-python rag_manage.py rebuild --source canada
-python rag_manage.py rebuild-vectors --source canada --module canada
+python scripts\ingest_open_legal_data.py --source a2aj --cases-per-config 8 --laws-per-config 8 --rebuild-limit 40
 ```
 
-Search:
+如果本机已经准备好 `data/imports/laws-lois-xml/`：
 
 ```powershell
-python rag_manage.py hybrid-search "Ontario tenant eviction repair issue" --module canada --limit 8
+python scripts\ingest_open_legal_data.py --source laws-lois-xml --laws-lois-limit 10 --rebuild-limit 80
 ```
 
-Evaluate retrieval:
+全量导入建议按 offset 分批执行，避免长事务。
+
+## 启动服务
 
 ```powershell
-python rag_manage.py eval-retrieval --limit 10 --output docs\retrieval_eval_report_canada.json
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Hydrate new CanLII data and rebuild changed vectors:
+访问：
+
+```text
+http://127.0.0.1:8000
+http://127.0.0.1:8000/health
+```
+
+## 验证命令
 
 ```powershell
-python rag_manage.py hydrate-canlii "Ontario tenant eviction repair issue" --target-count 3 --module canada
+python llm_healthcheck.py
+python rag_manage.py hybrid-search "contract good faith appeal" --module canada --source canada --limit 5
+python scripts\benchmark_retrieval.py --repeat 2 --limit 5 --output data\eval\retrieval_benchmark_20260908.json
 ```
-
-## 6. Package Contents
-
-The clean package contains only runtime source, templates, static files, CLI tools, safe configuration templates, and the retrieval evaluation dataset.
-
-It does not include local indexed data. After configuring the environment, rebuild RAG and vector indexes on the target machine.

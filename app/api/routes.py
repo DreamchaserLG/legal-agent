@@ -8,7 +8,7 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.service.agent_service import get_dashboard_metrics, predict_legal_outcome
@@ -53,6 +53,7 @@ from app.service.common_service import looks_mojibake, repair_text
 from app.service.pdf_service import PDFRenderError, render_legal_memo_pdf
 from app.service.hybrid_retrieval_service import hybrid_search, rebuild_hybrid_index
 from app.service.rag_service import export_rag_chunks, get_rag_status, rag_search, rebuild_rag_index
+from app.service.risk_assessment_service import list_risk_training_samples, record_risk_feedback_label
 from app.service.search_service import search_and_optionally_sync
 from app.service.vector_store_service import get_vector_status, rebuild_chunk_embeddings, vector_search
 from app.service.user_service import (
@@ -87,6 +88,25 @@ router = APIRouter()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+def _rag_structured_filters(
+    jurisdiction: str | None,
+    document_type: str | None,
+    court_level: str | None,
+    language: str | None,
+    date_from: str | None,
+    date_to: str | None,
+) -> dict:
+    values = {
+        "jurisdiction": jurisdiction,
+        "document_type": document_type,
+        "court_level": court_level,
+        "language": language,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+    return {key: repair_text(value) for key, value in values.items() if repair_text(value)}
 
 _MODULE_PROFILE_OVERRIDES = {
     "canada": {
@@ -722,6 +742,14 @@ class ImportManualPayload(BaseModel):
     article_summary: str = ""
     source_url: str = ""
     auto_link: bool = False
+
+
+class RiskFeedbackPayload(BaseModel):
+    sample_id: int
+    human_risk_level: str
+    human_outcome: str = ""
+    human_notes: str = ""
+    label_json: dict = Field(default_factory=dict)
 
 
 def _base_context(request: Request, page_id: str) -> dict:
@@ -1996,9 +2024,16 @@ def api_rag_search(
     module: str = Query("canada"),
     source: str = Query("all"),
     limit: int = Query(8),
+    jurisdiction: str | None = Query(None),
+    document_type: str | None = Query(None),
+    court_level: str | None = Query(None),
+    language: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
 ):
     require_user(request)
-    return rag_search(query, module=normalize_module(module), source_filter=source, limit=limit)
+    filters = _rag_structured_filters(jurisdiction, document_type, court_level, language, date_from, date_to)
+    return rag_search(query, module=normalize_module(module), source_filter=source, limit=limit, filters=filters)
 
 
 @router.get("/api/rag/vector-search")
@@ -2008,9 +2043,16 @@ def api_rag_vector_search(
     module: str = Query("canada"),
     source: str = Query("all"),
     limit: int = Query(8),
+    jurisdiction: str | None = Query(None),
+    document_type: str | None = Query(None),
+    court_level: str | None = Query(None),
+    language: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
 ):
     require_user(request)
-    return vector_search(query, module=normalize_module(module), source_filter=source, limit=limit)
+    filters = _rag_structured_filters(jurisdiction, document_type, court_level, language, date_from, date_to)
+    return vector_search(query, module=normalize_module(module), source_filter=source, limit=limit, filters=filters)
 
 
 @router.get("/api/rag/hybrid-search")
@@ -2020,9 +2062,16 @@ def api_rag_hybrid_search(
     module: str = Query("canada"),
     source: str = Query("all"),
     limit: int = Query(8),
+    jurisdiction: str | None = Query(None),
+    document_type: str | None = Query(None),
+    court_level: str | None = Query(None),
+    language: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
 ):
     require_user(request)
-    return hybrid_search(query, module=normalize_module(module), source_filter=source, limit=limit)
+    filters = _rag_structured_filters(jurisdiction, document_type, court_level, language, date_from, date_to)
+    return hybrid_search(query, module=normalize_module(module), source_filter=source, limit=limit, filters=filters)
 
 
 @router.post("/api/rag/rebuild")
@@ -2071,6 +2120,28 @@ def api_rag_export(
 ):
     require_admin(request)
     return export_rag_chunks(source_filter=source, limit=limit)
+
+
+@router.get("/api/risk-training/samples")
+def api_risk_training_samples(
+    request: Request,
+    limit: int = Query(100),
+):
+    require_admin(request)
+    return {"items": list_risk_training_samples(limit=limit), "limit": limit}
+
+
+@router.post("/api/risk-training/feedback")
+def api_risk_training_feedback(request: Request, payload: RiskFeedbackPayload):
+    require_admin(request)
+    label_id = record_risk_feedback_label(
+        sample_id=payload.sample_id,
+        human_risk_level=payload.human_risk_level,
+        human_outcome=payload.human_outcome,
+        human_notes=payload.human_notes,
+        label_json=payload.label_json,
+    )
+    return {"status": "ok", "label_id": label_id, "sample_id": payload.sample_id}
 
 
 @router.post("/api/archive/export")

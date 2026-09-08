@@ -14,9 +14,13 @@ from app.service.common_service import plain_text_preview, repair_text, sha256_t
 from app.service.module_service import normalize_module
 
 CANADA_SOURCE_CODES = {
+    "a2aj_case",
+    "a2aj_law",
+    "a2aj_regulation",
     "canlii",
     "ca_federal_act",
     "ca_federal_regulation",
+    "laws_lois_xml",
     "on_statute",
     "on_regulation",
     "manual_canada_case",
@@ -52,6 +56,46 @@ def _json_text(payload: dict | list | None) -> str:
     return json.dumps(payload or {}, ensure_ascii=False, default=str)
 
 
+def _first_text(*values) -> str:
+    for value in values:
+        if isinstance(value, list):
+            value = ", ".join([repair_text(item) for item in value if repair_text(item)])
+        clean = repair_text(value)
+        if clean:
+            return clean
+    return ""
+
+
+def _doc_structured_fields(doc: dict, source_kind: str) -> dict:
+    metadata = doc.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    document_type = _first_text(
+        metadata.get("document_type"),
+        metadata.get("law_kind"),
+        metadata.get("legal_type"),
+        metadata.get("case_type"),
+        metadata.get("type"),
+        source_kind,
+    ).lower()
+    return {
+        "jurisdiction": _first_text(
+            metadata.get("jurisdiction"),
+            metadata.get("country"),
+            metadata.get("province"),
+            metadata.get("database_id"),
+        )[:120],
+        "document_type": document_type[:80],
+        "court_level": _first_text(
+            metadata.get("court_level"),
+            metadata.get("court_name"),
+            metadata.get("database_name"),
+        )[:120],
+        "language": _first_text(metadata.get("language"), metadata.get("lang"), "en")[:20].lower(),
+        "citation": _first_text(metadata.get("citation"), metadata.get("article_no"), metadata.get("docket_number"))[:240],
+    }
+
+
 def ensure_rag_tables() -> None:
     from app.core.database import is_sqlite
     if is_sqlite():
@@ -66,6 +110,11 @@ def ensure_rag_tables() -> None:
                 source_uid TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL DEFAULT '',
                 source_url TEXT NOT NULL DEFAULT '',
+                jurisdiction TEXT NOT NULL DEFAULT '',
+                document_type TEXT NOT NULL DEFAULT '',
+                court_level TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT '',
+                citation TEXT NOT NULL DEFAULT '',
                 published_at TIMESTAMP NULL,
                 chunk_index INTEGER NOT NULL DEFAULT 0,
                 text_content TEXT NOT NULL,
@@ -104,6 +153,11 @@ def ensure_rag_tables() -> None:
                 source_uid TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL DEFAULT '',
                 source_url TEXT NOT NULL DEFAULT '',
+                jurisdiction VARCHAR(120) NOT NULL DEFAULT '',
+                document_type VARCHAR(80) NOT NULL DEFAULT '',
+                court_level VARCHAR(120) NOT NULL DEFAULT '',
+                language VARCHAR(20) NOT NULL DEFAULT '',
+                citation TEXT NOT NULL DEFAULT '',
                 published_at TIMESTAMP NULL,
                 chunk_index INTEGER NOT NULL DEFAULT 0,
                 text_content TEXT NOT NULL,
@@ -117,7 +171,7 @@ def ensure_rag_tables() -> None:
             """,
             "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source ON rag_chunks(source_kind, source_code)",
             "CREATE INDEX IF NOT EXISTS idx_rag_chunks_updated ON rag_chunks(updated_at DESC)",
-            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_vector ON rag_chunks USING GIN(search_vector)",
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_metadata_gin ON rag_chunks USING GIN(metadata_json)",
             """
             CREATE TABLE IF NOT EXISTS rag_index_runs (
                 id BIGSERIAL PRIMARY KEY,
@@ -135,6 +189,59 @@ def ensure_rag_tables() -> None:
     with engine.begin() as conn:
         for statement in statements:
             conn.execute(text(statement))
+        if is_sqlite():
+            existing_columns = {
+                str(row[1])
+                for row in conn.exec_driver_sql("PRAGMA table_info(rag_chunks)").all()
+            }
+            sqlite_columns = {
+                "jurisdiction": "TEXT NOT NULL DEFAULT ''",
+                "document_type": "TEXT NOT NULL DEFAULT ''",
+                "court_level": "TEXT NOT NULL DEFAULT ''",
+                "language": "TEXT NOT NULL DEFAULT ''",
+                "citation": "TEXT NOT NULL DEFAULT ''",
+            }
+            for column, definition in sqlite_columns.items():
+                if column not in existing_columns:
+                    conn.exec_driver_sql(f"ALTER TABLE rag_chunks ADD COLUMN {column} {definition}")
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_rag_chunks_structured "
+                    "ON rag_chunks(jurisdiction, document_type, court_level, language)"
+                )
+            )
+        else:
+            existing_columns = {
+                str(row[0])
+                for row in conn.execute(
+                    text(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'rag_chunks'
+                        """
+                    )
+                ).all()
+            }
+            pg_columns = {
+                "jurisdiction": "VARCHAR(120) NOT NULL DEFAULT ''",
+                "document_type": "VARCHAR(80) NOT NULL DEFAULT ''",
+                "court_level": "VARCHAR(120) NOT NULL DEFAULT ''",
+                "language": "VARCHAR(20) NOT NULL DEFAULT ''",
+                "citation": "TEXT NOT NULL DEFAULT ''",
+                "search_vector": "TSVECTOR",
+            }
+            for column, definition in pg_columns.items():
+                if column not in existing_columns:
+                    conn.execute(text(f"ALTER TABLE rag_chunks ADD COLUMN {column} {definition}"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_rag_chunks_structured "
+                    "ON rag_chunks(jurisdiction, document_type, court_level, language)"
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rag_chunks_vector ON rag_chunks USING GIN(search_vector)"))
 
 
 def _table_exists(table_name: str) -> bool:
@@ -184,6 +291,40 @@ def _source_filter_clause(source_filter: str) -> tuple[str, dict]:
     if source == "law":
         return "AND source_kind = 'law'", {}
     return "AND source_code = :filter_source_code", {"filter_source_code": source}
+
+
+def _structured_filter_clause(filters: dict | None, *, alias: str = "") -> tuple[str, dict]:
+    from app.core.database import is_sqlite
+
+    filters = filters or {}
+    clauses = []
+    params: dict = {}
+    prefix = f"{alias}." if alias else ""
+
+    for key in ("jurisdiction", "document_type", "court_level", "language"):
+        value = repair_text(filters.get(key))
+        if not value:
+            continue
+        params[f"filter_{key}"] = value.lower()
+        clauses.append(f"LOWER({prefix}{key}) = :filter_{key}")
+
+    date_from = repair_text(filters.get("date_from"))
+    if date_from:
+        params["filter_date_from"] = date_from
+        if is_sqlite():
+            clauses.append(f"DATE({prefix}published_at) >= DATE(:filter_date_from)")
+        else:
+            clauses.append(f"{prefix}published_at >= CAST(:filter_date_from AS timestamp)")
+
+    date_to = repair_text(filters.get("date_to"))
+    if date_to:
+        params["filter_date_to"] = date_to
+        if is_sqlite():
+            clauses.append(f"DATE({prefix}published_at) <= DATE(:filter_date_to)")
+        else:
+            clauses.append(f"{prefix}published_at <= CAST(:filter_date_to AS timestamp)")
+
+    return ("AND " + " AND ".join(clauses), params) if clauses else ("", {})
 
 
 def _compact_metadata(value) -> dict:
@@ -467,6 +608,7 @@ def iter_rag_documents(source_filter: str = "all", limit: int | None = None) -> 
 def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
     from app.core.database import is_sqlite
     source_kind = _source_kind(doc.get("source_code", ""), doc.get("source_table", ""))
+    structured_fields = _doc_structured_fields(doc, source_kind)
 
     if is_sqlite():
         # SQLite: 不支持 search_vector 和 ON CONFLICT DO UPDATE
@@ -475,12 +617,14 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                 """
                 INSERT OR REPLACE INTO rag_chunks (
                     source_kind, source_table, source_id, source_code, source_uid,
-                    title, source_url, published_at, chunk_index, text_content,
+                    title, source_url, jurisdiction, document_type, court_level,
+                    language, citation, published_at, chunk_index, text_content,
                     content_hash, metadata_json, created_at, updated_at
                 )
                 VALUES (
                     :source_kind, :source_table, :source_id, :source_code, :source_uid,
-                    :title, :source_url, :published_at, :chunk_index, :text_content,
+                    :title, :source_url, :jurisdiction, :document_type, :court_level,
+                    :language, :citation, :published_at, :chunk_index, :text_content,
                     :content_hash, :metadata_json,
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
@@ -494,6 +638,11 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                 "source_uid": repair_text(doc.get("source_uid")),
                 "title": repair_text(doc.get("title")),
                 "source_url": repair_text(doc.get("source_url")),
+                "jurisdiction": structured_fields["jurisdiction"],
+                "document_type": structured_fields["document_type"],
+                "court_level": structured_fields["court_level"],
+                "language": structured_fields["language"],
+                "citation": structured_fields["citation"],
                 "published_at": doc.get("published_at"),
                 "chunk_index": int(chunk_index),
                 "text_content": repair_text(chunk_text),
@@ -507,12 +656,14 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                 """
                 INSERT INTO rag_chunks (
                     source_kind, source_table, source_id, source_code, source_uid,
-                    title, source_url, published_at, chunk_index, text_content,
+                    title, source_url, jurisdiction, document_type, court_level,
+                    language, citation, published_at, chunk_index, text_content,
                     content_hash, metadata_json, search_vector, created_at, updated_at
                 )
                 VALUES (
                     :source_kind, :source_table, :source_id, :source_code, :source_uid,
-                    :title, :source_url, :published_at, :chunk_index, :text_content,
+                    :title, :source_url, :jurisdiction, :document_type, :court_level,
+                    :language, :citation, :published_at, :chunk_index, :text_content,
                     :content_hash, CAST(:metadata_json AS jsonb),
                     to_tsvector('english', :search_text),
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
@@ -524,6 +675,11 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                     source_uid = EXCLUDED.source_uid,
                     title = EXCLUDED.title,
                     source_url = EXCLUDED.source_url,
+                    jurisdiction = EXCLUDED.jurisdiction,
+                    document_type = EXCLUDED.document_type,
+                    court_level = EXCLUDED.court_level,
+                    language = EXCLUDED.language,
+                    citation = EXCLUDED.citation,
                     published_at = EXCLUDED.published_at,
                     text_content = EXCLUDED.text_content,
                     content_hash = EXCLUDED.content_hash,
@@ -540,6 +696,11 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                 "source_uid": repair_text(doc.get("source_uid")),
                 "title": repair_text(doc.get("title")),
                 "source_url": repair_text(doc.get("source_url")),
+                "jurisdiction": structured_fields["jurisdiction"],
+                "document_type": structured_fields["document_type"],
+                "court_level": structured_fields["court_level"],
+                "language": structured_fields["language"],
+                "citation": structured_fields["citation"],
                 "published_at": doc.get("published_at"),
                 "chunk_index": int(chunk_index),
                 "text_content": repair_text(chunk_text),
@@ -691,6 +852,20 @@ def _query_terms(query: str, keywords: list[str] | None = None) -> list[str]:
     return terms
 
 
+def _tsquery_or_terms(query: str, keywords: list[str] | None = None) -> str:
+    terms = []
+    seen = set()
+    for value in _query_terms(query, keywords):
+        for token in re.findall(r"[a-z0-9]{3,}", value.lower()):
+            if token in seen:
+                continue
+            seen.add(token)
+            terms.append(f"{token}:*")
+            if len(terms) >= 10:
+                return " | ".join(terms)
+    return " | ".join(terms)
+
+
 def rag_search(
     query: str,
     *,
@@ -698,6 +873,7 @@ def rag_search(
     module: str = "canada",
     limit: int | None = None,
     source_filter: str = "all",
+    filters: dict | None = None,
 ) -> dict:
     ensure_rag_tables()
     clean_query = repair_text(query)
@@ -711,7 +887,7 @@ def rag_search(
     }
     from app.core.database import is_sqlite
     if is_sqlite():
-        # SQLite: 不支持 full-text search，用 LIKE 匹配
+        # SQLite 没有 PostgreSQL tsvector，保留 LIKE 兜底以维持本地 demo 可用。
         conditions = []
         score_parts = []
         for index, term in enumerate(_query_terms(merged_query, keywords)):
@@ -725,20 +901,27 @@ def rag_search(
             conditions = ["1=1"]
         where_clause = " OR ".join(conditions)
     else:
-        conditions = ["(search_vector @@ plainto_tsquery('english', :query)"]
-        score_parts = ["ts_rank_cd(search_vector, plainto_tsquery('english', :query))"]
-        for index, term in enumerate(_query_terms(merged_query, keywords)):
-            key = f"term{index}"
-            params[key] = f"%{term}%"
-            conditions.append(f"LOWER(title) LIKE :{key}")
-            conditions.append(f"LOWER(text_content) LIKE :{key}")
-            score_parts.append(f"CASE WHEN LOWER(title) LIKE :{key} THEN 0.35 ELSE 0 END")
-            score_parts.append(f"CASE WHEN LOWER(text_content) LIKE :{key} THEN 0.08 ELSE 0 END")
-        where_clause = " OR ".join(conditions) + ")"
+        ts_or_query = _tsquery_or_terms(merged_query, keywords)
+        if ts_or_query:
+            params["ts_or_query"] = ts_or_query
+            conditions = [
+                "search_vector @@ websearch_to_tsquery('english', :query)",
+                "search_vector @@ to_tsquery('english', :ts_or_query)",
+            ]
+            score_parts = [
+                "ts_rank_cd(search_vector, websearch_to_tsquery('english', :query))",
+                "0.35 * ts_rank_cd(search_vector, to_tsquery('english', :ts_or_query))",
+            ]
+            where_clause = "(" + " OR ".join(conditions) + ")"
+        else:
+            where_clause = "search_vector @@ plainto_tsquery('english', :query)"
+            score_parts = ["ts_rank_cd(search_vector, plainto_tsquery('english', :query))"]
     module_clause, module_params = _module_source_clause(module)
     source_clause, source_params = _source_filter_clause(source_filter)
+    structured_clause, structured_params = _structured_filter_clause(filters)
     params.update(module_params)
     params.update(source_params)
+    params.update(structured_params)
     score_expr = " + ".join(score_parts)
     sql = f"""
     SELECT
@@ -750,6 +933,11 @@ def rag_search(
         source_uid,
         title,
         source_url,
+        jurisdiction,
+        document_type,
+        court_level,
+        language,
+        citation,
         published_at,
         chunk_index,
         text_content,
@@ -759,6 +947,7 @@ def rag_search(
     WHERE {where_clause}
       {module_clause}
       {source_clause}
+      {structured_clause}
     ORDER BY score DESC, published_at DESC NULLS LAST, updated_at DESC
     LIMIT :limit
     """
@@ -780,6 +969,11 @@ def rag_search(
                 "source_uid": repair_text(row.get("source_uid")),
                 "title": repair_text(row.get("title")),
                 "source_url": repair_text(row.get("source_url")),
+                "jurisdiction": repair_text(row.get("jurisdiction")),
+                "document_type": repair_text(row.get("document_type")),
+                "court_level": repair_text(row.get("court_level")),
+                "language": repair_text(row.get("language")),
+                "citation": repair_text(row.get("citation")),
                 "published_at": str(row.get("published_at") or "")[:10],
                 "chunk_index": int(row.get("chunk_index") or 0),
                 "excerpt": plain_text_preview(row.get("text_content"))[:900],
@@ -792,6 +986,7 @@ def rag_search(
         "keywords": keywords or [],
         "module": normalize_module(module),
         "source_filter": source_filter,
+        "filters": filters or {},
         "items": items,
         "total": len(items),
         "status": "ok",
@@ -804,6 +999,7 @@ def build_rag_context(
     keywords: list[str] | None = None,
     module: str = "canada",
     limit: int | None = None,
+    filters: dict | None = None,
 ) -> dict:
     if not bool(getattr(settings, "rag_enabled", True)):
         return {"enabled": False, "status": "disabled", "items": [], "total": 0}
@@ -811,12 +1007,30 @@ def build_rag_context(
         if bool(getattr(settings, "rag_hybrid_enabled", True)):
             from app.service.hybrid_retrieval_service import hybrid_search
 
-            result = hybrid_search(query, keywords=keywords, module=module, limit=limit or _max_context_items())
+            result = hybrid_search(
+                query,
+                keywords=keywords,
+                module=module,
+                limit=limit or _max_context_items(),
+                filters=filters,
+            )
         else:
-            result = rag_search(query, keywords=keywords, module=module, limit=limit or _max_context_items())
+            result = rag_search(
+                query,
+                keywords=keywords,
+                module=module,
+                limit=limit or _max_context_items(),
+                filters=filters,
+            )
     except Exception as exc:
         try:
-            result = rag_search(query, keywords=keywords, module=module, limit=limit or _max_context_items())
+            result = rag_search(
+                query,
+                keywords=keywords,
+                module=module,
+                limit=limit or _max_context_items(),
+                filters=filters,
+            )
             result["fallback_reason"] = str(exc)
             result["strategy"] = "lexical_fallback"
         except Exception as fallback_exc:
@@ -858,7 +1072,8 @@ def export_rag_chunks(source_filter: str = "all", output_path: str | None = None
         params["limit"] = int(limit)
     sql = f"""
     SELECT id, source_kind, source_table, source_id, source_code, source_uid, title,
-           source_url, published_at, chunk_index, text_content, metadata_json
+           source_url, jurisdiction, document_type, court_level, language, citation,
+           published_at, chunk_index, text_content, metadata_json
     FROM rag_chunks
     WHERE 1=1
       {source_clause}

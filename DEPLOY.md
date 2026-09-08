@@ -1,239 +1,137 @@
-# Legal Demo MVP 部署指南
+# Legal Demo 部署指南
 
-## 一、服务器环境准备
+本文用于把项目部署到服务器或新电脑。推荐 PostgreSQL + pgvector 运行方式；SQLite 只适合轻量 demo。
 
-### 1. 安装 Docker 和 Docker Compose
+## 一、准备环境
+
+需要：
+
+- Python 3.11
+- PostgreSQL 17.x 或兼容版本
+- pgvector 扩展
+- Git
+- 可选：Docker / Docker Compose
+
+Ubuntu/Debian 安装 Docker 示例：
 
 ```bash
-# Ubuntu/Debian
 sudo apt update
 sudo apt install -y docker.io docker-compose-plugin
 sudo systemctl enable docker
 sudo systemctl start docker
-
-# 验证安装
 docker --version
 docker compose version
 ```
 
-### 2. 将项目上传到服务器
+## 二、获取项目
 
 ```bash
-# 方法1: 使用 scp
-scp legal-demo-backup.tar.gz user@server:/opt/
-
-# 方法2: 使用 rsync
-rsync -avz legal-demo/ user@server:/opt/legal-demo/
-
-# 方法3: 使用 git
 git clone <your-repo-url> /opt/legal-demo
-```
-
-## 二、配置项目
-
-### 1. 解压项目
-
-```bash
-cd /opt
-tar -xzf legal-demo-backup.tar.gz
-cd legal-demo
-```
-
-### 2. 配置环境变量
-
-```bash
-# 复制生产环境配置
-cp .env.production .env
-
-# 修改数据库密码
-sed -i 's/change_me_in_production/你的数据库密码/g' .env
-
-# 修改 Session 密钥
-sed -i 's/change_this_to_a_random_string/随机生成的密钥/g' .env
-
-# 生成随机 Session 密钥
-openssl rand -hex 32
-```
-
-## 三、启动服务
-
-### 方法1: Docker Compose (推荐)
-
-```bash
 cd /opt/legal-demo
-
-# 构建并启动
-docker compose up -d --build
-
-# 查看状态
-docker compose ps
-
-# 查看日志
-docker compose logs -f app
-
-# 停止服务
-docker compose down
 ```
 
-### 方法2: 仅启动应用 (连接外部 PostgreSQL)
+如果使用压缩包：
 
 ```bash
+mkdir -p /opt/legal-demo
+tar -xzf legal-demo-pgvector-agent-minimal-*.tar.gz -C /opt/legal-demo --strip-components=1
 cd /opt/legal-demo
-
-# 修改 DATABASE_URL 指向外部数据库
-# DATABASE_URL=postgresql+psycopg2://user:pass@host:5432/legal_demo
-
-docker build -t legal-demo .
-docker run -d \
-  --name legal-demo \
-  -p 8000:8000 \
-  --env-file .env \
-  legal-demo
 ```
 
-## 四、内网穿透配置
-
-### 方案1: Nginx 反向代理 (推荐)
+## 三、安装依赖
 
 ```bash
-# 安装 Nginx
-sudo apt install -y nginx
-
-# 创建配置文件
-sudo tee /etc/nginx/sites-available/legal-demo << 'EOF'
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 120s;
-    }
-
-    location /static/ {
-        alias /opt/legal-demo/app/static/;
-        expires 7d;
-    }
-}
-EOF
-
-# 启用配置
-sudo ln -s /etc/nginx/sites-available/legal-demo /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t
-sudo systemctl reload nginx
+python3 -m venv venv
+. venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 方案2: 内网穿透工具 (frp)
-
-如果服务器没有公网IP，需要使用内网穿透工具：
-
-#### 服务器端配置
+如需本地 embedding 模型：
 
 ```bash
-# 在服务器上运行 frps
-cat > /etc/frp/frps.toml << 'EOF'
-bindPort = 7000
-EOF
-
-frps -c /etc/frp/frps.toml
+pip install -r requirements-local-embedding.txt
 ```
 
-#### 本地电脑配置
+## 四、配置环境变量
 
 ```bash
-# 在本地电脑运行 frpc
-cat > frpc.toml << 'EOF'
-serverAddr = "服务器IP"
-serverPort = 7000
-
-[[proxies]]
-name = "legal-demo"
-type = "http"
-localPort = 8000
-customDomains = ["your-domain.com"]
-EOF
-
-frpc -c frpc.toml
+cp .env.clean.example .env
 ```
 
-### 方案3: 使用 ngrok
+编辑 `.env`：
+
+```dotenv
+DATABASE_URL=postgresql+psycopg2://postgres:change_me@127.0.0.1:5432/legal_demo
+SESSION_SECRET=replace-with-a-long-random-string
+LLM_PROVIDER=custom
+CUSTOM_MODEL=qwen3.8-27b
+CUSTOM_BASE_URL=https://your-openai-compatible-endpoint/v1
+CUSTOM_API_KEY=your_api_key
+```
+
+当前 demo 可使用：
+
+```dotenv
+EMBEDDING_PROVIDER=hash
+EMBEDDING_MODEL=local-hash-embedding
+EMBEDDING_DIMENSION=1024
+```
+
+生产语义检索应改为真实 embedding，并重新构建向量。
+
+## 五、初始化数据库
 
 ```bash
-# 安装 ngrok
-curl -s https://ngrok-agent.s3.amazonaws.com/ngrok-v3-stable-linux-amd64.tgz | tar -xz
-sudo mv ngrok /usr/local/bin/
-
-# 启动隧道
-ngrok http 8000
+python scripts/db_maintenance.py init-vector
+python scripts/db_maintenance.py status
 ```
 
-## 五、验证部署
-
-### 1. 检查服务状态
+如果需要直接执行 SQL，可参考：
 
 ```bash
-# 查看容器状态
-docker compose ps
-
-# 测试健康检查
-curl http://localhost:8000/health
+psql "$DATABASE_URL" -f sql/legal_agent_demo.sql
+psql "$DATABASE_URL" -f sql/postgres_vector_schema.sql
 ```
 
-### 2. 访问应用
+## 六、导入数据
 
-- 本地访问: http://localhost:8000
-- 内网访问: http://服务器内网IP:8000
-- 公网访问: http://your-domain.com (需要配置域名解析)
-
-### 3. 创建管理员账户
-
-访问 http://your-domain.com/register 注册第一个账户，然后在数据库中设置为管理员：
+A2AJ demo：
 
 ```bash
-docker compose exec postgres psql -U postgres -d legal_demo -c "
-UPDATE users SET role = 'admin' WHERE username = '你的用户名';
-"
+python scripts/ingest_open_legal_data.py --source a2aj --cases-per-config 8 --laws-per-config 8 --rebuild-limit 40
 ```
 
-## 六、常见问题
-
-### Q1: 启动失败，提示数据库连接错误
-
-检查 .env 中的 DATABASE_URL 配置，确保 PostgreSQL 容器已启动：
+Justice Canada XML 本地目录准备好后：
 
 ```bash
-docker compose logs postgres
+python scripts/ingest_open_legal_data.py --source laws-lois-xml --laws-lois-offset 0 --laws-lois-limit 2000 --skip-sync --skip-rebuild
+python rag_manage.py rebuild --source canada
+python rag_manage.py rebuild-vectors --source canada --module canada
 ```
 
-### Q2: 应用启动后提示 CanLII API 错误
-
-这是正常的，RSS 数据爬取会自动进行，无需 API Key。
-
-### Q3: 如何更新代码
+## 七、启动服务
 
 ```bash
-cd /opt/legal-demo
-git pull
-docker compose up -d --build
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-### Q4: 如何备份数据
+健康检查：
 
 ```bash
-docker compose exec postgres pg_dump -U postgres legal_demo > backup.sql
+curl http://127.0.0.1:8000/health
 ```
 
-### Q5: 如何查看日志
+## 八、验证检索
 
 ```bash
-# 实时查看应用日志
-docker compose logs -f app
-
-# 查看 PostgreSQL 日志
-docker compose logs -f postgres
+python rag_manage.py --json vector-status
+python rag_manage.py hybrid-search "contract good faith appeal" --module canada --source canada --limit 5
+python scripts/benchmark_retrieval.py --repeat 2 --limit 5 --output data/eval/retrieval_benchmark_20260908.json
 ```
+
+## 九、安全注意
+
+- 不要提交 `.env`。
+- 不要提交 API key。
+- 不要把数据库备份、原始大语料、模型权重或隔离区提交到 Git。
+- 不要通过技术手段绕过第三方站点限制。
