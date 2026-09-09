@@ -27,6 +27,7 @@ htmlcov/
 *.log
 *.err
 *.out
+logs/
 *.sqlite
 *.sqlite3
 *.db
@@ -41,6 +42,7 @@ data_archive/
 data/backups/
 data/imports/
 data/raw/
+data/model_cache/
 *.parquet
 _cleanup_quarantine_*/
 

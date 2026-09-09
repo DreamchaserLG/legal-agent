@@ -29,6 +29,9 @@ CANADA_SOURCE_CODES = {
     "url_canada_rule",
 }
 OFAC_SOURCE_CODES = {"ofac"}
+CANADA_CASE_SOURCE_CODES = {code for code in CANADA_SOURCE_CODES if "case" in code} | {"canlii"}
+CANADA_LAW_SOURCE_CODES = CANADA_SOURCE_CODES - CANADA_CASE_SOURCE_CODES
+_RAG_TABLES_READY = False
 
 
 def _safe_int(value, default: int = 0) -> int:
@@ -97,6 +100,9 @@ def _doc_structured_fields(doc: dict, source_kind: str) -> dict:
 
 
 def ensure_rag_tables() -> None:
+    global _RAG_TABLES_READY
+    if _RAG_TABLES_READY:
+        return
     from app.core.database import is_sqlite
     if is_sqlite():
         statements = [
@@ -242,6 +248,7 @@ def ensure_rag_tables() -> None:
                 )
             )
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rag_chunks_vector ON rag_chunks USING GIN(search_vector)"))
+    _RAG_TABLES_READY = True
 
 
 def _table_exists(table_name: str) -> bool:
@@ -399,6 +406,12 @@ def _source_item_documents(source_filter: str, limit: int | None) -> list[dict]:
     if source == "canada":
         where = "WHERE source_code = ANY(:source_codes)"
         params["source_codes"] = sorted(CANADA_SOURCE_CODES)
+    elif source == "case":
+        where = "WHERE source_code = ANY(:source_codes)"
+        params["source_codes"] = sorted(CANADA_CASE_SOURCE_CODES)
+    elif source == "law":
+        where = "WHERE source_code = ANY(:source_codes)"
+        params["source_codes"] = sorted(CANADA_LAW_SOURCE_CODES)
     elif source in {"ofac", "canlii"}:
         where = "WHERE source_code = :source_code"
         params["source_code"] = source

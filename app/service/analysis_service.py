@@ -942,8 +942,9 @@ def build_structured_analysis(text: str, module: str = "canada") -> dict:
         }
 
     if bool(getattr(settings, "analysis_local_fast_mode", True)):
-        # Try LLM keyword extraction even in fast mode for better keywords
-        llm_keywords, llm_weights = extract_keywords_with_llm(cleaned)
+        llm_keywords, llm_weights = ([], {})
+        if bool(getattr(settings, "analysis_fast_llm_keyword_enabled", False)):
+            llm_keywords, llm_weights = extract_keywords_with_llm(cleaned)
         if llm_keywords and llm_keywords != fallback.get("search_keywords", []):
             fallback["search_keywords"] = llm_keywords
             fallback["keyword_weights"] = llm_weights
@@ -1146,86 +1147,24 @@ def analyze_sentence_search(
     retrieval_keywords = structured.get("retrieval_keywords") or extracted_keywords
 
     if local_only and bool(getattr(settings, "analysis_local_fast_mode", True)):
-        # In fast mode, still try real-time CanLII search if enabled
-        canlii_realtime_data = {"items": [], "method": "none", "count": 0}
-        use_realtime_in_fast = (
-            getattr(settings, "canlii_realtime_search_enabled", True)
-            and normalized_module in ("canada", "all")
-            and effective_source in ("all", "canlii", "canada")
-            and retrieval_keywords
+        keyword_weights = analysis.get("keyword_weights") or {}
+        from app.service.search_service import search_with_remote_hydration
+
+        result = search_with_remote_hydration(
+            cleaned_text,
+            limit=limit,
+            offset=offset,
+            source=effective_source,
+            sort=sort,
+            module=normalized_module,
+            refresh=refresh,
+            origin_page=origin_page,
+            display_language=query_language,
+            local_only=True,
+            keyword_weights=keyword_weights,
         )
-        if use_realtime_in_fast:
-            try:
-                from app.service.canlii_service import search_canlii_by_keywords_realtime
-                max_rt = max(5, int(getattr(settings, "canlii_realtime_search_max_items", 20)))
-                canlii_realtime_data = search_canlii_by_keywords_realtime(
-                    retrieval_keywords,
-                    max_items=max_rt,
-                    use_api=bool(settings.canlii_api_key),
-                    use_rss=True,
-                )
-            except Exception:
-                canlii_realtime_data = {"items": [], "method": "error", "count": 0}
-
-        rt_items = canlii_realtime_data.get("items") or []
-        rt_canlii_cards = []
-        for item in rt_items:
-            url = (item.get("url") or "").rstrip("/")
-            rt_canlii_cards.append({
-                "id": f"rt_{hash(url) % 10**8}",
-                "source_code": "canlii",
-                "source_label": "Case (Real-time)",
-                "title": repair_text(item.get("title", "")),
-                "title_primary": repair_text(item.get("title", "")),
-                "title_secondary": "",
-                "subtitle": repair_text(item.get("citation", "")),
-                "published_at": str(item.get("date", "")),
-                "summary": _safe_excerpt(item.get("summary", ""), limit=260),
-                "summary_primary": _safe_excerpt(item.get("summary", ""), limit=260),
-                "summary_secondary": "",
-                "excerpt": "",
-                "url": item.get("url", ""),
-                "source_url": item.get("database", ""),
-                "score": 0.5,
-                "fields": [],
-                "realtime_source": item.get("source", "canlii"),
-            })
-
-        result = {
-            "input_text": cleaned_text,
-            "keywords": retrieval_keywords,
-            "total": len(rt_canlii_cards),
-            "page_count": len(rt_canlii_cards),
-            "offset": offset,
-            "source": effective_source,
-            "sort": sort,
-            "module_code": normalized_module,
-            "module_profile": get_module_definition(normalized_module),
-            "query_language": query_language,
-            "bilingual_query": {},
-            "results": rt_canlii_cards,
-            "grouped_results": {"legislation": [], "canlii": rt_canlii_cards, "ofac": [], "other": []},
-            "source_counts": {"legislation": 0, "canlii": len(rt_canlii_cards), "ofac": 0, "other": 0},
-            "has_previous": False,
-            "has_next": False,
-            "previous_offset": 0,
-            "next_offset": 0,
-            "cache_status": "miss",
-            "remote_fetch": {
-                "status": "local_only",
-                "processed": 0,
-                "sources": {},
-                "message": "当前分析使用本地快速模式，但已通过CanLII实时搜索补充结果。",
-            },
-            "search_strategy": "fast_plus_realtime" if rt_canlii_cards else "local_only_fast",
-            "hydration_target_count": limit,
-            "force_hydration": False,
-            "hydration_reason": "",
-            "canlii_realtime": {
-                "method": canlii_realtime_data.get("method", "none"),
-                "count": canlii_realtime_data.get("count", 0),
-            },
-        }
+        result["search_strategy"] = "local_fast_rag"
+        result["canlii_realtime"] = {"method": "disabled", "count": 0}
     else:
         keyword_weights = analysis.get("keyword_weights") or {}
         use_realtime_search = (
@@ -1310,7 +1249,8 @@ def analyze_sentence_search(
         "analysis_cache_status": analysis_cache_status,
         **result,
     }
-    response_payload["module_packet"] = build_module_packet(
+    fast_module_packet = result.get("module_packet") if result.get("search_backend") == "rag_chunks_tsvector" else None
+    response_payload["module_packet"] = fast_module_packet or build_module_packet(
         normalized_module,
         response_payload,
         refresh=refresh,
@@ -1319,11 +1259,19 @@ def analyze_sentence_search(
         response_payload["module_packet"],
         retrieval_keywords,
     )
-    response_payload["rag_context"] = build_rag_context(
-        cleaned_text,
-        keywords=retrieval_keywords,
-        module=normalized_module,
-    )
+    if result.get("search_backend") == "rag_chunks_tsvector":
+        response_payload["rag_context"] = {
+            "enabled": True,
+            "status": "reused_fast_search",
+            "items": result.get("results", [])[: max(1, min(int(limit or 8), 12))],
+            "total": len(result.get("results", [])),
+        }
+    else:
+        response_payload["rag_context"] = build_rag_context(
+            cleaned_text,
+            keywords=retrieval_keywords,
+            module=normalized_module,
+        )
     response_payload["data_readiness"] = build_data_readiness(
         module=normalized_module,
         module_packet=response_payload["module_packet"],

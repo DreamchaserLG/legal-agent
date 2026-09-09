@@ -97,6 +97,10 @@ dist/           本地压缩包产物，Git 忽略
 
 ## 当前进展
 
+- 2026-09-09：新增并按分块要求修正全自动 BGE-M3 迁移流水线 `run_migration.py`。目标采用 `cases_metadata` + `case_chunks` 一主多从结构，模型只对 512 token、64 token overlap 的 `chunk_text` 生成 `VECTOR(1024)`，不直接编码整篇文书。
+- 迁移流水线支持 Hugging Face 国内镜像和缓存路径加载、模型 OSError 三次重试、`max_seq_length=8192`、CUDA OOM 自动 CPU 降级、500 案例批处理、检查点、JSON Lines、HNSW/GIN 并发索引、72 小时旧表备份、RRF `hybrid_search` 和 CI 结果行输出。
+- 本轮完成脚本交付与静态验证，未对本地或生产数据库执行真实 BGE-M3 迁移；本机还需安装锁定的迁移依赖后才能运行，现有 hash 向量保持可用。
+
 - 项目清理已完成，无关文件已隔离，未永久删除。
 - PostgreSQL 17.9 已验证。
 - pgvector 已启用。
@@ -112,19 +116,27 @@ dist/           本地压缩包产物，Git 忽略
 - Qwen `qwen3.8-27b` 健康检查已通过。
 - 应用 `/health` 启动冒烟测试已通过。
 - 最小可运行压缩包路径：`dist/legal-demo-pgvector-agent-minimal-20260908-134817.zip`
+- 2026-09-08 补充：加拿大快速检索已改为法规与案例分路召回，案例按 `similarity_score` 排序，法规卡片会挂载当前命中的相关案例。
+- 2026-09-09 补充：A2AJ 案例扩库到 `1018` 条，正式案例-法规关联增加到 `1016` 条；快速检索优先读取 `case_rule_relations`，并从命中案例反向补入正式关联法规。
 
 ## 当前数据库快照
 
-- `source_items`：15615
-- `legal_cases`：8
-- `legal_rules`：12568
-- `canada_laws`：12568
-- `case_rule_relations`：4
-- `canada_case_law_links`：4
-- `rag_chunks`：203583
-- `rag_chunk_embeddings`：203583
+- `source_items`：16625
+- `a2aj_case` 源案例：1018
+- `legal_cases`：1018
+- `legal_rules`：12726
+- `canada_laws`：12726
+- `case_rule_relations`：1016
+- `canada_case_law_links`：1016
+- 已有关联法规的案例：544
+- `rag_chunks`：229631
+- 案例 RAG 分块：26285
+- 法规 RAG 分块：203346
+- `rag_chunk_embeddings`：229631
 - `risk_assessment_samples`：3
 - `risk_feedback_labels`：3
+
+说明：当前已经完成千条级案例 demo 扩库，但仍不是 A2AJ 全量 `22.5` 万条案例。案例覆盖和正式关联质量仍是后续检索质量的主要瓶颈。
 
 ## 检索性能
 
@@ -138,6 +150,17 @@ dist/           本地压缩包产物，Git 忽略
 
 - PostgreSQL 关键词检索不再对正文做 `LOWER(text_content) LIKE` 全表扫描。
 - 混合检索的关键词通道使用原始查询，向量通道使用扩展查询，避免扩展词造成超宽 rank。
+- 首页关键词和案情分析入口走本地快速 RAG 路径。
+- 加拿大检索按法规与案例分路召回，避免法规分块挤占案例结果。
+- 案例结果输出 `similarity_score`，并在模块展示里以“相似度”排序。
+
+最新验证：
+
+- `family law child support appeal`：3 条案例 + 4 条法规；`Family Law Act` 由正式案例关联反向补入，并挂载 `Duggan v. White`、`Graydon v. Michel`。
+- `criminal code sentencing appeal`：3 条案例 + 8 条法规；案例均带正式关联法规。
+- `租赁 合同 违约`：5 条案例 + 6 条法规；案例按 `similarity_score` 排序。
+- `analyze_sentence_search("family law child support appeal")`：走 `local_fast_rag`，返回 5 条 supporting cases 与 8 条法规。
+- 最新服务层检索约 `0.56s-0.96s`；分析入口约 `2.37s`。当前仍使用 hash embedding，真实语义 embedding 切换后需要重新评估。
 
 ## 代码规范
 
@@ -159,9 +182,12 @@ python scripts\db_maintenance.py status
 python scripts\db_maintenance.py init-vector
 python scripts\db_maintenance.py backup-clear --include-corpus
 python scripts\ingest_open_legal_data.py --source a2aj --cases-per-config 8 --laws-per-config 8 --rebuild-limit 40
+python scripts\ingest_open_legal_data.py --source a2aj --a2aj-mode viewer --a2aj-offset 18 --cases-per-config 100 --laws-per-config 0 --skip-sync --skip-rebuild
 python scripts\ingest_open_legal_data.py --source laws-lois-xml --laws-lois-offset 0 --laws-lois-limit 2000 --skip-sync --skip-rebuild
 python rag_manage.py rebuild --source canada
+python rag_manage.py rebuild --source case
 python rag_manage.py rebuild-vectors --source canada --module canada
+python rag_manage.py rebuild-vectors --source case --module canada
 python rag_manage.py --json vector-status
 python rag_manage.py hybrid-search "contract good faith appeal" --module canada --source canada --limit 5
 python scripts\benchmark_retrieval.py --repeat 2 --limit 5 --output data\eval\retrieval_benchmark_20260908.json
@@ -176,3 +202,5 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 - 风险评估尚未微调训练，只完成样本和反馈闭环。
 - MCP/A2A 工具调度尚未实现。
 - 法规尚未做 section-level 精细切分。
+- 案例库仍需继续扩充到更高覆盖。优先从 Hugging Face `a2aj/canadian-case-law` 分批导入更多案例，或改用 parquet 缓存 / A2AJ API / MCP，再重建 RAG 与向量索引。
+- 案例-法规关联仍需质量分层。当前能建立正式关联，但还需要区分实体法律依据、程序性背景引用和普通背景引用，并对高频程序性法规降权。

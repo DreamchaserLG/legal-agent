@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import re
 import time
 from datetime import datetime
 
@@ -38,17 +39,37 @@ def _word_similarity_expr(column: str, keyword_param: str, threshold_param: str)
         return f"0"  # SQLite 不支持 word_similarity，用 LIKE 替代
     return f"word_similarity({column}, :{keyword_param}) >= :{threshold_param}"
 _CANADA_SOURCE_CODES = {
+    "a2aj_case",
+    "a2aj_law",
+    "a2aj_regulation",
     "canlii",
     "ca_federal_act",
     "ca_federal_regulation",
+    "laws_lois_xml",
     "on_statute",
     "on_regulation",
     "manual_canada_case",
     "url_canada_case",
     "manual_canada_rule",
     "url_canada_rule",
+    "legal_case",
+    "legal_rule",
+    "canada_law",
 }
-_LEGISLATION_SOURCE_CODES = {"ca_federal_act", "ca_federal_regulation", "on_statute", "on_regulation", "manual_canada_rule", "url_canada_rule"}
+_LEGISLATION_SOURCE_CODES = {
+    "a2aj_law",
+    "a2aj_regulation",
+    "ca_federal_act",
+    "ca_federal_regulation",
+    "laws_lois_xml",
+    "legal_rule",
+    "canada_law",
+    "on_statute",
+    "on_regulation",
+    "manual_canada_rule",
+    "url_canada_rule",
+}
+_LOCAL_CASE_SOURCE_CODES = {"a2aj_case", "canlii", "legal_case", "manual_canada_case", "url_canada_case"}
 _SUPREME_COURT_CODES = {"scc", "uksc"}
 _APPEAL_COURT_CODES = {"fca", "onca", "abca", "bcca", "mbca", "nbca", "nlca", "nsca", "ntca", "nuca", "qcca", "skca", "ykca", "pescad"}
 _SUPERIOR_COURT_CODES = {"fc", "onsc", "abkb", "abqb", "bcsc", "mbkb", "mbqb", "nbkb", "nbqb", "nlsc", "nssc", "ntsc", "qccs", "skkb", "skqb", "yksc", "pecsc"}
@@ -404,7 +425,7 @@ def _prepare_cards(rows: list[dict], query_language: str) -> dict:
         if source_code == "ofac":
             groups["ofac"].append(_build_ofac_card(row, query_language))
             continue
-        if source_code == "canlii":
+        if row.get("source_kind") == "case" or source_code in _LOCAL_CASE_SOURCE_CODES:
             groups["canlii"].append(_build_canlii_card(row, query_language))
             continue
 
@@ -440,6 +461,882 @@ def _prepare_cards(rows: list[dict], query_language: str) -> dict:
         )
 
     return groups
+
+
+def _can_use_fast_rag_search(module: str, source: str) -> bool:
+    return (
+        bool(getattr(settings, "search_fast_rag_enabled", True))
+        and bool(getattr(settings, "rag_enabled", True))
+        and module == "canada"
+        and source in {"all", "canada", "canlii"}
+    )
+
+
+def _fast_rag_source_filter(source: str) -> str:
+    if source == "canlii":
+        return "case"
+    return "canada"
+
+
+_FAST_ZH_QUERY_EXPANSIONS = [
+    (("遗产", "继承", "遗嘱", "信托", "受托"), ("estate", "inheritance", "will", "trustee", "fiduciary duty")),
+    (("合同", "违约", "协议", "履行"), ("contract", "breach", "damages", "performance")),
+    (("租赁", "租客", "房东", "驱逐", "退租", "解除租约"), ("tenant", "landlord", "lease", "eviction", "termination")),
+    (("劳动", "雇佣", "解雇", "赔偿金"), ("employment", "dismissal", "termination", "reasonable notice")),
+    (("侵权", "过失", "损害", "赔偿"), ("negligence", "duty of care", "causation", "damages")),
+    (("婚姻", "离婚", "抚养", "监护"), ("family", "divorce", "custody", "child support")),
+    (("隐私", "个人信息", "数据"), ("privacy", "personal information", "PIPEDA", "consent")),
+]
+_FAST_ASSOCIATION_STOP_TERMS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "that",
+    "this",
+    "into",
+    "under",
+    "case",
+    "cases",
+    "law",
+    "laws",
+    "act",
+    "acts",
+    "rule",
+    "rules",
+    "regulation",
+    "regulations",
+    "canada",
+    "canadian",
+}
+
+
+def _fast_zh_query_expansions(text_value: str) -> list[str]:
+    expansions = []
+    for markers, terms in _FAST_ZH_QUERY_EXPANSIONS:
+        if any(marker in text_value for marker in markers):
+            expansions.extend(terms)
+    return expansions
+
+
+def _fast_rag_keywords(
+    keywords_input: str | list[str],
+    keywords: list[str],
+    skill_profile: dict,
+    limit: int = 6,
+) -> list[str]:
+    raw_text = _normalize_keywords_input(keywords_input)
+    base_terms = split_keywords(keywords_input)
+    entities = skill_profile.get("entities") or {}
+    priority_terms = []
+    for key in ("case_citations", "statute_references", "section_references", "courts"):
+        priority_terms.extend(entities.get(key) or [])
+    translated_terms = _fast_zh_query_expansions(" ".join([raw_text] + list(keywords or [])))
+
+    selected = []
+    seen = set()
+    for value in priority_terms + base_terms + translated_terms + list(keywords or []):
+        clean = repair_text(value)
+        key = clean.lower()
+        if not clean or key in seen:
+            continue
+        if " " in clean and clean not in priority_terms and len(selected) >= max(2, len(base_terms)):
+            continue
+        selected.append(clean)
+        seen.add(key)
+        if len(selected) >= limit:
+            break
+    return selected or list(keywords or [])[:limit]
+
+
+def _fast_case_scope(level_label: str, source_code: str) -> str:
+    text_value = repair_text(" ".join([level_label, source_code])).lower()
+    if any(token in text_value for token in ("supreme", "federal", "scc", "fca")):
+        return "national_federal"
+    if any(token in text_value for token in ("appeal", "superior", "court", "provincial", "tribunal", "board")):
+        return "provincial_local"
+    return "provincial_local"
+
+
+def _fast_case_columns(cases: list[dict], limit: int = 4) -> list[dict]:
+    national = [item for item in cases if item.get("scope") == "national_federal"][:limit]
+    local = [item for item in cases if item.get("scope") == "provincial_local"][:limit]
+    return [
+        {
+            "key": "national_federal",
+            "label": "国家 / 联邦法院",
+            "label_en": "National / Federal Courts",
+            "description": "本地索引命中的全国性或联邦体系案例。",
+            "items": national,
+            "empty_copy": "当前没有命中更高位阶或联邦体系案例。",
+        },
+        {
+            "key": "provincial_local",
+            "label": "省级 / 地方法院",
+            "label_en": "Provincial / Local Courts",
+            "description": "本地索引命中的省级、地方或专门机构案例。",
+            "items": local,
+            "empty_copy": "当前没有命中省级或地方层面的直接案例。",
+        },
+    ]
+
+
+def _fast_row_from_rag_item(item: dict, query_language: str) -> dict:
+    meta = dict(item.get("metadata") or {})
+    source_kind = repair_text(item.get("source_kind")) or "document"
+    source_code = repair_text(item.get("source_code"))
+    citation = repair_text(item.get("citation") or meta.get("citation"))
+    jurisdiction = repair_text(item.get("jurisdiction") or meta.get("jurisdiction") or meta.get("country") or "Canada")
+    document_type = repair_text(item.get("document_type") or meta.get("legal_type") or meta.get("case_type") or source_kind)
+    level_label = repair_text(item.get("court_level") or meta.get("court_level") or meta.get("court_name") or "")
+    raw_score = float(item.get("score") or 0)
+    score = round(max(0.0, min(raw_score, 1.0)), 4)
+    raw_json = {
+        **meta,
+        "citation": citation,
+        "jurisdiction": jurisdiction,
+        "document_type": document_type,
+        "source_kind": source_kind,
+        "retrieval_channel": "rag_fast",
+    }
+    if source_kind == "law":
+        raw_json.setdefault("kind", document_type)
+        raw_json.setdefault("level", meta.get("law_level") or "federal")
+        raw_json.setdefault("source_url", item.get("source_url"))
+    if source_kind == "case":
+        raw_json.setdefault("database_page", item.get("source_url"))
+    return {
+        "id": int(item.get("chunk_id") or item.get("source_id") or 0),
+        "source_id": int(item.get("source_id") or 0),
+        "source_table": repair_text(item.get("source_table")),
+        "source_kind": source_kind,
+        "source_code": source_code,
+        "source_uid": repair_text(item.get("source_uid")),
+        "title": repair_text(item.get("title")) or "本地资料",
+        "item_url": repair_text(item.get("source_url")),
+        "published_at": item.get("published_at") or None,
+        "summary": _clip(item.get("excerpt"), 360),
+        "raw_text": repair_text(item.get("excerpt")),
+        "raw_json": raw_json,
+        "score": score,
+        "raw_score": raw_score,
+        "absolute_match_score": raw_score,
+        "similarity_score": score,
+        "relevance_score": score,
+        "court_level": 0,
+        "court_code": "",
+        "court_level_label": level_label,
+        "query_language": query_language,
+    }
+
+
+def _fast_row_key(row: dict) -> str:
+    source_kind = repair_text(row.get("source_kind")).lower()
+    title_key = repair_text(row.get("title")).lower()
+    source_uid = repair_text(row.get("source_uid")).lower()
+    if source_kind == "case":
+        if title_key:
+            return f"case:title:{title_key}"
+        if source_uid:
+            return f"case:uid:{source_uid}"
+    if source_kind == "law" and title_key:
+        citation = repair_text((row.get("raw_json") or {}).get("citation")).lower()
+        return f"law:title:{title_key}:{citation}"
+    source_table = repair_text(row.get("source_table")).lower()
+    source_id = row.get("source_id")
+    if source_table and source_id:
+        return f"{source_kind}:{source_table}:{source_id}"
+    if source_uid:
+        return f"{source_kind}:uid:{source_uid}"
+    return f"{source_kind}:title:{title_key}"
+
+
+def _fast_identity_key(row: dict) -> str:
+    source_table = repair_text(row.get("source_table")).lower()
+    source_id = int(row.get("source_id") or 0)
+    if source_table and source_id:
+        return f"{source_table}:{source_id}"
+    return _fast_row_key(row)
+
+
+def _dedupe_fast_rows(rows: list[dict]) -> list[dict]:
+    best: dict[str, dict] = {}
+    for row in rows:
+        key = _fast_row_key(row)
+        current = best.get(key)
+        if current is None or float(row.get("raw_score") or 0) > float(current.get("raw_score") or 0):
+            best[key] = row
+    return list(best.values())
+
+
+def _apply_fast_similarity_scores(rows: list[dict]) -> list[dict]:
+    max_by_kind: dict[str, float] = {}
+    for row in rows:
+        source_kind = repair_text(row.get("source_kind")).lower() or "document"
+        max_by_kind[source_kind] = max(max_by_kind.get(source_kind, 0.0), float(row.get("raw_score") or 0.0))
+    for row in rows:
+        source_kind = repair_text(row.get("source_kind")).lower() or "document"
+        raw_score = max(0.0, float(row.get("raw_score") or 0.0))
+        denominator = max(1.0, max_by_kind.get(source_kind, 0.0))
+        similarity = round(max(0.0, min(raw_score / denominator, 1.0)), 4)
+        row["absolute_match_score"] = round(raw_score, 4)
+        row["similarity_score"] = similarity
+        row["score"] = similarity
+        row["relevance_score"] = similarity
+    return rows
+
+
+def _fast_assoc_tokens(*values) -> set[str]:
+    text_value = " ".join([plain_text_preview(value) for value in values if repair_text(value)]).lower()
+    tokens = re.findall(r"[a-z][a-z0-9'/-]{2,}", text_value)
+    return {token for token in tokens if token not in _FAST_ASSOCIATION_STOP_TERMS and len(token) >= 4}
+
+
+def _fast_law_case_match_score(law: dict, case: dict) -> float:
+    law_terms = _fast_assoc_tokens(
+        law.get("title"),
+        law.get("citation"),
+        law.get("article_no"),
+        law.get("article_summary"),
+        law.get("reason"),
+    )
+    case_terms = _fast_assoc_tokens(
+        case.get("title"),
+        case.get("summary"),
+        case.get("excerpt"),
+        case.get("match_reason"),
+    )
+    overlap = law_terms & case_terms
+    case_score = float(case.get("similarity_score") or case.get("match_score") or case.get("score") or 0)
+    law_score = float(law.get("similarity_score") or law.get("match_score") or law.get("score") or 0)
+    overlap_score = min(0.25, len(overlap) * 0.05)
+    combined = case_score * 0.7 + law_score * 0.15 + overlap_score
+    return round(max(0.0, min(combined, 1.0)), 4)
+
+
+def _fast_law_entry(row: dict) -> dict:
+    meta = row.get("raw_json") or {}
+    source_uid = repair_text(row.get("source_uid"))
+    detail_url = ""
+    if row.get("source_table") in {"legal_rules", "canada_laws"} and source_uid:
+        detail_url = f"/law/canada/{source_uid}"
+    citation = repair_text(meta.get("citation"))
+    legal_type = repair_text(meta.get("document_type") or meta.get("legal_type") or meta.get("kind") or "法规")
+    return {
+        "rule_id": row.get("source_id") or row.get("id"),
+        "law_id": row.get("source_id") or row.get("id"),
+        "title": repair_text(row.get("title")),
+        "country": repair_text(meta.get("country") or meta.get("jurisdiction") or "加拿大"),
+        "level": repair_text(meta.get("level") or meta.get("law_level") or "本地法源"),
+        "legal_type": legal_type,
+        "rule_level": repair_text(meta.get("rule_level") or meta.get("level") or legal_type),
+        "article_no": citation,
+        "citation": citation,
+        "article_text": "",
+        "article_summary": repair_text(row.get("summary")),
+        "reason": "本地 RAG 索引直接命中，适合作为当前检索或案情分析的主要法律入口。",
+        "match_reason": "本地 RAG 索引直接命中。",
+        "match_score": row.get("similarity_score") or row.get("score") or 0,
+        "similarity_score": row.get("similarity_score") or row.get("score") or 0,
+        "source_url": repair_text(row.get("item_url") or meta.get("source_url")),
+        "detail_url": detail_url,
+        "linked_case_count": 0,
+        "national_case_count": 0,
+        "local_case_count": 0,
+        "related_cases": [],
+        "case_columns": [],
+        "origin": "rag_fast",
+    }
+
+
+def _fast_rule_from_law(law: dict, match_score: float | None = None) -> dict:
+    return {
+        "rule_id": law.get("rule_id") or law.get("law_id"),
+        "title": repair_text(law.get("title")),
+        "country": law.get("country") or "加拿大",
+        "legal_type": law.get("legal_type") or law.get("rule_level") or "法规",
+        "article_no": law.get("article_no") or law.get("citation") or "",
+        "article_text": law.get("article_text") or "",
+        "article_summary": law.get("article_summary") or law.get("reason") or "",
+        "source_url": law.get("source_url") or "",
+        "detail_url": law.get("detail_url") or "",
+        "source_site": "本地资料库",
+        "rule_level": law.get("rule_level") or law.get("level") or "",
+        "match_score": match_score if match_score is not None else law.get("similarity_score") or law.get("match_score") or 0.55,
+        "match_reason": "与当前检索命中的本地法规共同出现在 RAG 结果中，暂按快速分析关联展示。",
+    }
+
+
+def _fast_rule_from_relation(row: dict) -> dict:
+    slug = repair_text(row.get("rule_slug"))
+    detail_url = f"/law/canada/{slug}" if slug else ""
+    return {
+        "rule_id": int(row.get("rule_id") or 0),
+        "title": repair_text(row.get("rule_title")),
+        "country": repair_text(row.get("rule_country") or "加拿大"),
+        "legal_type": repair_text(row.get("legal_type") or "法规"),
+        "article_no": repair_text(row.get("article_no") or row.get("citation")),
+        "article_text": "",
+        "article_summary": repair_text(row.get("article_summary")),
+        "source_url": repair_text(row.get("rule_source_url")),
+        "detail_url": detail_url,
+        "source_site": "本地正式关联表",
+        "rule_level": repair_text(row.get("rule_level")),
+        "match_score": float(row.get("relation_score") or 0),
+        "match_reason": repair_text(row.get("match_reason")) or "来自本地 case_rule_relations 正式关联。",
+        "relation_type": repair_text(row.get("relation_type")),
+    }
+
+
+def _fast_law_from_formal_rule(rule: dict, case: dict) -> dict:
+    similarity = round(
+        max(float(case.get("similarity_score") or 0), float(rule.get("match_score") or 0) * 0.9),
+        4,
+    )
+    return {
+        "rule_id": int(rule.get("rule_id") or 0),
+        "law_id": int(rule.get("rule_id") or 0),
+        "title": repair_text(rule.get("title")),
+        "country": repair_text(rule.get("country") or "加拿大"),
+        "level": repair_text(rule.get("rule_level") or "本地正式关联"),
+        "legal_type": repair_text(rule.get("legal_type") or "法规"),
+        "rule_level": repair_text(rule.get("rule_level") or "本地正式关联"),
+        "article_no": repair_text(rule.get("article_no")),
+        "citation": repair_text(rule.get("article_no")),
+        "article_text": "",
+        "article_summary": repair_text(rule.get("article_summary")),
+        "reason": "由本次命中的案例正式关联反向补充，适合作为当前案情的法规锚点。",
+        "match_reason": repair_text(rule.get("match_reason")) or "来自本地 case_rule_relations 正式关联。",
+        "match_score": similarity,
+        "similarity_score": similarity,
+        "source_url": repair_text(rule.get("source_url")),
+        "detail_url": repair_text(rule.get("detail_url")),
+        "linked_case_count": 0,
+        "national_case_count": 0,
+        "local_case_count": 0,
+        "related_cases": [],
+        "case_columns": [],
+        "origin": "case_rule_relations",
+        "_relation_key": f"legal_rules:{int(rule.get('rule_id') or 0)}" if int(rule.get("rule_id") or 0) else "",
+        "_formal_rule_id": int(rule.get("rule_id") or 0),
+    }
+
+
+def _fast_relation_context(case_rows: list[dict], law_rows: list[dict]) -> dict:
+    if is_sqlite():
+        return {"case_rules": {}, "case_ids": {}, "law_cases": {}}
+
+    case_keys_by_case_id: dict[int, list[str]] = {}
+    case_keys_by_source_item_id: dict[int, list[str]] = {}
+    for row in case_rows:
+        source_id = int(row.get("source_id") or 0)
+        if not source_id:
+            continue
+        key = _fast_identity_key(row)
+        if repair_text(row.get("source_table")).lower() == "legal_cases":
+            case_keys_by_case_id.setdefault(source_id, []).append(key)
+        elif repair_text(row.get("source_table")).lower() == "source_items":
+            case_keys_by_source_item_id.setdefault(source_id, []).append(key)
+
+    law_keys_by_rule_id: dict[int, list[str]] = {}
+    law_keys_by_canada_law_id: dict[int, list[str]] = {}
+    law_keys_by_source_item_id: dict[int, list[str]] = {}
+    for row in law_rows:
+        source_id = int(row.get("source_id") or 0)
+        if not source_id:
+            continue
+        key = _fast_identity_key(row)
+        table = repair_text(row.get("source_table")).lower()
+        if table == "legal_rules":
+            law_keys_by_rule_id.setdefault(source_id, []).append(key)
+        elif table == "canada_laws":
+            law_keys_by_canada_law_id.setdefault(source_id, []).append(key)
+        elif table == "source_items":
+            law_keys_by_source_item_id.setdefault(source_id, []).append(key)
+
+    relation_columns = """
+        crr.match_score AS relation_score,
+        crr.relation_type,
+        crr.match_reason,
+        lc.id AS legal_case_id,
+        lc.source_item_id AS case_source_item_id,
+        lc.title AS case_title,
+        lc.summary AS case_summary,
+        lc.raw_text AS case_raw_text,
+        lc.source_url AS case_source_url,
+        lc.judgment_date,
+        lc.court_level,
+        lc.court_name,
+        lc.source_code AS case_source_code,
+        lr.id AS rule_id,
+        lr.canada_law_id,
+        lr.source_item_id AS rule_source_item_id,
+        lr.title AS rule_title,
+        lr.country AS rule_country,
+        lr.legal_type,
+        lr.article_no,
+        lr.article_summary,
+        lr.source_url AS rule_source_url,
+        lr.slug AS rule_slug,
+        lr.rule_level,
+        lr.citation
+    """
+
+    case_rules: dict[str, list[dict]] = {}
+    case_ids_by_key: dict[str, int] = {}
+    case_clauses = []
+    case_params: dict = {}
+    if case_keys_by_case_id:
+        case_params["case_ids"] = sorted(case_keys_by_case_id)
+        case_clauses.append("lc.id = ANY(:case_ids)")
+    if case_keys_by_source_item_id:
+        case_params["case_source_item_ids"] = sorted(case_keys_by_source_item_id)
+        case_clauses.append("lc.source_item_id = ANY(:case_source_item_ids)")
+    if case_clauses:
+        sql = f"""
+        SELECT {relation_columns}
+        FROM case_rule_relations crr
+        JOIN legal_cases lc ON lc.id = crr.case_id
+        JOIN legal_rules lr ON lr.id = crr.rule_id
+        WHERE {" OR ".join(case_clauses)}
+        ORDER BY lc.id ASC, crr.match_score DESC, lr.title ASC
+        """
+        with engine.connect() as conn:
+            rows = [dict(row) for row in conn.execute(text(sql), case_params).mappings().all()]
+        for relation in rows:
+            keys = []
+            legal_case_id = int(relation.get("legal_case_id") or 0)
+            case_source_item_id = int(relation.get("case_source_item_id") or 0)
+            keys.extend(case_keys_by_case_id.get(legal_case_id, []))
+            keys.extend(case_keys_by_source_item_id.get(case_source_item_id, []))
+            for key in keys:
+                case_ids_by_key[key] = legal_case_id
+                case_rules.setdefault(key, []).append(_fast_rule_from_relation(relation))
+
+    law_cases: dict[str, list[dict]] = {}
+    law_clauses = []
+    law_params: dict = {}
+    if law_keys_by_rule_id:
+        law_params["rule_ids"] = sorted(law_keys_by_rule_id)
+        law_clauses.append("lr.id = ANY(:rule_ids)")
+    if law_keys_by_canada_law_id:
+        law_params["canada_law_ids"] = sorted(law_keys_by_canada_law_id)
+        law_clauses.append("lr.canada_law_id = ANY(:canada_law_ids)")
+    if law_keys_by_source_item_id:
+        law_params["rule_source_item_ids"] = sorted(law_keys_by_source_item_id)
+        law_clauses.append("lr.source_item_id = ANY(:rule_source_item_ids)")
+    if law_clauses:
+        sql = f"""
+        SELECT {relation_columns}
+        FROM case_rule_relations crr
+        JOIN legal_cases lc ON lc.id = crr.case_id
+        JOIN legal_rules lr ON lr.id = crr.rule_id
+        WHERE {" OR ".join(law_clauses)}
+        ORDER BY crr.match_score DESC, lc.judgment_date DESC NULLS LAST, lc.id DESC
+        LIMIT 500
+        """
+        with engine.connect() as conn:
+            rows = [dict(row) for row in conn.execute(text(sql), law_params).mappings().all()]
+        for relation in rows:
+            keys = []
+            rule_id = int(relation.get("rule_id") or 0)
+            canada_law_id = int(relation.get("canada_law_id") or 0)
+            rule_source_item_id = int(relation.get("rule_source_item_id") or 0)
+            keys.extend(law_keys_by_rule_id.get(rule_id, []))
+            keys.extend(law_keys_by_canada_law_id.get(canada_law_id, []))
+            keys.extend(law_keys_by_source_item_id.get(rule_source_item_id, []))
+            for key in keys:
+                law_cases.setdefault(key, []).append(relation)
+
+    for key, rules in case_rules.items():
+        rules.sort(key=lambda item: float(item.get("match_score") or 0), reverse=True)
+        case_rules[key] = rules[:4]
+
+    return {"case_rules": case_rules, "case_ids": case_ids_by_key, "law_cases": law_cases}
+
+
+def _fast_related_case_from_relation(row: dict, query_case: dict | None = None) -> dict:
+    similarity = float((query_case or {}).get("similarity_score") or row.get("relation_score") or 0)
+    level_label = repair_text(row.get("court_level") or row.get("court_name") or "本地案例")
+    return {
+        "id": int(row.get("legal_case_id") or 0),
+        "case_id": int(row.get("legal_case_id") or 0),
+        "title": repair_text(row.get("case_title")),
+        "title_primary": repair_text(row.get("case_title")),
+        "summary": plain_text_preview(row.get("case_summary"))[:360],
+        "summary_primary": plain_text_preview(row.get("case_summary"))[:360],
+        "excerpt": plain_text_preview(row.get("case_raw_text"))[:900],
+        "url": repair_text(row.get("case_source_url")),
+        "source_url": repair_text(row.get("case_source_url")),
+        "published_at": str(row.get("judgment_date") or "")[:10],
+        "judgment_date": str(row.get("judgment_date") or "")[:10],
+        "score": similarity,
+        "match_score": similarity,
+        "similarity_score": similarity,
+        "absolute_match_score": float(row.get("relation_score") or 0),
+        "law_case_similarity": float(row.get("relation_score") or 0),
+        "relevance_label": "相似度",
+        "relevance_level": "medium",
+        "match_reason": repair_text(row.get("match_reason")) or "来自本地正式案例-法规关联。",
+        "country": "加拿大",
+        "case_type": "案例",
+        "court_level": level_label,
+        "court_level_label": level_label,
+        "source_code": repair_text(row.get("case_source_code")),
+        "source_kind": "case",
+        "rules": [_fast_rule_from_relation(row)],
+        "scope": _fast_case_scope(level_label, row.get("case_source_code", "")),
+        "relation_status": "formal_relation",
+        "is_retrieved_result": bool(query_case),
+        "supporting_arguments": [],
+        "opposing_arguments": [],
+    }
+
+
+def _fast_case_entry(
+    row: dict,
+    laws: list[dict],
+    *,
+    formal_rules: list[dict] | None = None,
+    formal_case_id: int | None = None,
+) -> dict:
+    meta = row.get("raw_json") or {}
+    level_label = repair_text(row.get("court_level_label") or meta.get("court_level") or meta.get("court_name") or "本地案例")
+    source_url = repair_text(row.get("item_url") or meta.get("source_url") or meta.get("database_page"))
+    similarity = float(row.get("similarity_score") or row.get("score") or 0)
+    if formal_rules:
+        rules = formal_rules[:4]
+        relation_status = "formal_relation"
+    else:
+        ranked_laws = sorted(
+            laws,
+            key=lambda law: _fast_law_case_match_score(law, {**row, "similarity_score": similarity}),
+            reverse=True,
+        )
+        rules = [
+            _fast_rule_from_law(law, _fast_law_case_match_score(law, {**row, "similarity_score": similarity}))
+            for law in ranked_laws[:2]
+        ]
+        relation_status = "retrieved_pending_relation"
+    return {
+        "id": row.get("id"),
+        "case_id": formal_case_id or (row.get("source_id") if row.get("source_table") == "legal_cases" else None),
+        "title": repair_text(row.get("title")),
+        "title_primary": repair_text(row.get("title")),
+        "title_secondary": "",
+        "summary": plain_text_preview(row.get("summary"))[:360],
+        "summary_primary": plain_text_preview(row.get("summary"))[:360],
+        "summary_secondary": "",
+        "excerpt": plain_text_preview(row.get("raw_text"))[:900],
+        "url": source_url,
+        "source_url": source_url,
+        "published_at": str(row.get("published_at") or "")[:10],
+        "judgment_date": str(row.get("published_at") or "")[:10],
+        "score": float(row.get("score") or 0),
+        "match_score": similarity,
+        "similarity_score": similarity,
+        "absolute_match_score": row.get("absolute_match_score") or row.get("raw_score") or 0,
+        "relevance_label": "相似度",
+        "relevance_level": "medium",
+        "match_reason": "本地 RAG 案例索引命中相近事实或法律争点，并按相似度排序。",
+        "country": repair_text(meta.get("country") or meta.get("jurisdiction") or "加拿大"),
+        "case_type": repair_text(meta.get("case_type") or meta.get("document_type") or row.get("source_code") or "案例"),
+        "court_level": level_label,
+        "court_level_label": level_label,
+        "court_code": "",
+        "source_code": row.get("source_code", ""),
+        "source_kind": row.get("source_kind", ""),
+        "rules": rules,
+        "scope": _fast_case_scope(level_label, row.get("source_code", "")),
+        "relation_status": relation_status,
+        "is_retrieved_result": True,
+        "supporting_arguments": [],
+        "opposing_arguments": [],
+    }
+
+
+def _fast_module_packet(rows: list[dict], module: str, query_language: str) -> dict:
+    definition = get_module_definition(module)
+    law_rows = sorted(
+        [row for row in rows if row.get("source_kind") == "law"],
+        key=lambda row: float(row.get("similarity_score") or row.get("score") or 0),
+        reverse=True,
+    )
+    case_rows = sorted(
+        [row for row in rows if row.get("source_kind") == "case"],
+        key=lambda row: float(row.get("similarity_score") or row.get("score") or 0),
+        reverse=True,
+    )
+    selected_law_rows = law_rows[:8]
+    selected_case_rows = case_rows[:12]
+    relation_context = _fast_relation_context(selected_case_rows, selected_law_rows)
+    laws = []
+    for row in selected_law_rows:
+        law = _fast_law_entry(row)
+        law["_relation_key"] = _fast_identity_key(row)
+        laws.append(law)
+    if not laws and case_rows:
+        laws = [
+            {
+                "rule_id": 0,
+                "law_id": 0,
+                "title": "本地资料命中",
+                "country": "加拿大",
+                "level": "本地资料",
+                "legal_type": "法规 / 案例",
+                "rule_level": "本地资料",
+                "article_no": "",
+                "citation": "",
+                "article_text": "",
+                "article_summary": "当前关键词先命中了本地案例，暂未命中可以直接锚定的法规条目。",
+                "reason": "当前关键词先命中了本地案例，暂未命中可以直接锚定的法规条目。",
+                "match_reason": "本地 RAG 索引命中。",
+                "source_url": "",
+                "detail_url": "",
+                "linked_case_count": 0,
+                "national_case_count": 0,
+                "local_case_count": 0,
+                "related_cases": [],
+                "case_columns": [],
+                "origin": "rag_fast",
+                "_relation_key": "",
+            }
+        ]
+    cases = []
+    cases_by_id: dict[int, dict] = {}
+    for row in selected_case_rows:
+        key = _fast_identity_key(row)
+        formal_rules = relation_context.get("case_rules", {}).get(key, [])
+        formal_case_id = relation_context.get("case_ids", {}).get(key)
+        case = _fast_case_entry(row, laws, formal_rules=formal_rules, formal_case_id=formal_case_id)
+        cases.append(case)
+        if case.get("case_id"):
+            cases_by_id[int(case["case_id"])] = case
+
+    law_dedupe = {
+        (repair_text(law.get("title")).lower(), repair_text(law.get("citation") or law.get("article_no")).lower())
+        for law in laws
+    }
+    for case in cases:
+        for rule in case.get("rules") or []:
+            if not rule.get("rule_id") or case.get("relation_status") != "formal_relation":
+                continue
+            key = (repair_text(rule.get("title")).lower(), repair_text(rule.get("article_no")).lower())
+            if key in law_dedupe:
+                continue
+            law_dedupe.add(key)
+            laws.append(_fast_law_from_formal_rule(rule, case))
+
+    laws.sort(
+        key=lambda law: (
+            1 if law.get("origin") == "case_rule_relations" else 0,
+            float(law.get("similarity_score") or law.get("match_score") or 0),
+        ),
+        reverse=True,
+    )
+    laws = laws[:8]
+
+    for law in laws:
+        formal_rule_id = int(law.get("_formal_rule_id") or 0)
+        if formal_rule_id:
+            related_cases = []
+            for case in cases:
+                matched_rule = next(
+                    (
+                        rule
+                        for rule in case.get("rules") or []
+                        if int(rule.get("rule_id") or 0) == formal_rule_id
+                    ),
+                    None,
+                )
+                if not matched_rule:
+                    continue
+                related = dict(case)
+                related["law_case_similarity"] = float(matched_rule.get("match_score") or case.get("similarity_score") or 0)
+                related["relation_status"] = "formal_relation"
+                related_cases.append(related)
+            related_cases.sort(
+                key=lambda case: (
+                    float(case.get("similarity_score") or 0),
+                    float(case.get("law_case_similarity") or 0),
+                ),
+                reverse=True,
+            )
+            related_cases = related_cases[:4]
+        else:
+            formal_related_rows = relation_context.get("law_cases", {}).get(law.get("_relation_key", ""), [])
+            related_cases = []
+            seen_related = set()
+            for relation in formal_related_rows:
+                legal_case_id = int(relation.get("legal_case_id") or 0)
+                if not legal_case_id or legal_case_id in seen_related:
+                    continue
+                seen_related.add(legal_case_id)
+                related_cases.append(_fast_related_case_from_relation(relation, cases_by_id.get(legal_case_id)))
+                if len(related_cases) >= 4:
+                    break
+            if related_cases:
+                related_cases.sort(
+                    key=lambda case: (
+                        float(case.get("similarity_score") or 0),
+                        float(case.get("law_case_similarity") or 0),
+                    ),
+                    reverse=True,
+                )
+            else:
+                related_cases = sorted(
+                    [dict(case) for case in cases],
+                    key=lambda case: _fast_law_case_match_score(law, case),
+                    reverse=True,
+                )[:4]
+                for case in related_cases:
+                    case["law_case_similarity"] = _fast_law_case_match_score(law, case)
+                    case["relation_status"] = "retrieved_pending_relation"
+        law["related_cases"] = related_cases
+        law["case_columns"] = _fast_case_columns(related_cases)
+        law["linked_case_count"] = len(related_cases)
+        law["national_case_count"] = len([item for item in related_cases if item.get("scope") == "national_federal"])
+        law["local_case_count"] = len([item for item in related_cases if item.get("scope") == "provincial_local"])
+        law.pop("_relation_key", None)
+        law.pop("_formal_rule_id", None)
+    return {
+        "module_code": module,
+        "module_label": definition.get("label", "加拿大法规与案例模块"),
+        "module_label_en": definition.get("label_en", ""),
+        "focus_title": "本地资料快速命中",
+        "focus_title_en": "Local Materials Fast Retrieval",
+        "focus_copy": "当前结果来自本地 RAG 分块索引，法规与案例分路检索；案例按相似度排序，并挂载到相关法规下展示。",
+        "focus_copy_en": "Results come from the local RAG index.",
+        "notice": "快速检索不会实时访问远程网页；正式关联优先使用本地关系表，不足时按本次案例相似度临时挂载到相关法规下。",
+        "notice_en": "",
+        "relevant_laws": laws[:8],
+        "case_law_rows": cases,
+        "authority_groups": [],
+        "transition_playbook": [],
+        "suggested_questions": definition.get("question_prompts", []),
+        "suggested_questions_en": definition.get("question_prompts_en", []),
+        "agent_placeholder": definition.get("agent_placeholder", ""),
+        "query_language": query_language,
+    }
+
+
+def _search_items_fast_rag(
+    *,
+    keywords_input: str | list[str],
+    keywords: list[str],
+    limit: int,
+    offset: int,
+    source: str,
+    sort: str,
+    module: str,
+    query_language: str,
+    keyword_bundle: dict,
+    skill_profile: dict,
+) -> dict | None:
+    if not _can_use_fast_rag_search(module, source):
+        return None
+    try:
+        from app.service.rag_service import rag_search
+
+        search_keywords = _fast_rag_keywords(keywords_input, keywords, skill_profile)
+        query_text = _normalize_keywords_input(keywords_input) or " ".join(search_keywords)
+        if isinstance(keywords_input, list):
+            query_text = " ".join(search_keywords)
+        fetch_limit = max(limit, min(offset + limit + 1, 30))
+        if source == "canlii":
+            case_target = fetch_limit
+            law_target = 0
+        else:
+            case_target = max(4, min(12, fetch_limit // 2))
+            law_target = max(4, min(12, fetch_limit - case_target))
+
+        law_items = []
+        if law_target:
+            law_result = rag_search(
+                query_text,
+                keywords=search_keywords,
+                module=module,
+                source_filter="law",
+                limit=law_target,
+            )
+            law_items = law_result.get("items") or []
+        case_result = rag_search(
+            query_text,
+            keywords=search_keywords,
+            module=module,
+            source_filter="case",
+            limit=case_target,
+        )
+        case_items = case_result.get("items") or []
+    except Exception:
+        return None
+
+    law_rows = _dedupe_fast_rows([_fast_row_from_rag_item(item, query_language) for item in law_items])
+    case_rows = _dedupe_fast_rows([_fast_row_from_rag_item(item, query_language) for item in case_items])
+    all_rows = _apply_fast_similarity_scores(law_rows + case_rows)
+    if sort == "recent":
+        all_rows.sort(key=lambda row: str(row.get("published_at") or ""), reverse=True)
+    else:
+        law_rows = sorted(
+            [row for row in all_rows if row.get("source_kind") == "law"],
+            key=lambda row: float(row.get("similarity_score") or 0),
+            reverse=True,
+        )
+        case_rows = sorted(
+            [row for row in all_rows if row.get("source_kind") == "case"],
+            key=lambda row: float(row.get("similarity_score") or 0),
+            reverse=True,
+        )
+        all_rows = law_rows + case_rows
+    rows = all_rows[offset : offset + limit]
+    grouped_results = _prepare_cards(rows, query_language)
+    source_counts = {"legislation": 0, "canlii": 0, "ofac": 0, "other": 0}
+    for row in rows:
+        source_kind = row.get("source_kind")
+        source_code = row.get("source_code")
+        if source_kind == "law" or source_code in _LEGISLATION_SOURCE_CODES:
+            source_counts["legislation"] += 1
+        elif source_kind == "case" or source_code in _LOCAL_CASE_SOURCE_CODES:
+            source_counts["canlii"] += 1
+        elif source_kind == "ofac" or source_code == "ofac":
+            source_counts["ofac"] += 1
+        else:
+            source_counts["other"] += 1
+
+    has_next = len(all_rows) > offset + limit
+    previous_offset = max(offset - limit, 0)
+    next_offset = offset + limit
+    total = offset + len(rows) + (1 if has_next else 0)
+    payload = {
+        "input_text": _normalize_keywords_input(keywords_input),
+        "keywords": search_keywords,
+        "total": total,
+        "page_count": len(rows),
+        "offset": offset,
+        "source": source,
+        "sort": sort,
+        "module_code": module,
+        "module_profile": get_module_definition(module),
+        "query_language": query_language,
+        "bilingual_query": keyword_bundle,
+        "results": rows,
+        "grouped_results": grouped_results,
+        "source_counts": source_counts,
+        "has_previous": offset > 0,
+        "has_next": has_next,
+        "previous_offset": previous_offset,
+        "next_offset": next_offset,
+        "cache_status": "miss",
+        "legal_skill_profile": skill_profile,
+        "retrieval_entities": skill_profile.get("entities", {}),
+        "legal_skills": skill_profile.get("skills", []),
+        "search_backend": "rag_chunks_tsvector",
+        "rag_status": "ok",
+        "fast_retrieval_keywords": search_keywords,
+    }
+    payload["module_packet"] = _fast_module_packet(all_rows[: max(limit, 12)], module, query_language)
+    return payload
 
 
 
@@ -515,6 +1412,22 @@ def search_items(
         if cached is not None:
             cached["cache_status"] = "hit"
             return cached
+
+    fast_payload = _search_items_fast_rag(
+        keywords_input=keywords_input,
+        keywords=keywords,
+        limit=limit,
+        offset=offset,
+        source=source,
+        sort=sort,
+        module=module,
+        query_language=query_language,
+        keyword_bundle=keyword_bundle,
+        skill_profile=skill_profile,
+    )
+    if fast_payload is not None:
+        _set_cached_result(_SEARCH_CACHE, cache_key, fast_payload)
+        return fast_payload
 
     conditions = []
     score_parts = []

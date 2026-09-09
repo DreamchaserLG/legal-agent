@@ -329,9 +329,12 @@ def get_dashboard_metrics() -> dict:
         case_rows = []
 
     counts = {"ofac": 0, "canlii": 0, "other": 0}
+    local_material_items = 0
     for row in rows:
         source_code = row.get("source_code")
         total = int(row.get("total") or 0)
+        if source_code != "ofac":
+            local_material_items += total
         if source_code in counts:
             counts[source_code] = total
         else:
@@ -346,6 +349,7 @@ def get_dashboard_metrics() -> dict:
         "counts": counts,
         "total_items": external_total_items,
         "external_total_items": external_total_items,
+        "local_material_items": local_material_items,
         "analyzed_case_count": analyzed_case_count,
         "analysis_run_count": analysis_run_count,
         "llm_configured": is_llm_configured(),

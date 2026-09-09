@@ -6,65 +6,35 @@
 <section class="hero hero-home">
     <div class="shell hero-grid home-grid">
         <div class="hero-copy">
-            <p class="eyebrow">Legal Retrieval Workbench</p>
-            <h1>面向外国法律法规与案例关系检索的法律研究工作台</h1>
+            <p class="eyebrow">本地法律资料工作台</p>
+            <h1>加拿大法律法规与本地案情分析</h1>
             <p class="hero-text">
-                首页保留关键词检索，也支持直接输入案情进入统一分析页。分析阶段优先使用本地数据库中的案例、法律法规与关系数据，避免实时远程抓取带来的等待。
+                首页只使用本地已经入库的资料和分析历史。关键词检索与案情分析都会优先走本地 RAG 索引，避免实时远程抓取带来的等待。
             </p>
             <div class="metric-row">
                 <article class="metric-tile">
-                    <span>{{ dashboard.external_total_items }}</span>
+                    <span>{{ dashboard.local_material_items or dashboard.external_total_items }}</span>
                     <small>本地资料条目</small>
-                </article>
-                <article class="metric-tile">
-                    <span>{{ dashboard.counts.canlii }}</span>
-                    <small>CanLII 案例</small>
-                </article>
-                <article class="metric-tile">
-                    <span>{{ dashboard.counts.ofac }}</span>
-                    <small>OFAC 资料</small>
                 </article>
                 <article class="metric-tile">
                     <span>{{ dashboard.analyzed_case_count }}</span>
                     <small>已分析案情</small>
                 </article>
-                <article class="metric-tile">
-                    <span>{{ dashboard.analysis_run_count }}</span>
-                    <small>分析运行次数</small>
-                </article>
             </div>
-            <p class="notice-text">当前登录用户：{{ current_user.real_name or current_user.username }}。系统会自动保存去重后的案件历史，后续可直接从历史记录继续查看。</p>
+            <p class="notice-text">当前登录用户：{{ current_user.real_name or current_user.username }}。系统会保存去重后的案件历史，后续可直接从历史记录继续查看。</p>
         </div>
 
         <form class="tool-panel" method="get" action="/results" data-loading-mode="search">
             <p class="panel-kicker">关键词检索</p>
-            <label for="search-module">研究模块</label>
-            <select id="search-module" name="module">
-                {% for option in module_options %}
-                <option value="{{ option.value }}">{{ option.picker_label or option.label }}</option>
-                {% endfor %}
-            </select>
+            <input type="hidden" name="module" value="canada" />
+            <input type="hidden" name="source" value="canada" />
+            <input type="hidden" name="sort" value="relevance" />
             <label for="keywords">关键词</label>
-            <input type="text" id="keywords" name="keywords" placeholder="例如：遗产争议、OFAC 除名、受托责任" required />
+            <input type="text" id="keywords" name="keywords" placeholder="例如：遗产争议、受托责任、租赁解除、合同违约" required />
             <div class="form-grid">
                 <div>
                     <label for="search-limit">结果数</label>
-                    <input type="number" id="search-limit" name="limit" value="12" min="1" max="100" />
-                </div>
-                <div>
-                    <label for="search-source">数据源</label>
-                    <select id="search-source" name="source">
-                        {% for option in source_options %}
-                        <option value="{{ option.value }}">{{ option.picker_label or option.label }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="field-span-full">
-                    <label for="search-sort">排序</label>
-                    <select id="search-sort" name="sort">
-                        <option value="relevance">相关度优先</option>
-                        <option value="recent">时间优先</option>
-                    </select>
+                    <input type="number" id="search-limit" name="limit" value="12" min="1" max="30" />
                 </div>
             </div>
             <div class="action-row">
@@ -74,66 +44,21 @@
 
         <form class="tool-panel" method="get" action="/analysis" data-loading-mode="analysis">
             <p class="panel-kicker">案情分析</p>
-            <label for="analysis-module">研究模块</label>
-            <select id="analysis-module" name="module">
-                {% for option in module_options %}
-                <option value="{{ option.value }}">{{ option.picker_label or option.label }}</option>
-                {% endfor %}
-            </select>
+            <input type="hidden" name="module" value="canada" />
+            <input type="hidden" name="source" value="canada" />
+            <input type="hidden" name="sort" value="relevance" />
             <label for="text">案情描述</label>
-            <textarea id="text" name="text" rows="6" placeholder="例如：一家公司因涉嫌帮助他人规避制裁而被调查；或家庭成员围绕遗产、信托义务和财产分配发生争议。" required></textarea>
+            <textarea id="text" name="text" rows="6" placeholder="例如：家庭成员围绕遗产、信托义务和财产分配发生争议。" required></textarea>
             <div class="form-grid">
                 <div>
                     <label for="analysis-limit">结果数</label>
-                    <input type="number" id="analysis-limit" name="limit" value="8" min="1" max="100" />
-                </div>
-                <div>
-                    <label for="analysis-source">数据源</label>
-                    <select id="analysis-source" name="source">
-                        {% for option in source_options %}
-                        <option value="{{ option.value }}">{{ option.picker_label or option.label }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="field-span-full">
-                    <label for="analysis-sort">排序</label>
-                    <select id="analysis-sort" name="sort">
-                        <option value="relevance">相关度优先</option>
-                        <option value="recent">时间优先</option>
-                    </select>
+                    <input type="number" id="analysis-limit" name="limit" value="8" min="1" max="30" />
                 </div>
             </div>
             <div class="action-row">
                 <button type="submit">进入案情分析</button>
             </div>
         </form>
-    </div>
-</section>
-
-<section class="band">
-    <div class="shell">
-        <div class="band-head">
-            <div>
-                <p class="eyebrow">Modules</p>
-                <h2>两个模块共用一套页面逻辑，但数据边界不同</h2>
-            </div>
-        </div>
-        <div class="module-card-grid">
-            <article class="module-card">
-                <p class="panel-kicker">加拿大</p>
-                <h3>法规优先，案例按明确关系入库与调用</h3>
-                <p class="tile-copy">
-                    加拿大模块优先依赖本地法律法规、案例和关联表进行匹配。命中的法规可进入详情页，详情页再按国家/联邦与省级/地方双栏展示关联案例。
-                </p>
-            </article>
-            <article class="module-card">
-                <p class="panel-kicker">美国 OFAC</p>
-                <h3>聚焦 OFAC 规则、记录与合规处理路径</h3>
-                <p class="tile-copy">
-                    美国模块当前只处理 OFAC 相关规则与处理路径，不混入普通美国判例。分析与预测阶段同样优先使用本地数据。
-                </p>
-            </article>
-        </div>
     </div>
 </section>
 {% endblock %}

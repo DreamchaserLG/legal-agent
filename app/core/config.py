@@ -39,6 +39,14 @@ class Settings:
             os.getenv("ANALYSIS_LOCAL_FAST_MODE", "true").strip().lower()
             in {"1", "true", "yes", "on"}
         )
+        self.search_fast_rag_enabled = (
+            os.getenv("SEARCH_FAST_RAG_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.analysis_fast_llm_keyword_enabled = (
+            os.getenv("ANALYSIS_FAST_LLM_KEYWORD_ENABLED", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
         self.prediction_local_fast_mode = (
             os.getenv("PREDICTION_LOCAL_FAST_MODE", "true").strip().lower()
             in {"1", "true", "yes", "on"}

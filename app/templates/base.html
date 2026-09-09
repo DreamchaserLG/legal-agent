@@ -173,9 +173,7 @@
 
 <footer class="site-footer">
     <div class="shell footer-row">
-        <span>本地资料条目 {{ dashboard.external_total_items }}</span>
-        <span>CanLII {{ dashboard.counts.canlii }}</span>
-        <span>OFAC {{ dashboard.counts.ofac }}</span>
+        <span>本地资料条目 {{ dashboard.local_material_items or dashboard.external_total_items }}</span>
         <span>已分析案情 {{ dashboard.analyzed_case_count }}</span>
     </div>
 </footer>

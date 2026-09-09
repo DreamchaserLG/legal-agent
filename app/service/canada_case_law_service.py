@@ -158,34 +158,42 @@ def _case_lookup_text(row: dict, limit: int = 8000) -> str:
     return repair_text(" ".join([summary, raw_text]))
 
 
+def _extract_case_law_mentions(case_row: dict) -> list[dict]:
+    combined_text = _case_lookup_text(case_row, limit=2600)
+    seen_for_case = set()
+    mentions = []
+    for match in _LAW_NAME_PATTERN.findall(combined_text):
+        normalized = _normalize_law_title(match)
+        if not _is_valid_law_title(normalized):
+            continue
+        lowered = normalized.lower()
+        if lowered in seen_for_case:
+            continue
+        seen_for_case.add(lowered)
+        mentions.append({"title": normalized, "normalized_title": lowered})
+
+    lowered_text = combined_text.lower()
+    for phrase in _EXPLICIT_LAW_PHRASES:
+        if phrase.lower() not in lowered_text:
+            continue
+        normalized = _normalize_law_title(phrase)
+        lowered = normalized.lower()
+        if lowered in seen_for_case or not _is_valid_law_title(normalized):
+            continue
+        seen_for_case.add(lowered)
+        mentions.append({"title": normalized, "normalized_title": lowered})
+    return mentions
+
+
 def _extract_inferred_titles(case_rows: list[dict]) -> list[dict]:
     title_counts = Counter()
     title_samples: dict[str, str] = {}
 
     for row in case_rows:
-        seen_for_case = set()
-        combined_text = _case_lookup_text(row, limit=2600)
-        for match in _LAW_NAME_PATTERN.findall(combined_text):
-            normalized = _normalize_law_title(match)
-            if not _is_valid_law_title(normalized):
-                continue
-            lowered = normalized.lower()
-            if lowered in seen_for_case:
-                continue
-            seen_for_case.add(lowered)
-            title_counts[lowered] += 1
-            title_samples.setdefault(lowered, normalized)
-        lowered_text = combined_text.lower()
-        for phrase in _EXPLICIT_LAW_PHRASES:
-            if phrase.lower() not in lowered_text:
-                continue
-            normalized = _normalize_law_title(phrase)
-            lowered = normalized.lower()
-            if lowered in seen_for_case or not _is_valid_law_title(normalized):
-                continue
-            seen_for_case.add(lowered)
-            title_counts[lowered] += 1
-            title_samples.setdefault(lowered, normalized)
+        for mention in _extract_case_law_mentions(row):
+            normalized = mention["normalized_title"]
+            title_counts[normalized] += 1
+            title_samples.setdefault(normalized, mention["title"])
 
     records = []
     for normalized, count in title_counts.items():
@@ -397,8 +405,8 @@ def _match_excerpt(text_value: str, alias: str, radius: int = 180) -> tuple[str,
     return haystack[start:end].strip(), len(pattern.findall(haystack))
 
 
-def _law_match_payload(case_row: dict, law_row: dict) -> dict | None:
-    text_value = _case_lookup_text(case_row)
+def _law_match_payload(case_row: dict, law_row: dict, text_value: str | None = None) -> dict | None:
+    text_value = text_value if text_value is not None else _case_lookup_text(case_row)
     aliases = list(law_row.get("aliases_json") or [])
     if not aliases:
         aliases = _law_aliases(law_row.get("title"), law_row.get("citation"))
@@ -434,15 +442,51 @@ def _law_match_payload(case_row: dict, law_row: dict) -> dict | None:
     return best_match
 
 
+def _law_candidate_index(law_rows: list[dict]) -> dict[str, list[dict]]:
+    index: dict[str, list[dict]] = defaultdict(list)
+    seen_pairs = set()
+    for law_row in law_rows:
+        normalized_values = [
+            repair_text(law_row.get("normalized_title")).lower(),
+            _normalize_law_title(law_row.get("title")).lower(),
+        ]
+        for alias in list(law_row.get("aliases_json") or []):
+            normalized_alias = _normalize_law_title(alias).lower()
+            if _is_valid_law_title(normalized_alias):
+                normalized_values.append(normalized_alias)
+        for normalized in normalized_values:
+            if not normalized:
+                continue
+            pair = (normalized, int(law_row["id"]))
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            index[normalized].append(law_row)
+    return index
+
+
+def _candidate_laws_for_case(case_row: dict, law_index: dict[str, list[dict]]) -> list[dict]:
+    candidates: dict[int, dict] = {}
+    for mention in _extract_case_law_mentions(case_row):
+        for law_row in law_index.get(mention["normalized_title"], []):
+            candidates[int(law_row["id"])] = law_row
+    return list(candidates.values())
+
+
 def _replace_case_links(case_rows: list[dict], law_rows: list[dict]):
     case_ids = [int(row["id"]) for row in case_rows if row.get("id") is not None]
     if not case_ids:
         return
 
     payloads = []
+    law_index = _law_candidate_index(law_rows)
     for case_row in case_rows:
-        for law_row in law_rows:
-            match = _law_match_payload(case_row, law_row)
+        text_value = _case_lookup_text(case_row)
+        candidate_laws = _candidate_laws_for_case(case_row, law_index)
+        if not candidate_laws and len(law_rows) <= 200:
+            candidate_laws = law_rows
+        for law_row in candidate_laws:
+            match = _law_match_payload(case_row, law_row, text_value=text_value)
             if match:
                 payloads.append(match)
 
