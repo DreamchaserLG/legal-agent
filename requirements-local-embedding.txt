@@ -1,7 +1,0 @@
-# BGE-M3 本地语义向量依赖；版本与 requirements.txt 保持一致。
-sentence-transformers==3.0.1
-torch==2.4.1
-transformers==4.44.2
-sentencepiece==0.2.0
-huggingface-hub==0.24.7
-langchain-text-splitters==0.2.2
