@@ -55,6 +55,7 @@ from app.service.hybrid_retrieval_service import hybrid_search, rebuild_hybrid_i
 from app.service.rag_service import export_rag_chunks, get_rag_status, rag_search, rebuild_rag_index
 from app.service.risk_assessment_service import list_risk_training_samples, record_risk_feedback_label
 from app.service.search_service import search_and_optionally_sync
+from app.service.skill_runtime_service import list_legal_skills, run_legal_skill
 from app.service.vector_store_service import get_vector_status, rebuild_chunk_embeddings, vector_search
 from app.service.user_service import (
     authenticate_user,
@@ -750,6 +751,13 @@ class RiskFeedbackPayload(BaseModel):
     human_outcome: str = ""
     human_notes: str = ""
     label_json: dict = Field(default_factory=dict)
+
+
+class SkillRunPayload(BaseModel):
+    skill_name: str
+    query: str
+    filters: dict = Field(default_factory=dict)
+    limit: int = Field(default=8, ge=1, le=12)
 
 
 def _base_context(request: Request, page_id: str) -> dict:
@@ -2072,6 +2080,26 @@ def api_rag_hybrid_search(
     require_user(request)
     filters = _rag_structured_filters(jurisdiction, document_type, court_level, language, date_from, date_to)
     return hybrid_search(query, module=normalize_module(module), source_filter=source, limit=limit, filters=filters)
+
+
+@router.get("/api/skills")
+def api_list_legal_skills(request: Request):
+    require_user(request)
+    return {"skills": list_legal_skills()}
+
+
+@router.post("/api/skills/run")
+def api_run_legal_skill(request: Request, payload: SkillRunPayload):
+    require_user(request)
+    try:
+        return run_legal_skill(
+            payload.skill_name,
+            payload.query,
+            filters=payload.filters,
+            limit=payload.limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/api/rag/rebuild")

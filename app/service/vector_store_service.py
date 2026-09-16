@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from datetime import datetime
+from time import perf_counter
 
 from sqlalchemy import text
 
@@ -59,6 +61,23 @@ def _hnsw_ef_construction() -> int:
 
 def _hnsw_ef_search() -> int:
     return max(1, min(int(getattr(settings, "rag_hnsw_ef_search", 80) or 80), 1000))
+
+
+def _defer_vector_indexes() -> bool:
+    return os.getenv("RAG_VECTOR_DEFER_INDEXES", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _refresh_statistics_during_migration() -> bool:
+    """全量写入期间默认不逐批 ANALYZE，避免统计刷新抢占编码和写入资源。"""
+    return os.getenv("RAG_VECTOR_REFRESH_STATS_DURING_MIGRATION", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
+def _skip_generic_vector_index() -> bool:
+    # Online queries always filter by the active provider/model, so the partial HNSW
+    # index covers the production path without duplicating a multi-gigabyte global index.
+    return os.getenv("RAG_VECTOR_SKIP_GENERIC_INDEX", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _parse_vector(value) -> list[float]:
@@ -248,6 +267,43 @@ def _ensure_pgvector_index(conn) -> None:
         )
 
 
+def _active_hnsw_index_name() -> str:
+    return "idx_rag_chunk_embeddings_active_hnsw"
+
+
+def _ensure_active_hnsw_index() -> None:
+    """Create an ANN index scoped to the embedding model used by live queries."""
+    if is_sqlite() or not _pgvector_column_available() or _vector_index_type() != "hnsw":
+        return
+    meta = embedding_metadata()
+    provider = repair_text(meta.get("provider"))
+    model = repair_text(meta.get("model"))
+    if not provider or not model:
+        return
+    index_name = _active_hnsw_index_name()
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            exists = conn.execute(text("SELECT to_regclass(:index_name)"), {"index_name": index_name}).scalar()
+            if exists:
+                return
+            provider_literal = provider.replace("'", "''")
+            model_literal = model.replace("'", "''")
+            conn.execute(
+                text(
+                    f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} "
+                    "ON rag_chunk_embeddings USING hnsw "
+                    "(embedding_vector vector_cosine_ops) "
+                    f"WITH (m = {_hnsw_m()}, ef_construction = {_hnsw_ef_construction()}) "
+                    "WHERE embedding_vector IS NOT NULL "
+                    f"AND embedding_provider = '{provider_literal}' "
+                    f"AND embedding_model = '{model_literal}'"
+                )
+            )
+    except Exception:
+        # The general HNSW index remains available when the database user cannot build indexes.
+        return
+
+
 def ensure_vector_tables() -> None:
     ensure_rag_tables()
     use_pgvector = _try_enable_pgvector()
@@ -267,6 +323,10 @@ def ensure_vector_tables() -> None:
             )
             """,
             "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_model ON rag_chunk_embeddings(embedding_model)",
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_provider_model ON rag_chunk_embeddings(embedding_provider, embedding_model)",
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_kind ON rag_chunks(source_kind)",
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_code ON rag_chunks(source_code)",
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_table_id ON rag_chunks(source_table, source_id)",
         ]
     else:
         vector_column = f", embedding_vector VECTOR({vector_dimension})" if use_pgvector else ""
@@ -285,13 +345,34 @@ def ensure_vector_tables() -> None:
             )
             """,
             "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_model ON rag_chunk_embeddings(embedding_model)",
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_provider_model ON rag_chunk_embeddings(embedding_provider, embedding_model)",
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_kind ON rag_chunks(source_kind)",
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_code ON rag_chunks(source_code)",
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_source_table_id ON rag_chunks(source_table, source_id)",
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunks_updated_at_id ON rag_chunks(updated_at DESC, id DESC)",
+            """
+            CREATE TABLE IF NOT EXISTS rag_embedding_cursors (
+                embedding_provider VARCHAR(40) NOT NULL,
+                embedding_model VARCHAR(120) NOT NULL,
+                module VARCHAR(60) NOT NULL,
+                source_filter VARCHAR(40) NOT NULL,
+                next_chunk_id BIGINT NOT NULL DEFAULT 0,
+                source_updated_marker DOUBLE PRECISION NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (embedding_provider, embedding_model, module, source_filter)
+            )
+            """,
         ]
     with engine.begin() as conn:
         for statement in statements:
             conn.execute(text(statement))
         if use_pgvector:
+            conn.execute(text("ALTER TABLE rag_chunk_embeddings ALTER COLUMN embedding_json DROP NOT NULL"))
             _ensure_pgvector_dimension(conn, vector_dimension)
-            _ensure_pgvector_index(conn)
+            if not _defer_vector_indexes() and not _skip_generic_vector_index():
+                _ensure_pgvector_index(conn)
+    if use_pgvector and not _defer_vector_indexes():
+        _ensure_active_hnsw_index()
 
 
 def _chunk_filter_clause(source_filter: str, module: str, params: dict, alias: str = "rc") -> str:
@@ -342,6 +423,10 @@ def _select_chunks_needing_embeddings(source_filter: str, limit: int | None, mod
         "embedding_provider": meta["provider"],
     }
     where_clause = _chunk_filter_clause(source_filter, module, params)
+    cursor_id = _embedding_cursor_start(source_filter, module, where_clause, params)
+    if cursor_id == 0:
+        return []
+    params["cursor_id"] = cursor_id
     limit_clause = "LIMIT :limit" if limit else ""
     if limit:
         params["limit"] = int(limit)
@@ -350,92 +435,195 @@ def _select_chunks_needing_embeddings(source_filter: str, limit: int | None, mod
     FROM rag_chunks rc
     LEFT JOIN rag_chunk_embeddings rce ON rce.chunk_id = rc.id
     WHERE {where_clause}
+      AND rc.id < :cursor_id
       AND (
           rce.chunk_id IS NULL
           OR rce.content_hash <> rc.content_hash
           OR rce.embedding_model <> :embedding_model
           OR rce.embedding_provider <> :embedding_provider
       )
-    ORDER BY rc.updated_at DESC, rc.id DESC
+    ORDER BY rc.id DESC
     {limit_clause}
     """
     with engine.connect() as conn:
         return [dict(row) for row in conn.execute(text(sql), params).mappings().all()]
 
 
-def _upsert_embedding(conn, chunk: dict, vector: list[float]) -> None:
-    meta = embedding_metadata()
+def _embedding_cursor_start(source_filter: str, module: str, where_clause: str, params: dict) -> int:
+    """返回缺失向量扫描起点；源语料更新时自动重置，避免每批扫过已完成部分。"""
     if is_sqlite():
+        return 2**63 - 1
+    meta = embedding_metadata()
+    cursor_params = dict(params)
+    cursor_params.update(
+        {
+            "cursor_provider": meta["provider"],
+            "cursor_model": meta["model"],
+            "cursor_module": normalize_module(module),
+            "cursor_source_filter": repair_text(source_filter or "all").lower(),
+        }
+    )
+    snapshot_sql = f"""
+        SELECT COALESCE(MAX(rc.id), 0) AS max_id,
+               COALESCE(MAX(EXTRACT(EPOCH FROM rc.updated_at)), 0) AS updated_marker
+        FROM rag_chunks rc
+        WHERE {where_clause}
+    """
+    with engine.begin() as conn:
+        snapshot = conn.execute(text(snapshot_sql), cursor_params).mappings().first() or {}
+        max_id = int(snapshot.get("max_id") or 0)
+        marker = float(snapshot.get("updated_marker") or 0)
+        row = conn.execute(
+            text(
+                """
+                SELECT next_chunk_id, source_updated_marker
+                FROM rag_embedding_cursors
+                WHERE embedding_provider = :cursor_provider
+                  AND embedding_model = :cursor_model
+                  AND module = :cursor_module
+                  AND source_filter = :cursor_source_filter
+                """
+            ),
+            cursor_params,
+        ).mappings().first()
+        if row and float(row.get("source_updated_marker") or 0) >= marker:
+            return int(row.get("next_chunk_id") or 0)
+        next_chunk_id = max_id + 1 if max_id else 0
         conn.execute(
             text(
                 """
-                INSERT OR REPLACE INTO rag_chunk_embeddings (
-                    chunk_id, embedding_provider, embedding_model, dimension,
-                    content_hash, embedding_json, created_at, updated_at
+                INSERT INTO rag_embedding_cursors (
+                    embedding_provider, embedding_model, module, source_filter,
+                    next_chunk_id, source_updated_marker, updated_at
+                ) VALUES (
+                    :cursor_provider, :cursor_model, :cursor_module, :cursor_source_filter,
+                    :next_chunk_id, :source_updated_marker, CURRENT_TIMESTAMP
                 )
-                VALUES (
-                    :chunk_id, :embedding_provider, :embedding_model, :dimension,
-                    :content_hash, :embedding_json, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-                )
+                ON CONFLICT (embedding_provider, embedding_model, module, source_filter)
+                DO UPDATE SET
+                    next_chunk_id = EXCLUDED.next_chunk_id,
+                    source_updated_marker = EXCLUDED.source_updated_marker,
+                    updated_at = CURRENT_TIMESTAMP
                 """
             ),
-            {
-                "chunk_id": int(chunk["id"]),
-                "embedding_provider": meta["provider"],
-                "embedding_model": meta["model"],
-                "dimension": len(vector),
-                "content_hash": repair_text(chunk.get("content_hash")),
-                "embedding_json": _json_text(vector),
-            },
+            {**cursor_params, "next_chunk_id": next_chunk_id, "source_updated_marker": marker},
+        )
+        return next_chunk_id
+
+
+def _advance_embedding_cursor(source_filter: str, module: str, chunks: list[dict], completed: bool) -> None:
+    if is_sqlite():
+        return
+    meta = embedding_metadata()
+    params = {
+        "embedding_provider": meta["provider"],
+        "embedding_model": meta["model"],
+        "module": normalize_module(module),
+        "source_filter": repair_text(source_filter or "all").lower(),
+        "next_chunk_id": 0 if completed else min(int(chunk["id"]) for chunk in chunks),
+    }
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE rag_embedding_cursors
+                SET next_chunk_id = :next_chunk_id, updated_at = CURRENT_TIMESTAMP
+                WHERE embedding_provider = :embedding_provider
+                  AND embedding_model = :embedding_model
+                  AND module = :module
+                  AND source_filter = :source_filter
+                """
+            ),
+            params,
+        )
+
+
+def _upsert_embeddings(conn, pairs: list[tuple[dict, list[float]]]) -> None:
+    """以分页批量 upsert 写入向量，避免每个 512 切片批次发出数百次数据库往返。"""
+    if not pairs:
+        return
+    meta = embedding_metadata()
+    if is_sqlite():
+        statement = text(
+            """
+            INSERT OR REPLACE INTO rag_chunk_embeddings (
+                chunk_id, embedding_provider, embedding_model, dimension,
+                content_hash, embedding_json, created_at, updated_at
+            ) VALUES (
+                :chunk_id, :embedding_provider, :embedding_model, :dimension,
+                :content_hash, :embedding_json, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            statement,
+            [
+                {
+                    "chunk_id": int(chunk["id"]),
+                    "embedding_provider": meta["provider"],
+                    "embedding_model": meta["model"],
+                    "dimension": len(vector),
+                    "content_hash": repair_text(chunk.get("content_hash")),
+                    "embedding_json": _json_text(vector),
+                }
+                for chunk, vector in pairs
+            ],
         )
         return
 
     if _pgvector_column_available():
-        conn.execute(
-            text(
-                """
+        try:
+            from psycopg2.extras import execute_values
+        except ImportError:
+            execute_values = None
+        if execute_values:
+            raw_connection = conn.connection
+            driver_connection = getattr(raw_connection, "driver_connection", None) or getattr(
+                raw_connection, "connection", raw_connection
+            )
+            rows = [
+                (
+                    int(chunk["id"]),
+                    meta["provider"],
+                    meta["model"],
+                    len(vector),
+                    repair_text(chunk.get("content_hash")),
+                    _vector_text(vector),
+                )
+                for chunk, vector in pairs
+            ]
+            sql = """
                 INSERT INTO rag_chunk_embeddings (
                     chunk_id, embedding_provider, embedding_model, dimension,
-                    content_hash, embedding_json, embedding_vector, created_at, updated_at
-                )
-                VALUES (
-                    :chunk_id, :embedding_provider, :embedding_model, :dimension,
-                    :content_hash, CAST(:embedding_json AS jsonb), CAST(:embedding_vector AS vector),
-                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-                )
+                    content_hash, embedding_vector, created_at, updated_at
+                ) VALUES %s
                 ON CONFLICT (chunk_id)
                 DO UPDATE SET
                     embedding_provider = EXCLUDED.embedding_provider,
                     embedding_model = EXCLUDED.embedding_model,
                     dimension = EXCLUDED.dimension,
                     content_hash = EXCLUDED.content_hash,
-                    embedding_json = EXCLUDED.embedding_json,
+                    embedding_json = NULL,
                     embedding_vector = EXCLUDED.embedding_vector,
                     updated_at = CURRENT_TIMESTAMP
-                """
-            ),
-            {
-                "chunk_id": int(chunk["id"]),
-                "embedding_provider": meta["provider"],
-                "embedding_model": meta["model"],
-                "dimension": len(vector),
-                "content_hash": repair_text(chunk.get("content_hash")),
-                "embedding_json": _json_text(vector),
-                "embedding_vector": _vector_text(vector),
-            },
-        )
-        return
+            """
+            template = "(%s, %s, %s, %s, %s, %s::vector, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            page_size = max(1, min(len(rows), int(os.getenv("RAG_VECTOR_DB_UPSERT_PAGE_SIZE", "128"))))
+            cursor = driver_connection.cursor()
+            try:
+                execute_values(cursor, sql, rows, template=template, page_size=page_size)
+            finally:
+                cursor.close()
+            return
 
-    conn.execute(
-        text(
+        statement = text(
             """
             INSERT INTO rag_chunk_embeddings (
                 chunk_id, embedding_provider, embedding_model, dimension,
-                content_hash, embedding_json, created_at, updated_at
-            )
-            VALUES (
+                content_hash, embedding_vector, created_at, updated_at
+            ) VALUES (
                 :chunk_id, :embedding_provider, :embedding_model, :dimension,
-                :content_hash, CAST(:embedding_json AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                :content_hash, CAST(:embedding_vector AS vector), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             ON CONFLICT (chunk_id)
             DO UPDATE SET
@@ -443,28 +631,85 @@ def _upsert_embedding(conn, chunk: dict, vector: list[float]) -> None:
                 embedding_model = EXCLUDED.embedding_model,
                 dimension = EXCLUDED.dimension,
                 content_hash = EXCLUDED.content_hash,
-                embedding_json = EXCLUDED.embedding_json,
+                embedding_json = NULL,
+                embedding_vector = EXCLUDED.embedding_vector,
                 updated_at = CURRENT_TIMESTAMP
             """
-        ),
-        {
-            "chunk_id": int(chunk["id"]),
-            "embedding_provider": meta["provider"],
-            "embedding_model": meta["model"],
-            "dimension": len(vector),
-            "content_hash": repair_text(chunk.get("content_hash")),
-            "embedding_json": _json_text(vector),
-        },
+        )
+        conn.execute(
+            statement,
+            [
+                {
+                    "chunk_id": int(chunk["id"]),
+                    "embedding_provider": meta["provider"],
+                    "embedding_model": meta["model"],
+                    "dimension": len(vector),
+                    "content_hash": repair_text(chunk.get("content_hash")),
+                    "embedding_vector": _vector_text(vector),
+                }
+                for chunk, vector in pairs
+            ],
+        )
+        return
+
+    statement = text(
+        """
+        INSERT INTO rag_chunk_embeddings (
+            chunk_id, embedding_provider, embedding_model, dimension,
+            content_hash, embedding_json, created_at, updated_at
+        ) VALUES (
+            :chunk_id, :embedding_provider, :embedding_model, :dimension,
+            :content_hash, CAST(:embedding_json AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (chunk_id)
+        DO UPDATE SET
+            embedding_provider = EXCLUDED.embedding_provider,
+            embedding_model = EXCLUDED.embedding_model,
+            dimension = EXCLUDED.dimension,
+            content_hash = EXCLUDED.content_hash,
+            embedding_json = EXCLUDED.embedding_json,
+            updated_at = CURRENT_TIMESTAMP
+        """
     )
+    conn.execute(
+        statement,
+        [
+            {
+                "chunk_id": int(chunk["id"]),
+                "embedding_provider": meta["provider"],
+                "embedding_model": meta["model"],
+                "dimension": len(vector),
+                "content_hash": repair_text(chunk.get("content_hash")),
+                "embedding_json": _json_text(vector),
+            }
+            for chunk, vector in pairs
+        ],
+    )
+
+
+def _refresh_vector_planner_statistics() -> None:
+    if is_sqlite():
+        return
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("ANALYZE rag_chunk_embeddings"))
+    except Exception:
+        # A stale statistic only affects the execution plan; never fail a completed migration for it.
+        return
 
 
 def rebuild_chunk_embeddings(source_filter: str = "all", limit: int | None = None, module: str = "canada") -> dict:
     ensure_vector_tables()
     started_at = datetime.utcnow()
     batch_size = max(1, int(getattr(settings, "embedding_batch_size", 32) or 32))
+    selection_started = perf_counter()
     chunks = _select_chunks_needing_embeddings(source_filter, limit, module=module)
+    selection_seconds = perf_counter() - selection_started
     processed = 0
     error_message = ""
+    embedding_seconds = 0.0
+    database_seconds = 0.0
+    statistics_seconds = 0.0
     try:
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]
@@ -472,15 +717,26 @@ def rebuild_chunk_embeddings(source_filter: str = "all", limit: int | None = Non
                 "\n\n".join([repair_text(item.get("title")), repair_text(item.get("text_content"))]).strip()
                 for item in batch
             ]
+            embedding_started = perf_counter()
             vectors = create_embeddings(texts)
+            embedding_seconds += perf_counter() - embedding_started
+            database_started = perf_counter()
             with engine.begin() as conn:
-                for chunk, vector in zip(batch, vectors):
-                    _upsert_embedding(conn, chunk, vector)
-                    processed += 1
+                _upsert_embeddings(conn, list(zip(batch, vectors)))
+            database_seconds += perf_counter() - database_started
+            processed += len(batch)
         status = "completed"
     except Exception as exc:
         status = "failed"
         error_message = str(exc)
+    if status == "completed" and chunks:
+        _advance_embedding_cursor(source_filter, module, chunks, completed=False)
+    elif status == "completed" and not chunks:
+        _advance_embedding_cursor(source_filter, module, chunks, completed=True)
+    if processed and _refresh_statistics_during_migration():
+        statistics_started = perf_counter()
+        _refresh_vector_planner_statistics()
+        statistics_seconds = perf_counter() - statistics_started
     return {
         "status": status,
         "source_filter": source_filter,
@@ -490,6 +746,12 @@ def rebuild_chunk_embeddings(source_filter: str = "all", limit: int | None = Non
         "embedding": embedding_metadata(),
         "pgvector_enabled": _pgvector_column_available(),
         "duration_seconds": round((datetime.utcnow() - started_at).total_seconds(), 3),
+        "timing_seconds": {
+            "selection": round(selection_seconds, 3),
+            "embedding": round(embedding_seconds, 3),
+            "database": round(database_seconds, 3),
+            "statistics": round(statistics_seconds, 3),
+        },
         "error_message": error_message,
     }
 

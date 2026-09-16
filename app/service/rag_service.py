@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -32,6 +34,8 @@ OFAC_SOURCE_CODES = {"ofac"}
 CANADA_CASE_SOURCE_CODES = {code for code in CANADA_SOURCE_CODES if "case" in code} | {"canlii"}
 CANADA_LAW_SOURCE_CODES = CANADA_SOURCE_CODES - CANADA_CASE_SOURCE_CODES
 _RAG_TABLES_READY = False
+_RAG_TOKENIZER = None
+_RAG_TOKENIZER_LOCK = threading.Lock()
 
 
 def _safe_int(value, default: int = 0) -> int:
@@ -42,12 +46,12 @@ def _safe_int(value, default: int = 0) -> int:
 
 
 def _chunk_size() -> int:
-    return max(800, _safe_int(getattr(settings, "rag_chunk_size", 1800), 1800))
+    return max(64, _safe_int(getattr(settings, "rag_chunk_size_tokens", 512), 512))
 
 
 def _chunk_overlap() -> int:
     size = _chunk_size()
-    configured = max(0, _safe_int(getattr(settings, "rag_chunk_overlap", 180), 180))
+    configured = max(0, _safe_int(getattr(settings, "rag_chunk_overlap_tokens", 64), 64))
     return min(configured, size // 3)
 
 
@@ -373,30 +377,80 @@ def _document_text(*, title: str, summary: str = "", body: str = "", metadata: d
     return "\n\n".join([part for part in parts if part]).strip()
 
 
+def _rag_tokenizer():
+    global _RAG_TOKENIZER
+    if _RAG_TOKENIZER is not None:
+        return _RAG_TOKENIZER
+    with _RAG_TOKENIZER_LOCK:
+        if _RAG_TOKENIZER is not None:
+            return _RAG_TOKENIZER
+        try:
+            from transformers import AutoTokenizer
+            from huggingface_hub import snapshot_download
+        except Exception as exc:
+            raise RuntimeError("精确 token 分块需要 transformers。") from exc
+        configured_path = repair_text(getattr(settings, "embedding_local_model_path", ""))
+        model_source = configured_path if configured_path and Path(configured_path).exists() else repair_text(
+            getattr(settings, "embedding_model", "BAAI/bge-m3")
+        )
+        cache_dir = os.getenv("HF_HOME", "data/model_cache/huggingface")
+        if not Path(model_source).exists():
+            model_source = snapshot_download(
+                repo_id=model_source or "BAAI/bge-m3",
+                cache_dir=cache_dir,
+                local_files_only=True,
+            )
+        _RAG_TOKENIZER = AutoTokenizer.from_pretrained(
+            model_source,
+            local_files_only=True,
+            use_fast=True,
+        )
+        return _RAG_TOKENIZER
+
+
+def _token_windows(tokenizer, text_value: str, size: int, overlap: int) -> list[str]:
+    token_ids = tokenizer.encode(text_value, add_special_tokens=False)
+    step = max(1, size - overlap)
+    return [
+        tokenizer.decode(token_ids[start : start + size], skip_special_tokens=True).strip()
+        for start in range(0, len(token_ids), step)
+        if token_ids[start : start + size]
+    ]
+
+
 def split_into_chunks(text_value: str, *, chunk_size: int | None = None, overlap: int | None = None) -> list[str]:
+    """按 BGE-M3 tokenizer 的 512/64 token 规则切分法律文本。"""
     cleaned = plain_text_preview(text_value)
     if not cleaned:
         return []
-    size = max(800, int(chunk_size or _chunk_size()))
+    size = max(64, int(chunk_size or _chunk_size()))
     overlap = max(0, min(int(overlap if overlap is not None else _chunk_overlap()), size // 3))
-    if len(cleaned) <= size:
+    tokenizer = _rag_tokenizer()
+    token_count = lambda value: len(tokenizer.encode(value, add_special_tokens=False))
+    if token_count(cleaned) <= size:
         return [cleaned]
-
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+    except Exception as exc:
+        raise RuntimeError("精确 token 分块需要 langchain-text-splitters。") from exc
+    splitter = RecursiveCharacterTextSplitter(
+        separators=["\n\n", "\n", "。", "！", "？", ".", "!", "?", " ", ""],
+        chunk_size=size,
+        chunk_overlap=overlap,
+        length_function=token_count,
+        is_separator_regex=False,
+        keep_separator=True,
+    )
     chunks = []
-    start = 0
-    while start < len(cleaned):
-        end = min(start + size, len(cleaned))
-        if end < len(cleaned):
-            boundary = max(cleaned.rfind(". ", start, end), cleaned.rfind("; ", start, end), cleaned.rfind(" ", start, end))
-            if boundary > start + size // 2:
-                end = boundary + 1
-        chunk = cleaned[start:end].strip()
-        if chunk:
+    for raw_chunk in splitter.split_text(cleaned):
+        chunk = raw_chunk.strip()
+        if not chunk:
+            continue
+        if token_count(chunk) <= size:
             chunks.append(chunk)
-        if end >= len(cleaned):
-            break
-        start = max(end - overlap, start + 1)
-    return chunks
+        else:
+            chunks.extend(piece for piece in _token_windows(tokenizer, chunk, size, overlap) if piece)
+    return chunks or _token_windows(tokenizer, cleaned, size, overlap)
 
 
 def _source_item_documents(source_filter: str, limit: int | None) -> list[dict]:
@@ -865,18 +919,36 @@ def _query_terms(query: str, keywords: list[str] | None = None) -> list[str]:
     return terms
 
 
+_LOW_SELECTIVITY_TS_TERMS = {
+    "canada",
+    "canadian",
+    "case",
+    "cases",
+    "court",
+    "courts",
+    "group",
+    "health",
+    "service",
+    "services",
+    "limited",
+    "ltd",
+    "inc",
+    "company",
+}
+
+
 def _tsquery_or_terms(query: str, keywords: list[str] | None = None) -> str:
-    terms = []
+    candidates = []
     seen = set()
     for value in _query_terms(query, keywords):
         for token in re.findall(r"[a-z0-9]{3,}", value.lower()):
             if token in seen:
                 continue
             seen.add(token)
-            terms.append(f"{token}:*")
-            if len(terms) >= 10:
-                return " | ".join(terms)
-    return " | ".join(terms)
+            candidates.append(token)
+    selective_terms = [token for token in candidates if token not in _LOW_SELECTIVITY_TS_TERMS]
+    terms = selective_terms or candidates
+    return " | ".join(f"{token}:*" for token in terms[:10])
 
 
 def rag_search(
@@ -917,27 +989,22 @@ def rag_search(
         ts_or_query = _tsquery_or_terms(merged_query, keywords)
         if ts_or_query:
             params["ts_or_query"] = ts_or_query
-            conditions = [
-                "search_vector @@ websearch_to_tsquery('english', :query)",
-                "search_vector @@ to_tsquery('english', :ts_or_query)",
-            ]
-            score_parts = [
-                "ts_rank_cd(search_vector, websearch_to_tsquery('english', :query))",
-                "0.35 * ts_rank_cd(search_vector, to_tsquery('english', :ts_or_query))",
-            ]
-            where_clause = "(" + " OR ".join(conditions) + ")"
+            exact_match_clause = "search_vector @@ websearch_to_tsquery('english', :query)"
+            fallback_match_clause = "search_vector @@ to_tsquery('english', :ts_or_query)"
+            exact_score_expr = "ts_rank_cd(search_vector, websearch_to_tsquery('english', :query))"
+            fallback_score_expr = "ts_rank_cd(search_vector, to_tsquery('english', :ts_or_query))"
         else:
-            where_clause = "search_vector @@ plainto_tsquery('english', :query)"
-            score_parts = ["ts_rank_cd(search_vector, plainto_tsquery('english', :query))"]
+            exact_match_clause = "search_vector @@ plainto_tsquery('english', :query)"
+            fallback_match_clause = exact_match_clause
+            exact_score_expr = "ts_rank_cd(search_vector, plainto_tsquery('english', :query))"
+            fallback_score_expr = exact_score_expr
     module_clause, module_params = _module_source_clause(module)
     source_clause, source_params = _source_filter_clause(source_filter)
     structured_clause, structured_params = _structured_filter_clause(filters)
     params.update(module_params)
     params.update(source_params)
     params.update(structured_params)
-    score_expr = " + ".join(score_parts)
-    sql = f"""
-    SELECT
+    selected_columns = """
         id,
         source_kind,
         source_table,
@@ -954,16 +1021,49 @@ def rag_search(
         published_at,
         chunk_index,
         text_content,
-        metadata_json,
-        ({score_expr}) AS score
-    FROM rag_chunks
-    WHERE {where_clause}
-      {module_clause}
-      {source_clause}
-      {structured_clause}
-    ORDER BY score DESC, published_at DESC NULLS LAST, updated_at DESC
-    LIMIT :limit
+        metadata_json
     """
+    if is_sqlite():
+        score_expr = " + ".join(score_parts)
+        sql = f"""
+        SELECT {selected_columns}, ({score_expr}) AS score
+        FROM rag_chunks
+        WHERE {where_clause}
+          {module_clause}
+          {source_clause}
+          {structured_clause}
+        ORDER BY score DESC, published_at DESC NULLS LAST, updated_at DESC
+        LIMIT :limit
+        """
+    else:
+        # 高精度匹配有结果时不执行宽泛的前缀 OR 回退，避免泛词导致的全索引排序。
+        sql = f"""
+        WITH exact_matches AS (
+            SELECT {selected_columns}, ({exact_score_expr}) AS score
+            FROM rag_chunks
+            WHERE {exact_match_clause}
+              {module_clause}
+              {source_clause}
+              {structured_clause}
+            ORDER BY score DESC, published_at DESC NULLS LAST, updated_at DESC
+            LIMIT :limit
+        ), fallback_matches AS (
+            SELECT {selected_columns}, ({fallback_score_expr}) AS score
+            FROM rag_chunks
+            WHERE NOT EXISTS (SELECT 1 FROM exact_matches)
+              AND {fallback_match_clause}
+              {module_clause}
+              {source_clause}
+              {structured_clause}
+            ORDER BY score DESC, published_at DESC NULLS LAST, updated_at DESC
+            LIMIT :limit
+        )
+        SELECT * FROM exact_matches
+        UNION ALL
+        SELECT * FROM fallback_matches
+        ORDER BY score DESC, published_at DESC NULLS LAST
+        LIMIT :limit
+        """
     with engine.connect() as conn:
         rows = conn.execute(text(sql), params).mappings().all()
 

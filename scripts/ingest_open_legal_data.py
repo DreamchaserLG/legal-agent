@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import sys
+import time
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -12,12 +13,14 @@ from typing import Any
 from xml.etree import ElementTree
 
 import requests
+from sqlalchemy import text
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.core.config import settings
+from app.core.database import engine
 from app.service.common_service import plain_text_preview, repair_text, sha256_text, split_keywords, upsert_source_item
 from app.service.legal_data_service import ensure_legal_data_tables, sync_canada_legal_data
 from app.service.rag_service import get_rag_status
@@ -28,7 +31,14 @@ from app.service.hybrid_retrieval_service import rebuild_hybrid_index
 
 HF_ROWS_URL = "https://datasets-server.huggingface.co/rows"
 HF_RESOLVE_URL = "https://huggingface.co/datasets/{dataset}/resolve/main/{config}/train.parquet"
+HF_MIRROR_RESOLVE_URL = "https://hf-mirror.com/datasets/{dataset}/resolve/main/{config}/train.parquet"
 XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
+
+A2AJ_CASE_PARQUET_CONFIGS = (
+    "BCCA", "BCSC", "CART", "CHRT", "CIRB", "CITT", "CMAC", "CT", "FC", "FCA", "FPSLREB",
+    "NSCA", "NSFC", "NSPC", "NSSC", "NSSM", "OHSTC", "OIC", "ONCA", "PSDPT", "RAD", "RLLR",
+    "RPD", "SCC", "SCT", "SST", "TATC", "TCC", "YKCA",
+)
 
 CASE_COURT_LEVELS = {
     "SCC": "Supreme Court of Canada",
@@ -136,21 +146,32 @@ def _keywords(*values: str) -> list[str]:
 
 
 def _hf_rows(dataset: str, config: str, *, offset: int, length: int) -> list[dict]:
-    response = _session().get(
-        HF_ROWS_URL,
-        params={
-            "dataset": dataset,
-            "config": config,
-            "split": "train",
-            "offset": max(0, int(offset)),
-            "length": max(1, min(int(length), 100)),
-        },
-        timeout=max(int(getattr(settings, "request_timeout", 30)), 30),
-    )
-    response.raise_for_status()
-    payload = response.json()
-    rows = payload.get("rows") or []
-    return [dict(item.get("row") or {}) for item in rows]
+    params = {
+        "dataset": dataset,
+        "config": config,
+        "split": "train",
+        "offset": max(0, int(offset)),
+        "length": max(1, min(int(length), 100)),
+    }
+    last_error: Exception | None = None
+    for attempt in range(1, 6):
+        try:
+            response = _session().get(
+                HF_ROWS_URL,
+                params=params,
+                timeout=max(int(getattr(settings, "request_timeout", 30)), 30),
+            )
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("rows") or []
+            return [dict(item.get("row") or {}) for item in rows]
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < 5:
+                time.sleep(min(2**attempt, 20))
+    raise RuntimeError(
+        f"Hugging Face rows 接口连续 5 次请求失败：dataset={dataset} config={config} offset={params['offset']}"
+    ) from last_error
 
 
 def _parquet_cache_path(dataset: str, config: str, cache_dir: str) -> Path:
@@ -164,17 +185,28 @@ def _download_parquet(dataset: str, config: str, cache_dir: str, *, max_download
     if path.exists() and path.stat().st_size > 0:
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
-    url = HF_RESOLVE_URL.format(dataset=dataset, config=config)
-    response = _session().get(url, stream=True, timeout=max(int(getattr(settings, "request_timeout", 30)), 60))
-    response.raise_for_status()
-    size_text = response.headers.get("content-length")
-    if size_text and max_download_mb and int(size_text) > max_download_mb * 1024 * 1024:
-        raise RuntimeError(f"Parquet file is larger than limit: {int(size_text)} bytes > {max_download_mb} MB")
+    urls = (
+        HF_MIRROR_RESOLVE_URL.format(dataset=dataset, config=config),
+        HF_RESOLVE_URL.format(dataset=dataset, config=config),
+    )
     tmp_path = path.with_suffix(".parquet.tmp")
-    with tmp_path.open("wb") as handle:
-        shutil.copyfileobj(response.raw, handle)
-    tmp_path.replace(path)
-    return path
+    last_error: Exception | None = None
+    for url in urls:
+        try:
+            response = _session().get(url, stream=True, timeout=max(int(getattr(settings, "request_timeout", 30)), 60))
+            response.raise_for_status()
+            size_text = response.headers.get("content-length")
+            if size_text and max_download_mb and int(size_text) > max_download_mb * 1024 * 1024:
+                raise RuntimeError(f"Parquet file is larger than limit: {int(size_text)} bytes > {max_download_mb} MB")
+            with tmp_path.open("wb") as handle:
+                shutil.copyfileobj(response.raw, handle)
+            tmp_path.replace(path)
+            return path
+        except Exception as exc:
+            last_error = exc
+            if tmp_path.exists():
+                tmp_path.unlink()
+    raise RuntimeError(f"Parquet 下载失败：dataset={dataset} config={config}") from last_error
 
 
 def _python_value(value):
@@ -213,6 +245,116 @@ def _parquet_rows(dataset: str, config: str, *, offset: int, length: int, cache_
     return selected
 
 
+def _ensure_a2aj_parquet_checkpoint_table() -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS a2aj_parquet_checkpoints (
+                    config_name TEXT PRIMARY KEY,
+                    last_processed_row BIGINT NOT NULL DEFAULT 0,
+                    completed BOOLEAN NOT NULL DEFAULT FALSE,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+
+
+def _a2aj_parquet_checkpoint(config: str) -> tuple[int, bool]:
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT last_processed_row, completed
+                FROM a2aj_parquet_checkpoints
+                WHERE config_name = :config
+                """
+            ),
+            {"config": config},
+        ).mappings().first()
+    if not row:
+        return 0, False
+    return int(row.get("last_processed_row") or 0), bool(row.get("completed"))
+
+
+def _update_a2aj_parquet_checkpoint(config: str, processed_rows: int, completed: bool) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO a2aj_parquet_checkpoints (config_name, last_processed_row, completed, updated_at)
+                VALUES (:config, :processed_rows, :completed, CURRENT_TIMESTAMP)
+                ON CONFLICT (config_name) DO UPDATE SET
+                    last_processed_row = EXCLUDED.last_processed_row,
+                    completed = EXCLUDED.completed,
+                    updated_at = CURRENT_TIMESTAMP
+                """
+            ),
+            {"config": config, "processed_rows": processed_rows, "completed": completed},
+        )
+
+
+def ingest_a2aj_case_parquets(*, cache_dir: str, max_download_mb: int | None, max_text_chars: int, batch_size: int = 100) -> dict:
+    """按法院配置流式导入 A2AJ Parquet，并将每个配置的进度持久化。"""
+    try:
+        import pyarrow.parquet as pq
+    except Exception as exc:
+        raise RuntimeError("A2AJ Parquet 导入需要 pyarrow。") from exc
+
+    _ensure_a2aj_parquet_checkpoint_table()
+    result = {
+        "source": "a2aj_parquet",
+        "configs": [],
+        "processed": 0,
+        "skipped_empty_text": 0,
+        "errors": [],
+    }
+    for config in A2AJ_CASE_PARQUET_CONFIGS:
+        processed_rows, completed = _a2aj_parquet_checkpoint(config)
+        config_result = {"config": config, "resumed_at": processed_rows, "processed": 0, "completed": completed}
+        if completed:
+            result["configs"].append(config_result)
+            continue
+        try:
+            path = _download_parquet(
+                settings.a2aj_hf_case_dataset,
+                config,
+                cache_dir,
+                max_download_mb=max_download_mb,
+            )
+            parquet_file = pq.ParquetFile(path)
+            seen_rows = 0
+            for record_batch in parquet_file.iter_batches(batch_size=max(1, batch_size)):
+                rows = record_batch.to_pylist()
+                next_seen_rows = seen_rows + len(rows)
+                if next_seen_rows <= processed_rows:
+                    seen_rows = next_seen_rows
+                    continue
+                start_index = max(processed_rows - seen_rows, 0)
+                for row in rows[start_index:]:
+                    item_id = _upsert_a2aj_case(
+                        {key: _python_value(value) for key, value in dict(row).items()},
+                        max_text_chars=max_text_chars,
+                    )
+                    result["processed"] += 1
+                    config_result["processed"] += 1
+                    if item_id is None:
+                        result["skipped_empty_text"] += 1
+                seen_rows = next_seen_rows
+                processed_rows = seen_rows
+                _update_a2aj_parquet_checkpoint(config, processed_rows, completed=False)
+            _update_a2aj_parquet_checkpoint(config, processed_rows, completed=True)
+            config_result["completed"] = True
+        except Exception as exc:
+            result["errors"].append({"config": config, "error": str(exc)})
+        result["configs"].append(config_result)
+        if result["errors"]:
+            break
+    result["status"] = "success" if not result["errors"] else "failed"
+    return result
+
+
 def _a2aj_rows(
     dataset: str,
     config: str,
@@ -224,9 +366,9 @@ def _a2aj_rows(
     max_download_mb: int | None,
 ) -> list[dict]:
     mode = repair_text(mode).lower() or "auto"
-    if mode == "viewer" or (mode == "auto" and repair_text(config).lower() == "default"):
+    if mode == "viewer":
         return _hf_rows(dataset, config, offset=offset, length=length)
-    if mode == "parquet" or mode == "auto":
+    if mode == "parquet":
         return _parquet_rows(
             dataset,
             config,
@@ -235,6 +377,18 @@ def _a2aj_rows(
             cache_dir=cache_dir,
             max_download_mb=max_download_mb,
         )
+    if mode == "auto":
+        try:
+            return _hf_rows(dataset, config, offset=offset, length=length)
+        except RuntimeError:
+            return _parquet_rows(
+                dataset,
+                config,
+                offset=offset,
+                length=length,
+                cache_dir=cache_dir,
+                max_download_mb=max_download_mb,
+            )
     raise ValueError(f"Unsupported A2AJ mode: {mode}")
 
 
@@ -262,17 +416,21 @@ def _law_jurisdiction(dataset_code: str) -> str:
     return JURISDICTION_CODES.get(suffix, "Canada")
 
 
-def _upsert_a2aj_case(row: dict, *, max_text_chars: int) -> int:
+def _upsert_a2aj_case(row: dict, *, max_text_chars: int) -> int | None:
     dataset_code = _first_text(row.get("dataset")).upper()
     citation = _first_text(row.get("citation_en"), row.get("citation_fr"), row.get("citation2_en"), row.get("citation2_fr"))
     title = _first_text(row.get("name_en"), row.get("name_fr"), citation, "Untitled case")
     text_value = _first_text(row.get("unofficial_text_en"), row.get("unofficial_text_fr"))
+    normalized_text = repair_text(text_value)
+    if not normalized_text:
+        return None
+    stored_text = normalized_text if max_text_chars <= 0 else normalized_text[:max_text_chars]
     source_url = _first_text(row.get("url_en"), row.get("url_fr"))
     document_date = _date_text(_first_text(row.get("document_date_en"), row.get("document_date_fr")))
     source_uid = _short_uid(dataset_code, citation, title, source_url, prefix="a2aj-case")
     raw_json = {
         "source_dataset": getattr(settings, "a2aj_hf_case_dataset", "a2aj/canadian-case-law"),
-        "source_channel": "huggingface_rows",
+        "source_channel": "huggingface_parquet",
         "document_type": "case",
         "country": "Canada",
         "jurisdiction": "Canada",
@@ -296,7 +454,7 @@ def _upsert_a2aj_case(row: dict, *, max_text_chars: int) -> int:
         item_url=source_url,
         published_at=document_date or None,
         summary=plain_text_preview(text_value)[:1200] or title,
-        raw_text=repair_text(text_value)[:max_text_chars],
+        raw_text=stored_text,
         raw_json=raw_json,
     )
     from app.service.common_service import replace_item_keywords
@@ -354,6 +512,8 @@ def ingest_a2aj(
     laws_per_config: int,
     max_text_chars: int,
     offset: int,
+    batches: int,
+    batch_delay_seconds: float,
     mode: str,
     cache_dir: str,
     max_download_mb: int | None,
@@ -365,45 +525,75 @@ def ingest_a2aj(
         "cases": 0,
         "laws": 0,
         "errors": [],
+        "batches_completed": 0,
+        "next_offset": int(offset or 0),
     }
-    if cases_per_config > 0:
-        for config in case_configs:
-            try:
-                rows = _a2aj_rows(
-                    settings.a2aj_hf_case_dataset,
-                    config,
-                    offset=offset,
-                    length=cases_per_config,
-                    mode=mode,
-                    cache_dir=cache_dir,
-                    max_download_mb=max_download_mb,
-                )
-                for row in rows:
-                    _upsert_a2aj_case(row, max_text_chars=max_text_chars)
-                    result["cases"] += 1
-            except Exception as exc:
-                result["errors"].append({"config": config, "type": "case", "error": str(exc)})
-    else:
+    if cases_per_config <= 0:
         result["case_status"] = "skipped"
-    if laws_per_config > 0:
-        for config in law_configs:
-            try:
-                rows = _a2aj_rows(
-                    settings.a2aj_hf_law_dataset,
-                    config,
-                    offset=offset,
-                    length=laws_per_config,
-                    mode=mode,
-                    cache_dir=cache_dir,
-                    max_download_mb=max_download_mb,
-                )
-                for row in rows:
-                    _upsert_a2aj_law(row, max_text_chars=max_text_chars)
-                    result["laws"] += 1
-            except Exception as exc:
-                result["errors"].append({"config": config, "type": "law", "error": str(exc)})
-    else:
+    if laws_per_config <= 0:
         result["law_status"] = "skipped"
+
+    # batches=0 表示持续拉取；瞬时网络失败保留同一 offset 自动重试，空页才视为完成。
+    current_offset = max(0, int(offset or 0))
+    remaining_batches = max(0, int(batches))
+    consecutive_batch_failures = 0
+    max_continuous_failures = 60
+    while remaining_batches == 0 or result["batches_completed"] < remaining_batches:
+        batch_has_rows = False
+        batch_failed = False
+        if cases_per_config > 0:
+            for config in case_configs:
+                try:
+                    rows = _a2aj_rows(
+                        settings.a2aj_hf_case_dataset,
+                        config,
+                        offset=current_offset,
+                        length=cases_per_config,
+                        mode=mode,
+                        cache_dir=cache_dir,
+                        max_download_mb=max_download_mb,
+                    )
+                    batch_has_rows = batch_has_rows or bool(rows)
+                    for row in rows:
+                        _upsert_a2aj_case(row, max_text_chars=max_text_chars)
+                        result["cases"] += 1
+                except Exception as exc:
+                    batch_failed = True
+                    result["errors"].append({"config": config, "type": "case", "offset": current_offset, "error": str(exc)})
+        if laws_per_config > 0:
+            for config in law_configs:
+                try:
+                    rows = _a2aj_rows(
+                        settings.a2aj_hf_law_dataset,
+                        config,
+                        offset=current_offset,
+                        length=laws_per_config,
+                        mode=mode,
+                        cache_dir=cache_dir,
+                        max_download_mb=max_download_mb,
+                    )
+                    batch_has_rows = batch_has_rows or bool(rows)
+                    for row in rows:
+                        _upsert_a2aj_law(row, max_text_chars=max_text_chars)
+                        result["laws"] += 1
+                except Exception as exc:
+                    batch_failed = True
+                    result["errors"].append({"config": config, "type": "law", "offset": current_offset, "error": str(exc)})
+        if batch_failed:
+            consecutive_batch_failures += 1
+            if remaining_batches == 0 and consecutive_batch_failures <= max_continuous_failures:
+                retry_delay = min(max(float(batch_delay_seconds), 1.0) * (2 ** min(consecutive_batch_failures, 6)), 60.0)
+                time.sleep(retry_delay)
+                continue
+            break
+        if not batch_has_rows:
+            break
+        consecutive_batch_failures = 0
+        result["batches_completed"] += 1
+        current_offset += max(cases_per_config, laws_per_config, 1)
+        result["next_offset"] = current_offset
+        if batch_delay_seconds > 0 and (remaining_batches == 0 or result["batches_completed"] < remaining_batches):
+            time.sleep(float(batch_delay_seconds))
     result["status"] = "success" if result["cases"] or result["laws"] else "failed"
     return result
 
@@ -533,6 +723,8 @@ def run_ingest(args: argparse.Namespace) -> dict:
                 laws_per_config=args.laws_per_config,
                 max_text_chars=args.max_text_chars,
                 offset=args.a2aj_offset,
+                batches=args.a2aj_batches,
+                batch_delay_seconds=args.a2aj_batch_delay_seconds,
                 mode=args.a2aj_mode,
                 cache_dir=args.a2aj_cache_dir,
                 max_download_mb=args.a2aj_max_download_mb,
@@ -575,6 +767,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--law-config", action="append", default=[], help="A2AJ law config, for example LEGISLATION-FED. Can repeat.")
     parser.add_argument("--a2aj-mode", choices=["auto", "viewer", "parquet"], default="auto")
     parser.add_argument("--a2aj-offset", type=int, default=0)
+    parser.add_argument("--a2aj-batches", type=int, default=1, help="连续拉取批次数；0 表示直到数据源耗尽。")
+    parser.add_argument("--a2aj-batch-delay-seconds", type=float, default=0.2, help="A2AJ viewer 批次之间的等待秒数。")
     parser.add_argument("--a2aj-cache-dir", default="data/raw/a2aj")
     parser.add_argument("--a2aj-max-download-mb", type=int, default=600)
     parser.add_argument("--cases-per-config", type=int, default=getattr(settings, "a2aj_demo_cases_per_config", 5))

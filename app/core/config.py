@@ -63,6 +63,8 @@ class Settings:
         )
         self.rag_chunk_size = int(os.getenv("RAG_CHUNK_SIZE", "1800"))
         self.rag_chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", "180"))
+        self.rag_chunk_size_tokens = int(os.getenv("RAG_CHUNK_SIZE_TOKENS", "512"))
+        self.rag_chunk_overlap_tokens = int(os.getenv("RAG_CHUNK_OVERLAP_TOKENS", "64"))
         self.rag_max_context_items = int(os.getenv("RAG_MAX_CONTEXT_ITEMS", "8"))
         self.rag_hybrid_enabled = (
             os.getenv("RAG_HYBRID_ENABLED", "true").strip().lower()

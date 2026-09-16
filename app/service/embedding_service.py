@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
 import threading
+from pathlib import Path
 
 import requests
 
 from app.core.config import settings
 from app.service.common_service import repair_text
+
+# 必须在 sentence-transformers / huggingface_hub 导入前生效；运行时优先走本地缓存。
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 
 class EmbeddingServiceError(RuntimeError):
@@ -21,6 +26,9 @@ _LOCAL_MODEL_LOCK = threading.Lock()
 _LOCAL_MODEL = None
 _LOCAL_TOKENIZER = None
 _LOCAL_DEVICE = ""
+_SENTENCE_MODEL = None
+_SENTENCE_MODEL_PATH = ""
+_SENTENCE_DEVICE = ""
 
 
 def _dimension() -> int:
@@ -29,7 +37,7 @@ def _dimension() -> int:
 
 def _provider() -> str:
     provider = repair_text(getattr(settings, "embedding_provider", "hash")).lower()
-    if provider in {"openai", "custom", "hash", "local"}:
+    if provider in {"openai", "custom", "hash", "local", "sentence_transformers", "bge_m3", "bge"}:
         return provider
     return "hash"
 
@@ -71,7 +79,7 @@ def embedding_metadata() -> dict:
         "model": _model(),
         "dimension": _dimension(),
         "base_url": _base_url(provider),
-        "local_model_path": _local_model_path() if provider == "local" else "",
+        "local_model_path": _local_model_path() if provider in {"local", "sentence_transformers", "bge_m3", "bge"} else "",
     }
 
 
@@ -192,6 +200,101 @@ def _local_embeddings(texts: list[str]) -> list[list[float]]:
         raise EmbeddingServiceError(f"Local embedding generation failed: {exc}") from exc
 
 
+def _sentence_model_source() -> str:
+    configured = _local_model_path()
+    if configured and Path(configured).exists():
+        return configured
+    return _model() or "BAAI/bge-m3"
+
+
+def _load_sentence_transformer_model():
+    global _SENTENCE_MODEL, _SENTENCE_MODEL_PATH, _SENTENCE_DEVICE
+    if _SENTENCE_MODEL is not None:
+        return _SENTENCE_MODEL, _SENTENCE_DEVICE
+    with _LOCAL_MODEL_LOCK:
+        if _SENTENCE_MODEL is not None:
+            return _SENTENCE_MODEL, _SENTENCE_DEVICE
+        try:
+            from huggingface_hub import snapshot_download
+            from sentence_transformers import SentenceTransformer
+        except Exception as exc:
+            raise EmbeddingServiceError(
+                "sentence_transformers embedding provider requires sentence-transformers and huggingface-hub."
+            ) from exc
+        source = _sentence_model_source()
+        try:
+            if Path(source).exists():
+                model_path = source
+            else:
+                cache_dir = Path(os.getenv("HF_HOME", "data/model_cache/huggingface"))
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    model_path = snapshot_download(
+                        repo_id=source,
+                        cache_dir=str(cache_dir),
+                        local_files_only=True,
+                    )
+                except Exception:
+                    model_path = snapshot_download(repo_id=source, cache_dir=str(cache_dir))
+            device = _local_device()
+            model = SentenceTransformer(model_path, device=str(device))
+            model.max_seq_length = max(32, int(getattr(settings, "embedding_max_length", 8192) or 8192))
+            model.to(device)
+        except Exception as exc:
+            raise EmbeddingServiceError(f"Failed to load sentence-transformers model from {source}: {exc}") from exc
+        _SENTENCE_MODEL = model
+        _SENTENCE_MODEL_PATH = str(model_path)
+        _SENTENCE_DEVICE = str(device)
+        return model, _SENTENCE_DEVICE
+
+
+def _sentence_transformer_embeddings(texts: list[str]) -> list[list[float]]:
+    model, _ = _load_sentence_transformer_model()
+    try:
+        vectors = model.encode(
+            texts,
+            batch_size=max(1, int(getattr(settings, "embedding_batch_size", 32) or 32)),
+            show_progress_bar=False,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+        ).tolist()
+    except RuntimeError as exc:
+        if "out of memory" not in str(exc).lower():
+            raise EmbeddingServiceError(f"Sentence-transformers embedding generation failed: {exc}") from exc
+        global _SENTENCE_MODEL, _SENTENCE_DEVICE
+        with _LOCAL_MODEL_LOCK:
+            _SENTENCE_MODEL = None
+            _SENTENCE_DEVICE = "cpu"
+            try:
+                import torch
+
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            try:
+                from sentence_transformers import SentenceTransformer
+
+                model = SentenceTransformer(_SENTENCE_MODEL_PATH or _sentence_model_source(), device="cpu")
+                model.max_seq_length = max(32, int(getattr(settings, "embedding_max_length", 8192) or 8192))
+                _SENTENCE_MODEL = model
+            except Exception as load_exc:
+                raise EmbeddingServiceError(f"CPU fallback model load failed: {load_exc}") from load_exc
+        vectors = _SENTENCE_MODEL.encode(
+            texts,
+            batch_size=max(1, int(getattr(settings, "embedding_batch_size", 32) or 32)),
+            show_progress_bar=False,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+        ).tolist()
+    expected_dimension = _dimension()
+    if any(len(vector) != expected_dimension for vector in vectors):
+        actual = len(vectors[0]) if vectors else 0
+        raise EmbeddingServiceError(
+            f"Sentence-transformers vector dimension mismatch: expected {expected_dimension}, got {actual}."
+        )
+    return [[float(value) for value in vector] for vector in vectors]
+
+
 def create_embeddings(texts: list[str]) -> list[list[float]]:
     cleaned = [repair_text(text) for text in texts]
     provider = _provider()
@@ -199,6 +302,8 @@ def create_embeddings(texts: list[str]) -> list[list[float]]:
         return _remote_embeddings(cleaned, provider)
     if provider == "local":
         return _local_embeddings(cleaned)
+    if provider in {"sentence_transformers", "bge_m3", "bge"}:
+        return _sentence_transformer_embeddings(cleaned)
     dimension = _dimension()
     return [_hash_embedding(text, dimension) for text in cleaned]
 

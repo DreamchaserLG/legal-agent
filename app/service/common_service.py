@@ -115,7 +115,9 @@ def repair_text(value: str | None) -> str:
     if not raw:
         return ""
 
-    text_value = html.unescape(raw.replace("\ufeff", ""))
+    # PostgreSQL text/jsonb rejects NUL bytes. Remove them before any source,
+    # keyword, audit, or vector payload reaches the database.
+    text_value = html.unescape(raw.replace("\ufeff", "").replace("\x00", ""))
     text_value = text_value.replace("\r\n", "\n").replace("\r", "\n")
     text_value = re.sub(r"(?i)<br\s*/?>", "\n", text_value)
 

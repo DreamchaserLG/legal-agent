@@ -1,5 +1,39 @@
 # 执行记录
 
+## 2026-09-10 P0 恢复与 P1 本地技能运行时
+
+- 检查发现 A2AJ 全量导入在 `RAD=2700` 因 NUL 字符被 PostgreSQL 拒绝而停止，自动重试未能改变断点。已在公共 `repair_text` 删除 NUL，恢复任务从原检查点继续并验证推进。
+- 新增本地加拿大法律技能运行时：7 个技能、JSON manifest、证据输出、提示注入拦截、`skill_runs` 审计表和受登录保护的 `/api/skills`、`/api/skills/run` 接口。
+- 冒烟测试已验证事实提取、证据核验、提示注入阻断和审计落库。风险与备忘录技能固定输出律师复核草稿，不输出确定性裁判结论。
+
+## 2026-09-10 二十万案例物化
+
+- A2AJ 有效正文超过 20 万后，启动 `scripts/materialize_a2aj_snapshot.py`。任务冻结源 ID 上界，分页将案例同步到 `legal_cases`，再批量建立 `canada_case_law_links` 和 `case_rule_relations`。
+- 初版单条 SQL 被合法的同案多来源唯一索引冲突拦截，已切换为复用既有幂等实体 upsert 的分页实现；结构化案例数量已开始持续增长。
+- 向量阶段增加容量门禁：当前磁盘空间不足以安全承载数百万全文分块的 HNSW 向量，先完成普通数据库和关联物化，避免写满数据库卷。
+
+## 2026-09-09 A2AJ Parquet 恢复与数据质量校验
+
+- 已核验 A2AJ 官方完整案例数据实际为 `225807` 条，不是 25 万条整数；导入通道已从不稳定的 datasets-server rows 改为 29 个法院/机构 Parquet 分区。
+- 后台全量任务正在运行，已完成 `BCCA=14700`，`BCSC` 按 `a2aj_parquet_checkpoints` 断点继续；本次检查时 `a2aj_case` 已超过 3 万条且 `source_uid` 无重复。
+- 抽样确认正文平均约 2.6 万字符。发现历史 rows 通道残留 9 条无正文元数据记录；导入器现已在写入前跳过空正文，避免无效记录进入案例同步、分块和向量化。
+- 发现旧流水线将正文截断到 50000 字符，已有 6195 条命中该上限。全量恢复入口现默认 `--max-text-chars=0` 保留全文，并已重置分区检查点，让既有记录以 `source_uid` 幂等覆写补全。
+
+## 2026-09-09 BGE-M3 迁移与 A2AJ 扩库
+
+- 已安装并验证 `pgvector==0.3.0`、`sentence-transformers==3.0.1` 与 `langchain-text-splitters==0.2.2`；PostgreSQL `vector` 扩展和 HNSW cosine 索引可用。
+- 嵌入提供方已切换为 `sentence_transformers / BAAI/bge-m3 / 1024`，模型优先从本地 Hugging Face 缓存加载并使用 RTX 4060；迁移任务采用幂等的“仅处理模型或内容哈希不匹配切片”规则。
+- A2AJ 导入器新增 5 次指数退避重试；`auto` 模式在 rows 接口持续失败时回退到 parquet。当前后台任务从 offset `2118` 连续拉取，避免重复页面。
+- 已为当前 BGE-M3 模型创建并发部分 HNSW 索引 `idx_rag_chunk_embeddings_active_hnsw`，并在每 1024 个迁移切片及任务收尾刷新 PostgreSQL 统计信息。
+- 当前实测：A2AJ `source_items` 已增长至 11318 条；前一轮一致性抽检中 `source_uid` 无重复，9748 条含正文；本轮 BGE-M3 一致性抽检时切片为 12224 条，其余 hash 切片正由后台任务转换。
+- BGE-M3 入库校验：缺失分块、非 1024 维向量、内容哈希失配和非单位范数向量均为 0。
+- 新增 `scripts/run_a2aj_full_pipeline.py` 并已后台启动：从 `a2aj_case=14618` 自动续传，完成 225000 条门槛后才执行同步、关联、案例/法规向量化与质量门禁；状态写入 `logs/a2aj_full_pipeline.jsonl`。
+- 已确认 A2AJ `default` 视图总量为 225807 条；rows 接口在 offset `14618` 发生 TLS 重试停滞，已改为 29 个法院/机构 Parquet 分片导入，使用 `a2aj_parquet_checkpoints` 逐配置断点续传。
+- 实际 RAG 分块已从 1800 字符/180 字符重叠切换为 BGE-M3 tokenizer 精确计数的 512 token/64 token overlap，优先按段落、换行和中英文句子边界切分；测试最大分块为 469 token，无超限。
+- 复核 A2AJ 主数据集：官方元数据 `train=225807`，不是 25 万条；当前 Parquet 导入已完成 BCCA 的 14700 行并继续处理 BCSC，`a2aj_case=19745`，UID 无重复。
+- 评估补充通道：Refugee Law Lab 的加拿大法律数据集有 195646 条联邦材料，但许可证为 CC BY-NC 4.0，且与 A2AJ 多个法院配置存在潜在重叠；暂列为去重校验和非商业补充候选，未混入主库。UBC CanLegalRAGBench 为 1649 条评测集，包含私有提供文档，只用于检索评测。
+- 性能实测：统计信息刷新后，纯 pgvector HNSW 查询均值 1.17ms；模型常驻时 BGE-M3 向量生成均值 19.95ms，端到端向量检索均值 49.21ms，混合检索均值 187.91ms。
+
 ## 2026-09-07
 
 - 用户批准 `PLAN.md` 后开始执行法律 Agent 智能化改造。
@@ -79,3 +113,34 @@
 - 按源案例每批 500 条处理，检查点、分块写入与 `execute_values` 均可断点续传。HNSW、GIN 和案例分块索引在独立 autocommit 连接中并行 `CREATE INDEX CONCURRENTLY`。
 - 已补充 `SOURCE_*` / `A2AJ_*` 配置；设置独立 `A2AJ_DB_URL` 时未给表名会自动探测 `case_embeddings`、`legal_cases` 或 `rag_chunks`。跨库 ID 冲突应设置 `A2AJ_ID_OFFSET`。
 - 本机仅完成静态编译；因环境未安装 `pgvector`，入口自检会输出 `[RESULT]: FAILED`，未连接数据库、未下载模型、未写入或切换任何表。
+## 2026-09-09 案例关联准确率与运行时复测
+
+- 数据库快照：`legal_cases=1018`，全部案例均有 `raw_text`；`case_rule_relations=1016`，覆盖 `544` 个案例（`53.44%`）。
+- 对 50 个从 `case_rule_relations` 抽取的独立案例标题执行端到端查询：案例命中率 `92%`，正式法规命中率 `96%`，案例与法规联合关联命中率 `92%`；达到本轮 90% 准确率目标。
+- 性能剖析发现长标题查询会把低选择性词（如 `canada`、`group`、`services`）放进前缀 OR 全文检索，导致两次 `rag_search` 共执行约 20 秒的 PostgreSQL 排序。
+- 已修改 `app/service/rag_service.py`：先执行高精度 `websearch_to_tsquery`，仅在零命中时才执行前缀 OR 回退；回退词会过滤低选择性项。此前 20.47 秒的长标题查询优化为首次 `264.79ms`、热态 `117.45ms`；50 条样本平均 `85.55ms`、P95 `477.81ms`、最大 `602.97ms`。
+- `data/eval/canada_retrieval_eval.json` 的 28 个旧 Ontario 租赁预期实体只有 6 个仍在当前库，覆盖率 `21.43%`，因此未把它用作当前 A2AJ 语料的准确率结论。
+- 向量检查：`rag_chunk_embeddings=229631`，全部为 `hash/local-hash-embedding/1024`，真实 BGE-M3 向量数为 0；当前 Python 与 `venv` 均缺少迁移所需的 `sentence-transformers`，尚未运行真实语义向量迁移。
+
+## 2026-09-10 全量语义向量化执行中
+
+- A2AJ 有效案例源数据为 `225762` 条，原文合计约 `5617 MB`；结构化案例 `224376` 条。
+- 全量案例-法规关联已完成：`canada_case_law_links=111391`，正式 `case_rule_relations=110410`，覆盖 `88424` 个案例。关联依据为法规标题、引文或别名在案例正文中的直接命中，并保存证据摘录和匹配分数。
+- 已启动 `scripts/run_full_case_vectorization.py` 后台任务：以原始 `source_items(a2aj_case)` 为正文唯一载体，按 BGE-M3 tokenizer 的 `512 token / 64 token overlap` 切片，断点保存在 `vectorization_checkpoints`。
+- 入库阶段暂缓 HNSW 维护并采用批量 upsert；全量向量写入完成后并发创建当前 BGE-M3 模型的部分 HNSW cosine 索引，避免重复索引造成磁盘和写入放大。
+- 评测将使用 `scripts/evaluate_case_retrieval.py`，从高置信度案例-法规关系中固定随机抽样，报告 `Recall@K`、`MRR@K` 与 P50/P95 延迟；在全量 BGE-M3 向量完成前不发布最终检索准确率。
+
+## 2026-09-11 A2AJ 案例互引图同步
+
+- 从 A2AJ 原始 `cases_cited` 正向字段同步 `1039332` 条源级案例引用边到 `a2aj_case_citations`；不使用反向 `cases_citing` 字段重复写入。
+- 通过中立引注标准化匹配到本地源案例 `941326` 条，解析覆盖率 `90.57%`；未解析边保留原始中立引注，便于后续补库或人工核验。
+- 已物化 `933750` 条确定的 `case_case_citations` 结构化案例关系，覆盖 139989 个引用方和 112280 个被引方。
+- 校验结果：引用边无孤儿、无自引用、无重复。同步入口为 `python scripts\\sync_a2aj_case_citations.py`，可重复执行。
+
+## 2026-09-11 当前全量处理状态
+
+- A2AJ 全量案例切片完成：`225762` 个有效案例生成 `3613411` 个 512-token/64-token-overlap 切片。
+- BGE-M3 向量化正在执行，已写入 `643301` 个案例切片向量，约为全量案例切片的 `17.80%`；运行状态为 `embedding`。
+- 案例-法规直接证据关系已完成并保留证据摘录：源级 `111391` 条，正式结构化关系 `110410` 条。
+- A2AJ 原始案例互引图已同步：源级引用边 `1039332` 条，结构化确定引用边 `933750` 条；映射完整性校验通过。
+- 已启动自动验收监控器。它仅在案例 BGE-M3 向量完成、活动 HNSW 索引构建后执行一致性门禁与检索评测；当前不发布最终准确率或延迟结论。

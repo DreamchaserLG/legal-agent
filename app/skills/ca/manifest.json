@@ -1,0 +1,17 @@
+{
+  "pack": "ca-local",
+  "version": "1.0",
+  "jurisdiction": "Canada",
+  "runtime": "app.service.skill_runtime_service",
+  "skills": [
+    "case_retrieval_ca",
+    "statute_retrieval_ca",
+    "issue_fact_extraction",
+    "authority_linking",
+    "evidence_verification",
+    "risk_assessment_ca",
+    "research_memo_ca"
+  ],
+  "external_network": false,
+  "review_required": ["risk_assessment_ca", "research_memo_ca"]
+}
