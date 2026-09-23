@@ -20,7 +20,7 @@
         <nav class="site-nav">
             <a class="{% if page_id in ['home', 'search'] %}active{% endif %}" href="/home">首页</a>
             <a class="{% if page_id == 'analysis' %}active{% endif %}" href="/analysis">案情分析</a>
-            <a class="{% if page_id == 'predict' %}active{% endif %}" href="/predict">案情预测</a>
+            <a class="{% if page_id in ['hearing', 'predict'] %}active{% endif %}" href="/hearing">庭审模拟</a>
             <a class="{% if page_id in ['histories', 'histories_graph', 'history_detail'] %}active{% endif %}" href="/histories">历史记录</a>
             {% if current_user.is_admin %}
             <a class="{% if page_id in ['admin_users', 'admin_histories', 'admin_cases', 'admin_rules', 'admin_imports'] %}active{% endif %}" href="/admin/users">管理员后台</a>

@@ -47,6 +47,17 @@ from app.service.module_service import (
     normalize_module,
     resolve_source_for_module,
 )
+from app.service.multi_agent_service import MultiAgentRequest, run_multi_agent_analysis
+from app.service.mcp_tool_service import MCPToolCall, call_readonly_mcp_tool, list_mcp_tools
+from app.service.skill_collaboration_service import SkillCollaborationRequest, run_skill_collaboration
+from app.service.hearing_workflow_service import (
+    HearingRunCreate,
+    HearingTurnInput,
+    create_hearing_run,
+    get_hearing_run,
+    rollback_hearing_run,
+    submit_hearing_turn,
+)
 from app.service.ofac_service import sync_ofac_demo
 from app.service.canlii_service import sync_canlii_demo
 from app.service.common_service import looks_mojibake, repair_text
@@ -1433,7 +1444,7 @@ def _memo_context_payload(text: str, limit: int, offset: int, source: str, sort:
         "memo_download_url": _memo_download_url(text, limit, offset, effective_source, sort, module_code) if text.strip() else "",
         "memo_date": datetime.now().strftime("%Y-%m-%d"),
     }
-    if text.strip():
+    if text.strip() and settings.direct_prediction_auto_enabled:
         payload["prediction_result"] = _sanitize_prediction_payload(
             predict_legal_outcome(
             text=text,
@@ -1445,6 +1456,8 @@ def _memo_context_payload(text: str, limit: int, offset: int, source: str, sort:
             ),
             module_code,
         )
+    elif text.strip():
+        payload["page_notice"] = "直接预测已关闭。请通过庭审模拟完成陈述、举证、质证和评议后查看最终报告。"
     return payload
 
 
@@ -1758,8 +1771,16 @@ def analyze_page_redirect(
     )
 
 
+@router.get("/hearing", response_class=HTMLResponse)
+def hearing_page(request: Request):
+    page_user = _require_page_user(request, "/hearing")
+    if isinstance(page_user, RedirectResponse):
+        return page_user
+    return _cache_safe_template("hearing.html", _base_context(request, "hearing"))
+
+
 @router.get("/predict", response_class=HTMLResponse)
-def predict_page(
+def predict_page_redirect(
     request: Request,
     text: str = Query(""),
     draft: str = Query(""),
@@ -1770,18 +1791,13 @@ def predict_page(
     module: str = Query("canada"),
     refresh: bool = Query(False),
 ):
-    return _render_prediction_page(
-        request=request,
-        page_id="predict",
-        text=text,
-        draft=draft,
-        limit=limit,
-        offset=offset,
-        source=source,
-        sort=sort,
-        module=module,
-        refresh=refresh,
-    )
+    if settings.direct_prediction_ui_enabled:
+        return _render_prediction_page(
+            request=request, page_id="predict", text=text, draft=draft, limit=limit,
+            offset=offset, source=source, sort=sort, module=module, refresh=refresh,
+        )
+    query = request.url.query
+    return RedirectResponse(url=f"/hearing?{query}" if query else "/hearing", status_code=307)
 
 
 @router.get("/law/canada/{law_slug}", response_class=HTMLResponse)
@@ -1948,15 +1964,17 @@ def api_predict(
     refresh: bool = Query(False),
 ):
     require_user(request)
+    if not settings.direct_prediction_ui_enabled:
+        raise HTTPException(status_code=410, detail="直接预测已关闭。请使用 /hearing 的受控庭审模拟流程。")
     return _sanitize_prediction_payload(
         predict_legal_outcome(
-        text=text,
-        limit=limit,
-        offset=offset,
-        source=resolve_source_for_module(normalize_module(module), source),
-        sort=sort,
-        module=normalize_module(module),
-        refresh=refresh,
+            text=text,
+            limit=limit,
+            offset=offset,
+            source=resolve_source_for_module(normalize_module(module), source),
+            sort=sort,
+            module=normalize_module(module),
+            refresh=refresh,
         ),
         normalize_module(module),
     )
@@ -2099,6 +2117,79 @@ def api_run_legal_skill(request: Request, payload: SkillRunPayload):
             limit=payload.limit,
         )
     except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/multi-agent/run")
+def api_run_multi_agent(request: Request, payload: MultiAgentRequest):
+    user = require_user(request)
+    tenant_id = repair_text(user.get("organization")) or f"user:{user['id']}"
+    try:
+        return run_multi_agent_analysis(payload, user_id=int(user["id"]), tenant_id=tenant_id)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/agent/collaborate")
+def api_run_skill_collaboration(request: Request, payload: SkillCollaborationRequest):
+    user = require_user(request)
+    tenant_id = repair_text(user.get("organization")) or f"user:{user['id']}"
+    try:
+        return run_skill_collaboration(payload, user_id=int(user["id"]), tenant_id=tenant_id)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/agent/mcp-tools")
+def api_list_mcp_tools(request: Request):
+    require_user(request)
+    return list_mcp_tools()
+
+
+@router.post("/api/agent/mcp-tools/call")
+def api_call_mcp_tool(request: Request, payload: MCPToolCall):
+    user = require_user(request)
+    tenant_id = repair_text(user.get("organization")) or f"user:{user['id']}"
+    try:
+        return call_readonly_mcp_tool(payload, user_id=int(user["id"]), tenant_id=tenant_id)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _hearing_tenant_id(user: dict) -> str:
+    return repair_text(user.get("organization")) or f"user:{user['id']}"
+
+
+@router.post("/api/hearing/runs")
+def api_create_hearing_run(request: Request, payload: HearingRunCreate):
+    user = require_user(request)
+    return create_hearing_run(payload, user_id=int(user["id"]), tenant_id=_hearing_tenant_id(user))
+
+
+@router.get("/api/hearing/runs/{run_id}")
+def api_get_hearing_run(request: Request, run_id: str):
+    user = require_user(request)
+    try:
+        return get_hearing_run(run_id, tenant_id=_hearing_tenant_id(user))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/api/hearing/runs/{run_id}/turns")
+def api_submit_hearing_turn(request: Request, run_id: str, payload: HearingTurnInput):
+    user = require_user(request)
+    try:
+        return submit_hearing_turn(run_id, payload, user_id=int(user["id"]), tenant_id=_hearing_tenant_id(user))
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/hearing/runs/{run_id}/rollback/{stage_index}")
+def api_rollback_hearing_run(request: Request, run_id: str, stage_index: int):
+    user = require_user(request)
+    try:
+        return rollback_hearing_run(run_id, stage_index=stage_index, user_id=int(user["id"]), tenant_id=_hearing_tenant_id(user))
+    except (LookupError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

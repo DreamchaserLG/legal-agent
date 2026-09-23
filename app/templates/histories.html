@@ -94,9 +94,9 @@
                 <div class="card-actions">
                     <a class="text-link" href="/histories/{{ item.id }}">查看详情</a>
                     {% if item.has_prediction %}
-                    <a class="text-link" href="/predict?draft={{ item.query_text|urlencode }}&module={{ item.module_code or 'canada' }}">查看预测</a>
+                    <a class="text-link" href="/hearing">进入庭审模拟</a>
                     {% else %}
-                    <a class="text-link predict-cta-link" href="/predict?draft={{ item.query_text|urlencode }}&module={{ item.module_code or 'canada' }}">去预测</a>
+                    <a class="text-link predict-cta-link" href="/hearing">进入庭审模拟</a>
                     {% endif %}
                     <button class="text-link delete-btn" data-id="{{ item.id }}" onclick="deleteHistory(this)">删除</button>
                 </div>

@@ -56,9 +56,9 @@
             </div>
             <div class="action-row">
                 {% if can_predict %}
-                <a class="pager-link" href="{{ predict_url }}">继续预测</a>
+                <a class="pager-link" href="/hearing">进入庭审模拟</a>
                 {% else %}
-                <a class="pager-link" href="{{ predict_url }}">带入预测页重新评估</a>
+                <a class="pager-link" href="/hearing">通过庭审模拟重新评估</a>
                 {% endif %}
                 <a class="pager-link secondary" href="/histories">返回列表</a>
                 <a class="pager-link secondary" href="/histories/graph">查看图谱</a>

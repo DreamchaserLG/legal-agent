@@ -7,8 +7,8 @@
     <div class="shell hero-grid detail-grid">
         <div class="hero-copy">
             <p class="eyebrow">{{ module_profile.label }}</p>
-            <h1>结构化梳理案情，再决定是否进入预测</h1>
-            <p class="hero-text">这里优先整理案件概览、关键事实、争议焦点、法律关系、证据关注点和风险点，适合作为正式预测前的分析入口。</p>
+            <h1>结构化梳理案情，再进入庭审模拟</h1>
+            <p class="hero-text">这里优先整理案件概览、关键事实、争议焦点、法律关系、证据关注点和风险点，随后通过固定庭审阶段完成受控评估。</p>
             <p class="muted">如果同一案情已经保存过结果，系统会直接复用已有记录，不再重复消耗分析时间。</p>
         </div>
 
@@ -47,7 +47,7 @@
 
             <div class="action-row">
                 <button type="submit">开始分析</button>
-                <a class="pager-link secondary" href="/predict{% if text_input %}?draft={{ text_input|urlencode }}&module={{ module_code }}&limit={{ limit }}&source={{ source }}&sort={{ sort }}{% endif %}">转到案情预测</a>
+                <a class="pager-link secondary" href="/hearing">进入庭审模拟</a>
             </div>
         </form>
     </div>
@@ -97,7 +97,7 @@
                 {% if history_id %}
                 <a class="meta-inline" href="/histories/{{ history_id }}">查看历史详情</a>
                 {% endif %}
-                <a class="meta-inline" href="/predict?text={{ submitted_text|urlencode }}&module={{ module_code }}&limit={{ limit }}&source={{ source }}&sort={{ sort }}">进入案情预测</a>
+                <a class="meta-inline" href="/hearing">进入庭审模拟</a>
                 {% if memo_download_url %}
                 <a class="meta-inline" href="{{ memo_download_url }}">导出 PDF</a>
                 {% endif %}
@@ -196,9 +196,9 @@
                 <p class="panel-kicker">下一步</p>
                 <h3>结构化分析已完成</h3>
                 <p class="memo-copy">当前案情已完成结构化梳理，包括关键事实、争议焦点、法律关系和风险点。</p>
-                <p class="result-copy">如需获取预测结论、置信度评估和支撑案例，请进入案情预测页面。</p>
+                <p class="result-copy">如需形成最终辅助评估，请进入庭审模拟，完成陈述、举证、质证、辩论和评议。</p>
                 <div class="action-row">
-                    <a class="pager-link" href="/predict?text={{ submitted_text|urlencode }}&module={{ module_code }}">进入案情预测</a>
+                    <a class="pager-link" href="/hearing">进入庭审模拟</a>
                     {% if history_id %}
                     <a class="pager-link secondary" href="/histories/{{ history_id }}">查看历史详情</a>
                     {% endif %}

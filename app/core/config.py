@@ -51,6 +51,41 @@ class Settings:
             os.getenv("PREDICTION_LOCAL_FAST_MODE", "true").strip().lower()
             in {"1", "true", "yes", "on"}
         )
+        # 保留旧预测服务，默认关闭一切用户可见和自动触发路径。
+        self.direct_prediction_ui_enabled = (
+            os.getenv("DIRECT_PREDICTION_UI_ENABLED", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.direct_prediction_auto_enabled = (
+            os.getenv("DIRECT_PREDICTION_AUTO_ENABLED", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.hearing_simulation_enabled = (
+            os.getenv("HEARING_SIMULATION_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.hearing_final_report_enabled = (
+            os.getenv("HEARING_FINAL_REPORT_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.hearing_simulation_probability_enabled = (
+            os.getenv("HEARING_SIMULATION_PROBABILITY_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.agent_collaboration_enabled = (
+            os.getenv("AGENT_COLLABORATION_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.mcp_readonly_tools_enabled = (
+            os.getenv("MCP_READONLY_TOOLS_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.hearing_score_evidence_weight = float(os.getenv("HEARING_SCORE_EVIDENCE_WEIGHT", "0.25"))
+        self.hearing_score_legal_weight = float(os.getenv("HEARING_SCORE_LEGAL_WEIGHT", "0.20"))
+        self.hearing_score_fact_weight = float(os.getenv("HEARING_SCORE_FACT_WEIGHT", "0.15"))
+        self.hearing_score_procedure_weight = float(os.getenv("HEARING_SCORE_PROCEDURE_WEIGHT", "0.10"))
+        self.hearing_score_case_weight = float(os.getenv("HEARING_SCORE_CASE_WEIGHT", "0.15"))
+        self.hearing_score_opposition_weight = float(os.getenv("HEARING_SCORE_OPPOSITION_WEIGHT", "0.15"))
         self.reliable_answer_mode = (
             os.getenv("RELIABLE_ANSWER_MODE", "true").strip().lower()
             in {"1", "true", "yes", "on"}

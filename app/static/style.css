@@ -1321,6 +1321,193 @@ body.loading-active {
     gap: 12px;
 }
 
+.hearing-intro {
+    padding: 46px 0 34px;
+    border-bottom: 1px solid rgba(24, 35, 29, 0.09);
+    background: #f3f7f4;
+}
+
+.hearing-intro-grid,
+.hearing-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
+    gap: 28px;
+    align-items: start;
+}
+
+.hearing-intro h1 {
+    margin: 0 0 14px;
+    font-size: 2.25rem;
+    line-height: 1.2;
+}
+
+.hearing-create-form,
+.hearing-dialogue-panel,
+.hearing-insights,
+.hearing-final-report {
+    border: 1px solid rgba(24, 35, 29, 0.10);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+}
+
+.hearing-create-form {
+    padding: 20px;
+    display: grid;
+    gap: 9px;
+}
+
+.hearing-create-form textarea,
+.hearing-turn-form textarea {
+    resize: vertical;
+}
+
+.hearing-run-head,
+.hearing-panel-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    align-items: flex-start;
+}
+
+.hearing-run-head {
+    margin-bottom: 18px;
+}
+
+.hearing-run-head h2,
+.hearing-panel-head h3 {
+    margin: 0;
+}
+
+.hearing-graph {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(112px, 1fr));
+    gap: 8px;
+    overflow-x: auto;
+    padding: 2px 0 18px;
+}
+
+.hearing-node {
+    position: relative;
+    min-height: 122px;
+    padding: 14px;
+    border: 1px solid rgba(24, 35, 29, 0.12);
+    border-radius: 8px;
+    background: #fff;
+    display: grid;
+    gap: 5px;
+    align-content: start;
+}
+
+.hearing-node.current { border-color: var(--teal); box-shadow: inset 0 0 0 1px var(--teal); }
+.hearing-node.completed { background: #edf7f2; }
+.hearing-node.pending { background: #fafafa; color: var(--muted); }
+.hearing-node-index { color: var(--teal-deep); font-weight: 700; }
+.hearing-node small { color: var(--muted); line-height: 1.35; }
+.hearing-rollback { width: fit-content; padding: 4px 7px; margin-top: 4px; font-size: 0.78rem; background: transparent; color: var(--teal-deep); border: 1px solid rgba(15, 118, 110, 0.28); }
+
+.hearing-dialogue-panel { padding: 20px; }
+.hearing-dialogue-scroll { height: 520px; overflow-y: auto; margin: 16px -4px 16px 0; padding-right: 10px; display: grid; gap: 10px; }
+
+.hearing-message {
+    max-width: 88%;
+    padding: 12px 14px;
+    border: 1px solid rgba(24, 35, 29, 0.09);
+    border-radius: 8px;
+    background: #f7f8f7;
+}
+
+.hearing-message.ours { margin-left: auto; background: #e8f4f2; border-color: rgba(15, 118, 110, 0.22); }
+.hearing-message.judge { background: #edf2fb; border-color: rgba(43, 91, 151, 0.24); }
+.hearing-message.opposing { background: #fff2ed; border-color: rgba(166, 82, 41, 0.24); }
+.hearing-message.system { background: #f6f7f5; }
+.hearing-message.risk-card { max-width: 100%; border-left: 4px solid #b45309; background: #fff8e8; }
+.hearing-message p { margin: 8px 0 0; line-height: 1.6; white-space: pre-wrap; }
+.hearing-message-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.84rem; color: var(--muted); }
+.hearing-message-meta strong { color: var(--ink); }
+.hearing-message-refs { margin-top: 8px; color: var(--teal-deep); font-size: 0.78rem; overflow-wrap: anywhere; }
+.hearing-risk-inline { display: grid; gap: 4px; margin-top: 10px; padding-top: 9px; border-top: 1px solid rgba(146, 64, 14, 0.18); font-size: 0.84rem; }
+.hearing-risk-inline small { color: var(--muted); }
+
+.hearing-turn-form { display: grid; gap: 10px; border-top: 1px solid rgba(24, 35, 29, 0.10); padding-top: 16px; }
+.hearing-evidence-picker { min-width: 0; margin: 0; padding: 10px 0 0; border: 0; }
+.hearing-evidence-picker legend { font-weight: 600; padding: 0; }
+.hearing-option-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 8px; max-height: 150px; overflow-y: auto; }
+.hearing-option { display: flex; gap: 8px; padding: 8px; border: 1px solid rgba(24, 35, 29, 0.1); border-radius: 6px; cursor: pointer; }
+.hearing-option span { min-width: 0; display: grid; gap: 3px; }
+.hearing-option strong, .hearing-option small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hearing-option small { color: var(--muted); }
+
+.hearing-insights { padding: 0; overflow: hidden; }
+.hearing-mobile-tabs { display: none; }
+.hearing-insight-section { padding: 18px; border-bottom: 1px solid rgba(24, 35, 29, 0.09); }
+.hearing-insight-section:last-child { border-bottom: 0; }
+.hearing-insight-section .panel-kicker { margin: 0 0 12px; }
+.hearing-detail-list { display: grid; gap: 9px; }
+.hearing-detail-list div { display: grid; gap: 3px; }
+.hearing-detail-list span { font-size: 0.8rem; color: var(--muted); }
+.hearing-detail-list strong { font-size: 0.9rem; line-height: 1.45; font-weight: 500; }
+.hearing-risk-list, .hearing-evidence-list { display: grid; gap: 9px; }
+.hearing-risk-list article { border-left: 3px solid #bd6c26; padding-left: 10px; }
+.hearing-risk-list strong { color: #8b480f; }
+.hearing-risk-list p { margin: 5px 0; line-height: 1.45; }
+.hearing-risk-list small, .hearing-evidence-item small { color: var(--muted); line-height: 1.4; }
+.hearing-risk-list .hearing-reference { display: block; margin-top: 6px; color: var(--teal-deep); }
+.hearing-evidence-item { display: grid; gap: 3px; padding-bottom: 9px; border-bottom: 1px solid rgba(24, 35, 29, 0.08); }
+.hearing-evidence-item:last-child { border-bottom: 0; padding-bottom: 0; }
+.hearing-evidence-item span { color: var(--teal-deep); font-size: 0.84rem; }
+
+.hearing-final-report { margin-top: 20px; padding: 22px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr); gap: 22px; }
+.hearing-final-report h2 { margin: 0 0 9px; }
+.hearing-final-report h3 { margin: 0 0 9px; font-size: 1rem; }
+.hearing-final-report ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.hearing-metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.hearing-metric-grid article { padding: 12px; border-left: 3px solid var(--teal); background: #f4f8f6; }
+.hearing-metric-grid span { display: block; color: var(--muted); font-size: 0.78rem; }
+.hearing-metric-grid strong { display: block; margin-top: 4px; font-size: 1.25rem; }
+.hearing-disclaimer { margin-top: 12px; }
+.hearing-radar { margin-top: 14px; max-width: 260px; }
+.hearing-radar svg { display: block; width: 100%; height: auto; }
+.hearing-radar-grid { fill: none; stroke: rgba(24, 35, 29, 0.18); stroke-width: 1; }
+.hearing-radar-grid.inner { stroke-dasharray: 3 3; }
+.hearing-radar-value { fill: rgba(13, 115, 119, 0.22); stroke: var(--teal); stroke-width: 2; }
+.hearing-radar text { font-size: 10px; fill: var(--muted); }
+.hearing-report-heading { display: flex; justify-content: space-between; gap: 18px; align-items: start; }
+.hearing-probability-gauge { min-width: 170px; display: grid; gap: 4px; padding: 12px; border-left: 4px solid var(--teal); background: #eef8f5; }
+.hearing-probability-gauge span, .hearing-probability-gauge small { color: var(--muted); font-size: 0.8rem; }
+.hearing-probability-gauge strong { font-size: 1.7rem; color: var(--teal-deep); }
+.hearing-report-warning { grid-column: 1 / -1; margin: 0; padding: 10px 12px; background: #fff8e8; border-left: 3px solid #b45309; line-height: 1.5; }
+.hearing-report-section { grid-column: 1 / -1; }
+.hearing-report-section p { line-height: 1.55; }
+.hearing-risk-matrix, .hearing-evidence-chain { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.hearing-risk-matrix article, .hearing-evidence-chain article { display: grid; gap: 5px; padding: 10px; border: 1px solid rgba(24, 35, 29, 0.12); border-radius: 6px; }
+.hearing-risk-matrix article { border-left: 3px solid #b45309; }
+.hearing-risk-matrix p { margin: 0; line-height: 1.45; }
+.hearing-evidence-chain span { color: var(--teal-deep); font-size: 0.78rem; font-weight: 700; }
+.hearing-evidence-chain small { color: var(--muted); line-height: 1.35; }
+.hearing-evidence-chain a { font-size: 0.84rem; }
+.hearing-report-disclaimer { grid-column: 1 / -1; color: var(--muted); font-size: 0.84rem; line-height: 1.5; }
+
+@media (max-width: 960px) {
+    .hearing-intro-grid, .hearing-layout, .hearing-final-report { grid-template-columns: 1fr; }
+    .hearing-graph { grid-template-columns: repeat(7, minmax(140px, 1fr)); }
+}
+
+@media (max-width: 620px) {
+    .hearing-intro { padding-top: 28px; }
+    .hearing-intro h1 { font-size: 1.8rem; }
+    .hearing-dialogue-scroll { height: 420px; }
+    .hearing-option-list, .hearing-metric-grid, .hearing-risk-matrix, .hearing-evidence-chain { grid-template-columns: 1fr; }
+    .hearing-message { max-width: 96%; }
+    .hearing-report-heading { display: grid; }
+    .hearing-probability-gauge { min-width: 0; }
+    .hearing-mobile-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid rgba(24, 35, 29, 0.09); }
+    .hearing-mobile-tabs button { border: 0; border-bottom: 2px solid transparent; padding: 10px 6px; background: transparent; color: var(--muted); }
+    .hearing-mobile-tabs button.active { color: var(--teal-deep); border-bottom-color: var(--teal); font-weight: 700; }
+    .hearing-insight-section { display: none; }
+    .hearing-insight-section.mobile-active { display: block; }
+}
+
 .agent-chat-input {
     width: 100%;
     padding: 12px 14px;
