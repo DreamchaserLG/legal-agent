@@ -47,6 +47,40 @@ class Settings:
             os.getenv("ANALYSIS_FAST_LLM_KEYWORD_ENABLED", "false").strip().lower()
             in {"1", "true", "yes", "on"}
         )
+        self.deep_analysis_enabled = (
+            os.getenv("DEEP_ANALYSIS_ENABLED", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.deep_analysis_timeout_seconds = int(os.getenv("DEEP_ANALYSIS_TIMEOUT_SECONDS", "120"))
+        self.deep_analysis_max_llm_calls = int(os.getenv("DEEP_ANALYSIS_MAX_LLM_CALLS", "5"))
+        self.quality_gate_citation_traceability_min = float(
+            os.getenv("QUALITY_GATE_CITATION_TRACEABILITY_MIN", "0.7")
+        )
+        self.quality_gate_rule_currency_min = float(
+            os.getenv("QUALITY_GATE_RULE_CURRENCY_MIN", "0.8")
+        )
+        self.quality_gate_evidence_completeness_min = float(
+            os.getenv("QUALITY_GATE_EVIDENCE_COMPLETENESS_MIN", "0.6")
+        )
+        self.quality_gate_low_confidence_ratio_max = float(
+            os.getenv("QUALITY_GATE_LOW_CONFIDENCE_RATIO_MAX", "0.4")
+        )
+        self.quality_gate_manual_review_max = int(
+            os.getenv("QUALITY_GATE_MANUAL_REVIEW_MAX", "10")
+        )
+        self.case_strength_weight_evidence = float(os.getenv("CASE_STRENGTH_WEIGHT_EVIDENCE", "0.25"))
+        self.case_strength_weight_legal_basis = float(
+            os.getenv("CASE_STRENGTH_WEIGHT_LEGAL_BASIS", "0.25")
+        )
+        self.case_strength_weight_case_support = float(
+            os.getenv("CASE_STRENGTH_WEIGHT_CASE_SUPPORT", "0.20")
+        )
+        self.case_strength_weight_procedural = float(
+            os.getenv("CASE_STRENGTH_WEIGHT_PROCEDURAL", "0.15")
+        )
+        self.case_strength_weight_opposing = float(
+            os.getenv("CASE_STRENGTH_WEIGHT_OPPOSING", "0.15")
+        )
         self.prediction_local_fast_mode = (
             os.getenv("PREDICTION_LOCAL_FAST_MODE", "true").strip().lower()
             in {"1", "true", "yes", "on"}

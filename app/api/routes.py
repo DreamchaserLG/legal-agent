@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.service.agent_service import get_dashboard_metrics, predict_legal_outcome
-from app.service.analysis_service import analyze_sentence_search
+from app.service.analysis_service import analyze_sentence_search, enrich_with_deep_analysis
 from app.service.archive_service import (
     export_source_items_snapshot,
     get_archive_status,
@@ -1610,6 +1610,11 @@ def _render_prediction_page(
                     analysis_payload = _build_analysis_payload_from_history(
                         existing_history_item, module_code
                     )
+                    enrich_with_deep_analysis(
+                        analysis_payload,
+                        tenant_id=repair_text(page_user.get("tenant_id")),
+                        user_id=int(page_user["id"]),
+                    )
                     context["history_id"] = existing_history_id
                     context["analysis_result"] = analysis_payload
                     context["analysis_view"] = existing_history_item
@@ -1650,6 +1655,8 @@ def _render_prediction_page(
                 refresh=refresh,
                 origin_page="analysis",
                 local_only=False,
+                tenant_id=repair_text(page_user.get("tenant_id")),
+                user_id=int(page_user["id"]),
             )
             context["analysis_result"] = analysis_payload
             context.update(
@@ -1938,7 +1945,7 @@ def api_analyze_search(
     module: str = Query("canada"),
     refresh: bool = Query(False),
 ):
-    require_user(request)
+    user = require_user(request)
     return analyze_sentence_search(
         text=text,
         limit=limit,
@@ -1949,6 +1956,8 @@ def api_analyze_search(
         refresh=refresh,
         origin_page="analyze",
         local_only=True,
+        tenant_id=repair_text(user.get("tenant_id")),
+        user_id=int(user["id"]),
     )
 
 
@@ -2888,6 +2897,15 @@ def api_analyze(request: Request, payload: AnalyzePayload):
         )
         if existing_history_id and existing_history_item:
             existing_history_item["history_id"] = existing_history_id
+            history_payload = _build_analysis_payload_from_history(existing_history_item, module_code)
+            enrich_with_deep_analysis(
+                history_payload,
+                tenant_id=repair_text(user.get("tenant_id")),
+                user_id=int(user["id"]),
+            )
+            for field in ("deep_query_plan", "deep_analysis", "quality_gate", "deep_analysis_status"):
+                if field in history_payload:
+                    existing_history_item[field] = history_payload[field]
             return existing_history_item
     result = analyze_sentence_search(
         text=payload.text,
@@ -2899,6 +2917,8 @@ def api_analyze(request: Request, payload: AnalyzePayload):
         refresh=payload.refresh,
         origin_page="analyze",
         local_only=False,
+        tenant_id=repair_text(user.get("tenant_id")),
+        user_id=int(user["id"]),
     )
     history_id = _save_case_history_if_possible(
         request,
@@ -2908,13 +2928,17 @@ def api_analyze(request: Request, payload: AnalyzePayload):
     )
     if history_id:
         result["history_id"] = history_id
-    return _sanitize_history_display(_build_analysis_view_payload(
+    response = _sanitize_history_display(_build_analysis_view_payload(
         query_text=payload.text,
         module_code=module_code,
         result_payload=result,
         history_id=history_id,
         user_id=int(user["id"]),
     ))
+    for field in ("deep_query_plan", "deep_analysis", "quality_gate", "deep_analysis_status"):
+        if field in result:
+            response[field] = result[field]
+    return response
 
 
 @router.get("/api/histories")

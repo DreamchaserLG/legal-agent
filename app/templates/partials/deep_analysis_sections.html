@@ -1,0 +1,175 @@
+{% set deep = analysis_result.get('deep_analysis', {}) %}
+{% set gate = analysis_result.get('quality_gate', {}) %}
+<section class="band band-alt deep-analysis" data-deep-analysis>
+    <div class="shell analysis-report-shell">
+        <div class="analysis-report-head">
+            <div>
+                <p class="eyebrow">证据化深度解析</p>
+                <h2>案情焦点、证据边界与风险评估</h2>
+            </div>
+            <div class="status-cluster">
+                <span class="task-status">{{ '质量门禁通过' if gate.passed else '降级展示' }}</span>
+                {% if history_id %}<a class="meta-inline" href="/histories/{{ history_id }}">查看历史详情</a>{% endif %}
+                <a class="meta-inline" href="/hearing">进入庭审模拟</a>
+            </div>
+        </div>
+
+        {% if not gate.passed %}
+        <div class="deep-gate-alert" role="alert">
+            <strong>深度解析未通过质量门禁</strong>
+            <p>{{ gate.downgrade_reason or '当前证据不足以支持完整分析。' }}。以下仅展示可追溯引用、待补事项和人工复核要求。</p>
+            <div class="chip-row">
+                <span class="chip">引用可追溯率 {{ (gate.citation_traceability * 100)|round|int }}%</span>
+                <span class="chip">证据完整度 {{ (gate.evidence_completeness * 100)|round|int }}%</span>
+                <span class="chip">低置信度 {{ (gate.low_confidence_ratio * 100)|round|int }}%</span>
+            </div>
+        </div>
+        {% else %}
+        <section class="deep-section" aria-labelledby="deep-summary-title">
+            <p class="panel-kicker">案情结构化摘要</p>
+            <h3 id="deep-summary-title">可回链事实形成的案件轮廓</h3>
+            <p class="deep-summary">{{ deep.case_summary }}</p>
+        </section>
+
+        <section class="deep-section" aria-labelledby="deep-disputes-title">
+            <p class="panel-kicker">争议焦点详情</p>
+            <h3 id="deep-disputes-title">需要裁判或进一步核验的问题</h3>
+            <div class="deep-issue-list">
+                {% for issue in deep.dispute_details %}
+                <details class="deep-issue" {% if loop.first %}open{% endif %}>
+                    <summary>
+                        <span>{{ issue.issue }}</span>
+                        <span class="deep-score">强度 {{ (issue.strength_score * 100)|round|int }}%</span>
+                    </summary>
+                    <div class="deep-issue-body">
+                        <div class="deep-position-grid">
+                            <div><small>本方立场</small><p>{{ issue.our_position }}</p></div>
+                            <div><small>可能抗辩</small><p>{{ issue.opposing_position }}</p></div>
+                        </div>
+                        <h4>法律依据</h4>
+                        {% if issue.legal_basis %}
+                        <ul class="deep-reference-list">
+                            {% for rule in issue.legal_basis %}
+                            <li><strong>{{ rule.title }}</strong>{% if rule.article_no %} · {{ rule.article_no }}{% endif %}<span>{{ rule.excerpt or '正式关系已核验，条文摘要待人工确认。' }}</span></li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}<p class="muted">未检索到直接依据</p>{% endif %}
+                        <h4>类案支持</h4>
+                        {% if issue.case_support %}
+                        <ul class="deep-reference-list">
+                            {% for case in issue.case_support %}
+                            <li><strong>{{ case.title }}</strong>{% if case.court or case.date %} · {{ case.court }} {{ case.date }}{% endif %}<span>{{ case.excerpt or '已检索到案例，裁判要点待人工核验。' }}</span></li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}<p class="muted">未检索到可绑定的类案支持</p>{% endif %}
+                        {% if issue.unresolved_gaps %}
+                        <div class="chip-row">{% for gap in issue.unresolved_gaps %}<span class="chip">{{ gap }}</span>{% endfor %}</div>
+                        {% endif %}
+                    </div>
+                </details>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="deep-section" aria-labelledby="deep-risks-title">
+            <p class="panel-kicker">风险预测矩阵</p>
+            <div class="deep-section-heading">
+                <h3 id="deep-risks-title">触发条件与潜在后果</h3>
+                <div class="deep-risk-filters" aria-label="风险类型筛选">
+                    <button type="button" class="is-active" data-risk-filter="all">全部</button>
+                    <button type="button" data-risk-filter="substantive">实体</button>
+                    <button type="button" data-risk-filter="procedural">程序</button>
+                    <button type="button" data-risk-filter="evidence">证据</button>
+                    <button type="button" data-risk-filter="enforcement">执行</button>
+                </div>
+            </div>
+            <div class="deep-risk-grid">
+                {% for risk in deep.risk_predictions %}
+                <article class="deep-risk" data-risk-item="{{ risk.risk_type }}">
+                    <div class="result-head"><strong>{{ {'substantive':'实体风险','procedural':'程序风险','evidence':'证据风险','enforcement':'执行风险'}[risk.risk_type] }}</strong><span class="meta-inline">{{ (risk.confidence * 100)|round|int }}%</span></div>
+                    <p>{{ risk.description }}</p>
+                    <dl><dt>触发条件</dt><dd>{{ risk.trigger_condition }}</dd><dt>潜在后果</dt><dd>{{ risk.potential_consequence }}</dd></dl>
+                    {% if risk.manual_review_required %}<span class="deep-review-flag">需要人工复核</span>{% endif %}
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="deep-section" aria-labelledby="deep-strength-title">
+            <p class="panel-kicker">案件强弱评分</p>
+            <h3 id="deep-strength-title">基于当前证据状态的规则评分</h3>
+            {% set strength = deep.case_strength %}
+            <div class="deep-strength-grid">
+                {% for label, value in [('证据完整度', strength.evidence_completeness), ('法律依据充分度', strength.legal_basis_sufficiency), ('类案支持度', strength.case_support), ('程序合规度', strength.procedural_compliance), ('对方抗辩强度', strength.opposing_strength), ('综合状态', strength.overall)] %}
+                <div class="deep-strength-row"><span>{{ label }}</span><div class="deep-meter"><i style="width: {{ (value * 100)|round|int }}%"></i></div><strong>{{ (value * 100)|round|int }}%</strong></div>
+                {% endfor %}
+            </div>
+            <p class="notice-text">{{ strength.disclaimer }}</p>
+        </section>
+        {% endif %}
+
+        <section class="deep-section" aria-labelledby="deep-gaps-title">
+            <p class="panel-kicker">{{ '未完成事项' if not gate.passed else '证据缺口清单' }}</p>
+            <h3 id="deep-gaps-title">按优先级补齐事实和材料</h3>
+            <div class="deep-gap-list">
+                {% for gap in deep.evidence_gaps %}
+                <article class="deep-gap" data-priority="{{ gap.priority }}">
+                    <div class="result-head"><strong>{{ gap.description }}</strong><span class="meta-inline">{{ {'high':'高','medium':'中','low':'低'}[gap.priority] }}优先级</span></div>
+                    <p><b>为什么需要：</b>{{ gap.why_needed }}</p><p><b>补齐后的影响：</b>{{ gap.what_changes_if_filled }}</p>
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="deep-section" aria-labelledby="deep-materials-title">
+            <p class="panel-kicker">待补材料</p>
+            <h3 id="deep-materials-title">下一步取证清单</h3>
+            <ul class="deep-material-list">
+                {% for material in deep.missing_materials %}
+                <li><strong>{{ material.material_type }}</strong><span>{{ material.description }}</span><small>{{ material.acquisition_hint }}</small></li>
+                {% endfor %}
+            </ul>
+        </section>
+
+        <section class="deep-section" aria-labelledby="deep-references-title">
+            <p class="panel-kicker">引用清单</p>
+            <h3 id="deep-references-title">已检索法规与类案</h3>
+            {% if deep.references %}
+            <div class="deep-reference-table">
+                {% for ref in deep.references %}
+                <div>
+                    <span class="chip">{{ '法规' if ref.reference_type == 'rule' else '案例' }}</span>
+                    {% if ref.source_url %}<a href="{{ ref.source_url }}" target="_blank" rel="noopener noreferrer">{{ ref.title }}</a>{% else %}<strong>{{ ref.title }}</strong>{% endif %}
+                    <small>{{ ref.citation or '暂无标准引文' }} · {{ ref.verification_status }} · {{ ref.effectiveness_status }}</small>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}<p class="muted">未检索到可追溯引用，必须由人工完成法律检索。</p>{% endif %}
+        </section>
+
+        <section class="deep-section deep-boundary" aria-labelledby="deep-boundary-title">
+            <p class="panel-kicker">置信度边界与人工复核</p>
+            <h3 id="deep-boundary-title">结论适用范围</h3>
+            <p>{{ deep.confidence_boundary.boundary_note }}</p>
+            <div class="chip-row"><span class="chip">整体置信度 {{ (deep.confidence_boundary.overall_confidence * 100)|round|int }}%</span><span class="chip">人工复核 {{ gate.manual_review_items }} 项</span></div>
+            {% if deep.manual_review_items %}<ul class="memo-list">{% for review in deep.manual_review_items %}<li>{{ review }}</li>{% endfor %}</ul>{% endif %}
+            <p class="deep-disclaimer">{{ deep.disclaimer }}</p>
+        </section>
+    </div>
+</section>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+    const root = document.querySelector("[data-deep-analysis]");
+    if (!root) return;
+    root.querySelectorAll("[data-risk-filter]").forEach((button) => {
+        button.addEventListener("click", () => {
+            const filter = button.dataset.riskFilter;
+            root.querySelectorAll("[data-risk-filter]").forEach((item) => item.classList.toggle("is-active", item === button));
+            root.querySelectorAll("[data-risk-item]").forEach((item) => {
+                item.hidden = filter !== "all" && item.dataset.riskItem !== filter;
+            });
+        });
+    });
+});
+</script>

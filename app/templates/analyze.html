@@ -86,6 +86,10 @@
     </div>
 </section>
 
+{% set deep_analysis = analysis_result.get('deep_analysis') if analysis_result else none %}
+{% if deep_analysis %}
+{% include "partials/deep_analysis_sections.html" %}
+{% else %}
 <section class="band band-alt">
     <div class="shell analysis-report-shell">
         <div class="analysis-report-head">
@@ -289,6 +293,7 @@
         {% endif %}
     </div>
 </section>
+{% endif %}
 {% endif %}
 
 {% include "partials/module_sections.html" %}

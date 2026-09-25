@@ -12,6 +12,7 @@ from app.core.database import engine, fetch_all
 from app.service.bilingual_service import build_bilingual_analysis_pack
 from app.service.common_service import repair_text
 from app.service.data_quality_service import build_data_readiness
+from app.service.deep_analysis_service import build_deep_analysis_payload
 from app.service.llm_service import (
     LLMServiceError,
     create_structured_response,
@@ -26,6 +27,7 @@ from app.service.module_service import (
     resolve_source_for_module,
 )
 from app.service.rag_service import build_rag_context
+from app.service.quality_gate_service import evaluate_quality_gate
 from app.service.search_service import search_with_remote_hydration
 
 EN_STOPWORDS = {
@@ -1099,6 +1101,39 @@ def _dynamic_new_case_target_count(limit: int) -> int:
     return min(hard_cap, normalized_limit + buffer)
 
 
+def enrich_with_deep_analysis(
+    payload: dict,
+    *,
+    audit: bool = True,
+    tenant_id: str = "",
+    user_id: int | None = None,
+) -> dict:
+    if not bool(getattr(settings, "deep_analysis_enabled", False)) or payload.get("deep_analysis"):
+        return payload
+    try:
+        plan, deep_analysis = build_deep_analysis_payload(
+            repair_text(payload.get("input_text")),
+            keywords=payload.get("retrieval_keywords") or payload.get("extracted_keywords") or [],
+            module_packet=payload.get("module_packet") or {},
+            retrieval_items=(payload.get("rag_context") or {}).get("items") or payload.get("results") or [],
+        )
+        quality_gate = evaluate_quality_gate(
+            deep_analysis,
+            input_summary=deep_analysis.case_summary,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            audit=audit,
+        )
+        payload["deep_query_plan"] = plan.model_dump()
+        payload["deep_analysis"] = deep_analysis.model_dump()
+        payload["quality_gate"] = quality_gate.model_dump()
+        payload["deep_analysis_status"] = "ready" if quality_gate.passed else "downgraded"
+    except Exception as exc:
+        payload["deep_analysis_status"] = "failed"
+        payload["deep_analysis_error"] = repair_text(str(exc))[:400]
+    return payload
+
+
 def analyze_sentence_search(
     text: str,
     limit: int = 30,
@@ -1109,6 +1144,8 @@ def analyze_sentence_search(
     refresh: bool = False,
     origin_page: str = "analyze",
     local_only: bool = True,
+    tenant_id: str = "",
+    user_id: int | None = None,
 ):
     normalized_module = normalize_module(module)
     cleaned_text = repair_text(text)
@@ -1321,6 +1358,8 @@ def analyze_sentence_search(
             response_payload["coverage_note"] = (
                 f"{response_payload.get('coverage_note') or ''} {readiness_note}"
             ).strip()
+
+    enrich_with_deep_analysis(response_payload, tenant_id=tenant_id, user_id=user_id)
 
     if (
         analysis_cache_status != "hit"
