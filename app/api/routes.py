@@ -58,6 +58,14 @@ from app.service.hearing_workflow_service import (
     rollback_hearing_run,
     submit_hearing_turn,
 )
+from app.service.appeal_workflow_service import (
+    AppealAdvanceInput,
+    AppealRunCreate,
+    advance_appeal_run,
+    create_appeal_run,
+    get_appeal_run,
+    rollback_appeal_run,
+)
 from app.service.ofac_service import sync_ofac_demo
 from app.service.canlii_service import sync_canlii_demo
 from app.service.common_service import looks_mojibake, repair_text
@@ -1786,6 +1794,14 @@ def hearing_page(request: Request):
     return _cache_safe_template("hearing.html", _base_context(request, "hearing"))
 
 
+@router.get("/appeal-simulation", response_class=HTMLResponse)
+def appeal_simulation_page(request: Request):
+    page_user = _require_page_user(request, "/appeal-simulation")
+    if isinstance(page_user, RedirectResponse):
+        return page_user
+    return _cache_safe_template("appeal.html", _base_context(request, "appeal"))
+
+
 @router.get("/predict", response_class=HTMLResponse)
 def predict_page_redirect(
     request: Request,
@@ -2167,6 +2183,44 @@ def api_call_mcp_tool(request: Request, payload: MCPToolCall):
 
 def _hearing_tenant_id(user: dict) -> str:
     return repair_text(user.get("organization")) or f"user:{user['id']}"
+
+
+@router.post("/api/appeal/runs")
+def api_create_appeal_run(request: Request, payload: AppealRunCreate):
+    user = require_user(request)
+    return create_appeal_run(payload, user_id=int(user["id"]), tenant_id=_hearing_tenant_id(user))
+
+
+@router.get("/api/appeal/runs/{run_id}")
+def api_get_appeal_run(request: Request, run_id: str):
+    user = require_user(request)
+    try:
+        return get_appeal_run(run_id, tenant_id=_hearing_tenant_id(user))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/api/appeal/runs/{run_id}/advance")
+def api_advance_appeal_run(request: Request, run_id: str, payload: AppealAdvanceInput):
+    user = require_user(request)
+    try:
+        return advance_appeal_run(run_id, payload, user_id=int(user["id"]), tenant_id=_hearing_tenant_id(user))
+    except (LookupError, PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/appeal/runs/{run_id}/rollback/{stage_index}")
+def api_rollback_appeal_run(request: Request, run_id: str, stage_index: int):
+    user = require_user(request)
+    try:
+        return rollback_appeal_run(
+            run_id,
+            stage_index=stage_index,
+            user_id=int(user["id"]),
+            tenant_id=_hearing_tenant_id(user),
+        )
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/api/hearing/runs")

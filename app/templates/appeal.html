@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}安大略民事上诉模拟 - {{ app_name }}{% endblock %}
+
+{% block content %}
+<section class="band appeal-intake-band">
+    <div class="shell appeal-intake-layout">
+        <div class="appeal-intake-head">
+            <p class="eyebrow">Ontario Civil Appeal</p>
+            <h1>安大略民事上诉模拟</h1>
+            <p>基于固定案卷完成上诉方陈述、被上诉方回应、合议庭提问和有限答复。</p>
+        </div>
+        <form id="appeal-create-form" class="tool-panel appeal-create-form">
+            <label for="appeal-title">案件名称</label>
+            <input id="appeal-title" name="case_title" type="text" maxlength="300" required />
+            <label for="appeal-summary">案情摘要</label>
+            <textarea id="appeal-summary" name="case_summary" rows="5" maxlength="20000" required></textarea>
+            <label for="appeal-decision">原审决定及主要理由</label>
+            <textarea id="appeal-decision" name="lower_court_decision" rows="4" maxlength="12000" required></textarea>
+            <label for="appeal-grounds">上诉理由</label>
+            <textarea id="appeal-grounds" name="grounds_of_appeal" rows="4" maxlength="12000" placeholder="每行填写一项上诉理由" required></textarea>
+            <label for="appeal-order">请求裁定</label>
+            <input id="appeal-order" name="requested_order" type="text" maxlength="2000" required />
+            <label for="appeal-record">其他案卷材料</label>
+            <textarea id="appeal-record" name="record_materials" rows="4" maxlength="20000" placeholder="每行填写一项已经进入原审案卷的材料"></textarea>
+            <label for="appeal-role">练习角色</label>
+            <select id="appeal-role" name="practice_role">
+                <option value="appellant">上诉方</option>
+                <option value="respondent">被上诉方</option>
+                <option value="observer">观察完整模拟</option>
+            </select>
+            <div class="action-row"><button type="submit">建立上诉模拟</button></div>
+            <p id="appeal-create-status" class="notice-text" hidden></p>
+        </form>
+    </div>
+</section>
+
+<section class="band band-alt appeal-workbench" id="appeal-workbench" hidden>
+    <div class="shell">
+        <div class="appeal-run-head">
+            <div><p class="eyebrow" id="appeal-case-label">上诉记录</p><h2 id="appeal-stage-title">案卷审查</h2><p id="appeal-stage-focus"></p></div>
+            <div class="status-cluster"><span id="appeal-run-status" class="task-status">进行中</span><span id="appeal-speaker" class="meta-inline"></span></div>
+        </div>
+        <div class="appeal-stage-strip" id="appeal-stage-strip" aria-label="上诉审理阶段"></div>
+        <div class="appeal-main-grid">
+            <section class="appeal-transcript-panel" aria-live="polite">
+                <div class="appeal-panel-head"><div><p class="panel-kicker">庭审文字记录</p><h3>陈述与合议庭问题</h3></div></div>
+                <div class="appeal-transcript" id="appeal-transcript"></div>
+                <form id="appeal-turn-form" class="appeal-turn-form">
+                    <div id="appeal-user-fields" hidden><label for="appeal-turn-content">本轮陈述</label><textarea id="appeal-turn-content" rows="6" maxlength="12000"></textarea></div>
+                    <fieldset class="appeal-reference-picker" id="appeal-issue-picker"><legend>本轮处理的上诉问题</legend><div id="appeal-issue-options" class="appeal-option-list"></div></fieldset>
+                    <fieldset class="appeal-reference-picker" id="appeal-record-picker"><legend>引用案卷</legend><div id="appeal-record-options" class="appeal-option-list"></div></fieldset>
+                    <fieldset class="appeal-reference-picker" id="appeal-authority-picker"><legend>引用法律依据</legend><div id="appeal-authority-options" class="appeal-option-list"></div></fieldset>
+                    <div class="action-row"><button type="submit" id="appeal-advance-button">运行案卷审查</button></div>
+                    <p id="appeal-turn-status" class="notice-text" hidden></p>
+                </form>
+            </section>
+            <aside class="appeal-side-panel">
+                <section><p class="panel-kicker">上诉问题</p><div id="appeal-issue-list" class="appeal-side-list"></div></section>
+                <section><p class="panel-kicker">案卷边界</p><div id="appeal-record-list" class="appeal-side-list"></div></section>
+                <section><p class="panel-kicker">候选法律依据</p><div id="appeal-authority-list" class="appeal-side-list"></div></section>
+                <section><p class="panel-kicker">逐轮评分</p><div id="appeal-score-list" class="appeal-side-list"></div></section>
+            </aside>
+        </div>
+        <section id="appeal-final-report" class="appeal-final-report" hidden></section>
+        <p id="appeal-disclaimer" class="notice-text appeal-disclaimer"></p>
+    </div>
+</section>
+
+<script>
+(() => {
+    const createForm = document.getElementById('appeal-create-form');
+    const turnForm = document.getElementById('appeal-turn-form');
+    const workbench = document.getElementById('appeal-workbench');
+    const createStatus = document.getElementById('appeal-create-status');
+    const turnStatus = document.getElementById('appeal-turn-status');
+    let currentRun = null;
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (character) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
+    const percent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
+    const roleLabel = (role) => ({court_clerk:'书记员', appellant_counsel:'上诉方代理人', respondent_counsel:'被上诉方代理人', judge_panel:'合议庭', evaluation_service:'评估服务'}[role] || role || '系统');
+    async function request(url, options = {}) { const response = await fetch(url, {headers: {'Content-Type': 'application/json'}, ...options}); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.detail || '请求失败'); currentRun = body; render(body); return body; }
+    function selected(name) { return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map((item) => item.value); }
+    function show(element, message, error = false) { element.hidden = false; element.textContent = message; element.classList.toggle('error', error); }
+
+    function renderStages(data) {
+        const root = document.getElementById('appeal-stage-strip');
+        root.innerHTML = data.stage_nodes.map((node) => `<article class="appeal-stage-node ${escapeHtml(node.status)} ${node.stage === data.active_stage ? 'current' : ''}"><span>${node.index + 1}</span><strong>${escapeHtml(node.label)}</strong>${node.status === 'completed' && data.status !== 'completed' ? `<button type="button" class="appeal-rollback" data-stage-index="${node.index}" title="回滚到此阶段">↶</button>` : ''}</article>`).join('');
+        root.querySelectorAll('.appeal-rollback').forEach((button) => button.addEventListener('click', async () => { try { await request(`/api/appeal/runs/${currentRun.id}/rollback/${button.dataset.stageIndex}`, {method: 'POST'}); } catch (error) { show(turnStatus, error.message, true); } }));
+    }
+    function renderTranscript(data) {
+        const transcript = document.getElementById('appeal-transcript');
+        transcript.innerHTML = data.messages.map((message) => { const score = message.score?.scored ? `<span>本轮 ${message.score.total}/100</span>` : ''; const refs = [...(message.record_ids || []), ...(message.authority_ids || [])]; return `<article class="appeal-message role-${escapeHtml(message.speaker_role)}"><div><strong>${escapeHtml(roleLabel(message.speaker_role))}</strong><span>${escapeHtml(message.stage)}</span>${score}</div><p>${escapeHtml(message.content)}</p>${refs.length ? `<small>引用：${refs.map(escapeHtml).join('、')}</small>` : ''}${(message.warnings || []).map((item) => `<small class="warning">${escapeHtml(item)}</small>`).join('')}</article>`; }).join('');
+        transcript.scrollTop = transcript.scrollHeight;
+    }
+    function renderPickers(data) {
+        document.getElementById('appeal-issue-options').innerHTML = data.issues.map((item) => `<label><input type="checkbox" name="appeal_issue" value="${escapeHtml(item.issue_id)}" /><span><strong>${escapeHtml(item.issue_id)}</strong>${escapeHtml(item.description)}</span></label>`).join('');
+        document.getElementById('appeal-record-options').innerHTML = data.record.map((item) => `<label><input type="checkbox" name="appeal_record" value="${escapeHtml(item.record_id)}" /><span><strong>${escapeHtml(item.record_id)} · ${escapeHtml(item.title)}</strong>${escapeHtml(item.content.slice(0, 120))}</span></label>`).join('');
+        document.getElementById('appeal-authority-options').innerHTML = data.authorities.map((item) => `<label><input type="checkbox" name="appeal_authority" value="${escapeHtml(item.authority_id)}" /><span><strong>${escapeHtml(item.authority_id)} · ${escapeHtml(item.title)}</strong>${escapeHtml(item.citation || '引文待核验')}</span></label>`).join('') || '<p class="muted">没有检索到候选法律依据。</p>';
+    }
+    function renderSide(data) {
+        document.getElementById('appeal-issue-list').innerHTML = data.issues.map((item) => `<article><strong>${escapeHtml(item.issue_id)} · ${escapeHtml(item.description)}</strong><small>${escapeHtml(item.question_type)} · ${escapeHtml(item.expected_standard)}</small></article>`).join('');
+        document.getElementById('appeal-record-list').innerHTML = data.record.map((item) => `<article><strong>${escapeHtml(item.record_id)} · ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.content.slice(0, 150))}</small></article>`).join('');
+        document.getElementById('appeal-authority-list').innerHTML = data.authorities.map((item) => `<article><strong>${escapeHtml(item.authority_id)} · ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.citation || '引文待核验')} · ${escapeHtml(item.court || item.authority_type)}</small></article>`).join('') || '<p class="muted">暂无法律依据候选。</p>';
+        document.getElementById('appeal-score-list').innerHTML = data.scores.map((item) => `<article><strong>${escapeHtml(roleLabel(item.role))} · ${item.total}/100</strong><small>${escapeHtml(item.stage)}</small>${(item.notes || []).map((note) => `<small>${escapeHtml(note)}</small>`).join('')}</article>`).join('') || '<p class="muted">完成代理人发言后显示评分。</p>';
+    }
+    function renderReport(data) {
+        const root = document.getElementById('appeal-final-report'), report = data.final_report;
+        if (!report) { root.hidden = true; root.innerHTML = ''; return; }
+        root.hidden = false;
+        root.innerHTML = `<div><p class="eyebrow">训练反馈</p><h2>安大略民事上诉表现报告</h2><p>${escapeHtml(report.disclaimer)}</p></div><div class="appeal-report-scores"><article><span>上诉方</span><strong>${Number(report.performance_scores.appellant_counsel || 0).toFixed(1)}</strong></article><article><span>被上诉方</span><strong>${Number(report.performance_scores.respondent_counsel || 0).toFixed(1)}</strong></article></div><div class="appeal-report-metrics"><span>案卷可追溯 ${percent(report.record_traceability)}</span><span>法律依据可追溯 ${percent(report.authority_traceability)}</span><span>争点覆盖 ${percent(report.issue_coverage)}</span><span>角色合规 ${percent(report.role_compliance)}</span></div><section><h3>修正方案</h3><ul>${report.improvement_actions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>`;
+    }
+    function render(data) {
+        workbench.hidden = false;
+        document.getElementById('appeal-case-label').textContent = data.case_title;
+        document.getElementById('appeal-stage-title').textContent = data.active_stage_label;
+        document.getElementById('appeal-stage-focus').textContent = data.active_stage_focus;
+        document.getElementById('appeal-run-status').textContent = data.status === 'completed' ? '已完成' : '进行中';
+        document.getElementById('appeal-speaker').textContent = `当前：${roleLabel(data.expected_speaker)}`;
+        document.getElementById('appeal-disclaimer').textContent = data.disclaimer;
+        document.getElementById('appeal-user-fields').hidden = !data.requires_user_input;
+        document.getElementById('appeal-turn-content').required = data.requires_user_input;
+        for (const id of ['appeal-issue-picker', 'appeal-record-picker', 'appeal-authority-picker']) document.getElementById(id).hidden = !data.requires_user_input;
+        const button = document.getElementById('appeal-advance-button');
+        button.textContent = data.status === 'completed' ? '模拟已完成' : data.requires_user_input ? '提交本轮陈述' : `运行${data.active_stage_label}`;
+        button.disabled = data.status === 'completed';
+        renderStages(data); renderTranscript(data); renderPickers(data); renderSide(data); renderReport(data);
+    }
+    createForm.addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(createForm); show(createStatus, '正在建立案卷并检索候选法律依据。'); try { await request('/api/appeal/runs', {method: 'POST', body: JSON.stringify(Object.fromEntries(form.entries()))}); show(createStatus, '上诉模拟已建立。'); workbench.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch (error) { show(createStatus, error.message, true); } });
+    turnForm.addEventListener('submit', async (event) => { event.preventDefault(); if (!currentRun || currentRun.status === 'completed') return; show(turnStatus, '正在核验角色边界、案卷引用和法律依据。'); try { await request(`/api/appeal/runs/${currentRun.id}/advance`, {method: 'POST', body: JSON.stringify({content: document.getElementById('appeal-turn-content').value, issue_ids: selected('appeal_issue'), record_ids: selected('appeal_record'), authority_ids: selected('appeal_authority')})}); document.getElementById('appeal-turn-content').value = ''; show(turnStatus, '本阶段已完成。'); } catch (error) { show(turnStatus, error.message, true); } });
+})();
+</script>
+{% endblock %}
