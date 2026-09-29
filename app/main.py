@@ -17,6 +17,7 @@ from app.service.multi_agent_service import ensure_multi_agent_tables
 from app.service.skill_collaboration_service import ensure_skill_collaboration_tables
 from app.service.hearing_workflow_service import ensure_hearing_workflow_tables
 from app.service.appeal_workflow_service import ensure_appeal_workflow_tables
+from app.service.civil_trial_workflow_service import ensure_civil_trial_tables
 from app.service.risk_assessment_service import ensure_risk_assessment_tables
 from app.service.user_service import ensure_user_tables
 from app.service.vector_store_service import ensure_vector_tables
@@ -63,6 +64,7 @@ def on_startup():
         ensure_skill_collaboration_tables()
         ensure_hearing_workflow_tables()
         ensure_appeal_workflow_tables()
+        ensure_civil_trial_tables()
 
     ensure_archive_directories()
     if settings.archive_bootstrap_enabled:

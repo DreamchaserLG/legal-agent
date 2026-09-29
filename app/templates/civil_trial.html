@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} | 安大略民事审判模拟{% endblock %}
+
+{% block content %}
+<section class="trial-intake-band">
+    <div class="shell trial-intake-grid">
+        <div class="trial-intake-head">
+            <p class="eyebrow">Ontario Superior Court of Justice</p>
+            <h1>安大略民事审判模拟</h1>
+            <p>事实审理记录</p>
+            <div class="trial-mode-switch" role="group" aria-label="模拟类型">
+                <span class="active">一审举证质证</span>
+                <a href="/appeal-simulation">上诉口头辩论</a>
+            </div>
+        </div>
+        <form id="trial-create-form" class="trial-create-form">
+            <div class="trial-form-grid">
+                <label>案件名称<input name="case_title" required /></label>
+                <label>我方角色
+                    <select name="practice_side"><option value="plaintiff">原告</option><option value="defendant">被告</option><option value="observer">旁听</option></select>
+                </label>
+            </div>
+            <label>案情事实<textarea name="case_summary" rows="4" required></textarea></label>
+            <div class="trial-form-grid">
+                <label>原告诉请与案件理论<textarea name="claim" rows="4" required></textarea></label>
+                <label>被告答辩与案件理论<textarea name="defence" rows="4" required></textarea></label>
+            </div>
+            <label>请求救济<textarea name="requested_relief" rows="2" required></textarea></label>
+            <details class="trial-record-editor" open>
+                <summary>争点、证人和证物记录</summary>
+                <label>争点 <small>每行：承担方 | 争点；承担方填写 plaintiff 或 defendant</small>
+                    <textarea name="issues" rows="3" required></textarea>
+                </label>
+                <label>证人 <small>每行：一方 | 类型 | 姓名 | 身份 | 证词要点（~ 分隔） | 可信性风险（~ 分隔） | 争点序号 | 专业领域 | 报告</small>
+                    <textarea name="witnesses" rows="7" required></textarea>
+                </label>
+                <label>证物 <small>每行：一方 | 名称 | 内容 | 基础证人 | 争点序号 | 真实性 | 传闻 | 商业记录 | 来源链接</small>
+                    <textarea name="exhibits" rows="7" required></textarea>
+                </label>
+            </details>
+            <div class="action-row">
+                <button type="button" class="secondary" id="trial-load-demo">载入完整示例案卷</button>
+                <button type="submit">建立审判记录</button>
+            </div>
+            <p id="trial-create-status" class="notice-text" hidden></p>
+        </form>
+    </div>
+</section>
+
+<section class="band trial-workbench" id="trial-workbench" hidden>
+    <div class="shell">
+        <header class="trial-run-head">
+            <div>
+                <p class="eyebrow" id="trial-run-label">审判记录</p>
+                <h2 id="trial-phase-title">庭前与开庭</h2>
+                <p id="trial-next-task" class="muted"></p>
+            </div>
+            <div class="trial-status-cluster">
+                <span class="task-status" id="trial-status">进行中</span>
+                <strong id="trial-session">第 1 庭次</strong>
+                <span id="trial-progress">0%</span>
+            </div>
+        </header>
+
+        <div class="trial-phase-strip" id="trial-phase-strip" aria-label="审判阶段"></div>
+
+        <div class="trial-main-grid">
+            <section class="trial-transcript-panel" aria-live="polite">
+                <div class="trial-panel-head">
+                    <div><p class="panel-kicker">Court record</p><h3>庭审记录</h3></div>
+                    <span id="trial-record-count" class="meta-inline"></span>
+                </div>
+                <div class="trial-transcript" id="trial-transcript"></div>
+                <form id="trial-action-form" class="trial-action-form">
+                    <label for="trial-content">本方本轮发言</label>
+                    <textarea id="trial-content" rows="3" placeholder="轮到所选一方律师时，可提交本方问题或陈述；留空则由受控代理完成。"></textarea>
+                    <div class="action-row">
+                        <button type="submit" id="trial-advance">推进下一轮</button>
+                        <button type="button" class="secondary" id="trial-adjourn">休庭</button>
+                        <button type="button" class="secondary" id="trial-resume" hidden>续庭</button>
+                    </div>
+                    <p id="trial-action-status" class="notice-text" hidden></p>
+                </form>
+            </section>
+
+            <aside class="trial-record-panel">
+                <div class="trial-side-tabs" role="tablist">
+                    <button type="button" class="active" data-trial-tab="witnesses">证人</button>
+                    <button type="button" data-trial-tab="exhibits">证物</button>
+                    <button type="button" data-trial-tab="objections">异议</button>
+                    <button type="button" data-trial-tab="authorities">法律</button>
+                    <button type="button" data-trial-tab="agents">Agent</button>
+                </div>
+                <section class="trial-tab-panel active" data-trial-panel="witnesses"><div id="trial-witnesses" class="trial-side-list"></div></section>
+                <section class="trial-tab-panel" data-trial-panel="exhibits"><div id="trial-exhibits" class="trial-side-list"></div></section>
+                <section class="trial-tab-panel" data-trial-panel="objections"><div id="trial-objections" class="trial-side-list"></div></section>
+                <section class="trial-tab-panel" data-trial-panel="authorities"><div id="trial-authorities" class="trial-side-list"></div></section>
+                <section class="trial-tab-panel" data-trial-panel="agents">
+                    <div id="trial-agent-trace" class="trial-side-list"></div>
+                    <details class="trial-boundaries"><summary>职责与停止边界</summary><div id="trial-boundary-list"></div></details>
+                </section>
+            </aside>
+        </div>
+
+        <section class="trial-final-report" id="trial-final-report" hidden></section>
+        <p class="notice-text trial-disclaimer" id="trial-disclaimer"></p>
+    </div>
+</section>
+
+<script>
+(() => {
+    const form = document.getElementById('trial-create-form');
+    const workbench = document.getElementById('trial-workbench');
+    const transcript = document.getElementById('trial-transcript');
+    const createStatus = document.getElementById('trial-create-status');
+    const actionStatus = document.getElementById('trial-action-status');
+    const actionForm = document.getElementById('trial-action-form');
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+    let currentRun = null;
+
+    const demo = {
+        case_title: 'Northlake Condo Corp. v. Apex Restoration Ltd.',
+        case_summary: 'Northlake聘请Apex修复地下车库防水层。2023年10月完工后两个雨季持续渗水。Northlake拒付最后一笔工程款并支付第三方修复费用；Apex主张漏水来自原设计和未经批准的附加工程。',
+        claim: '原告主张Apex未按合同规范处理伸缩缝和排水节点，构成违约，并请求返还缺陷修复费及工程延误损失。原告承担违约、因果关系和损失的证明责任。',
+        defence: '被告否认施工缺陷，主张原有结构裂缝和原告拒绝批准变更单才是渗水原因；即使存在责任，原告选择的全面重做费用也不合理。',
+        requested_relief: '判令被告支付缺陷修复费185,000加元、经证明的延误损失、判前利息及费用。',
+        issues: 'plaintiff | Apex是否违反合同中的防水施工规范\nplaintiff | 施工缺陷是否造成持续渗水及185,000加元修复费用\ndefendant | Northlake是否因拒绝合理变更而应分担损失',
+        witnesses: [
+            'plaintiff | fact | Olivia Grant | Northlake物业经理 | 我在每周现场会议中记录Apex同意按图纸密封伸缩缝~完工后第一次强降雨时P2层同一接缝出现积水~我向Apex发送缺陷通知但对方只做了表面补胶 | 我不是工程师，无法判断全部渗水机理~部分现场记录由助理整理 | 1,2 |  | ',
+            'plaintiff | expert | Dr. Samuel Lee | 法证工程师 | 现场开槽显示接缝底部缺少合同要求的止水带~染色试验把主要进水路径定位到Apex施工的三处接缝~局部重做和交通管理的合理修复估价为172,000至190,000加元 | 第一次检查在完工九个月后~未亲眼观察原施工过程 | 1,2 | 建筑围护与地下结构防水 | 2024年8月地下车库渗水调查报告',
+            'defendant | fact | Marcus Bell | Apex项目经理 | 我在2023年6月发现原混凝土存在多条贯穿裂缝并提交变更建议~Northlake没有签署增加注浆工程的变更单~项目完工检查表由物业代表签字 | 变更建议只通过电子邮件发送且未附工程量~完工表没有说明隐藏防水节点 | 1,2,3 |  | ',
+            'defendant | expert | Priya Nair | 成本顾问 | 我审查了第三方修复报价，认为其中包含与Apex合同无关的排水升级~剔除升级和夜间施工溢价后合理费用约为118,000加元 | 我没有进行渗水原因检测~估价依赖Apex提供的工程范围 | 2,3 | 建筑修复造价 | 2024年10月修复费用审查报告'
+        ].join('\n'),
+        exhibits: [
+            'plaintiff | 施工合同及防水图纸 | 约定接缝止水带、密封层和排水节点 | Olivia Grant | 1 | admitted | false | false | https://example.test/contract',
+            'plaintiff | 2023年11月缺陷通知邮件 | Olivia向Apex报告P2层渗水并要求返修 | Olivia Grant | 1,2 | admitted | true | false | https://example.test/notice',
+            'plaintiff | Lee工程报告及现场照片 | 记录开槽、染色试验和修复范围 | Dr. Samuel Lee | 1,2 | admitted | false | false | https://example.test/lee-report',
+            'plaintiff | 第三方修复发票 | Northlake支付的修复工程发票和付款记录 | Olivia Grant | 2 | admitted | true | true | https://example.test/invoice',
+            'defendant | 2023年6月变更建议邮件 | Apex建议对原结构裂缝增加注浆 | Marcus Bell | 3 | admitted | true | false | https://example.test/change-email',
+            'defendant | 完工检查表 | 物业代表签字的可见工程检查表 | Marcus Bell | 1,3 | admitted | false | false | https://example.test/checklist',
+            'defendant | Nair费用审查报告 | 区分缺陷修复、升级项目和夜间施工溢价 | Priya Nair | 2,3 | admitted | false | false | https://example.test/nair-report'
+        ].join('\n')
+    };
+
+    function loadDemo() {
+        Object.entries(demo).forEach(([key, value]) => { const field = form.elements.namedItem(key); if (field) field.value = value; });
+    }
+
+    function parts(line) { return line.split('|').map((item) => item.trim()); }
+    function indexes(value) { return String(value || '').split(',').map((item) => Number(item.trim())).filter(Number.isInteger); }
+    function booleanValue(value) { return String(value).toLowerCase() === 'true'; }
+    function parsePayload() {
+        const data = new FormData(form);
+        const issues = String(data.get('issues')).split(/\r?\n/).filter((line) => line.trim()).map((line) => {
+            const [burden_side, description] = parts(line); return {burden_side, description};
+        });
+        const witnesses = String(data.get('witnesses')).split(/\r?\n/).filter((line) => line.trim()).map((line) => {
+            const [side, kind, name, role_description, points, risks, issueIds, expert_field, report_title] = parts(line);
+            return {side, kind, name, role_description, testimony_points: String(points || '').split('~').filter(Boolean), credibility_risks: String(risks || '').split('~').filter(Boolean), issue_indexes: indexes(issueIds), expert_field: expert_field || '', report_title: report_title || ''};
+        });
+        const exhibits = String(data.get('exhibits')).split(/\r?\n/).filter((line) => line.trim()).map((line) => {
+            const [proponent, title, description, foundation_witness, issueIds, authenticity, hearsay, business, source_url] = parts(line);
+            return {proponent, title, description, foundation_witness, issue_indexes: indexes(issueIds), authenticity, hearsay_risk: booleanValue(hearsay), business_record: booleanValue(business), source_url: source_url || ''};
+        });
+        return {case_title: data.get('case_title'), case_summary: data.get('case_summary'), claim: data.get('claim'), defence: data.get('defence'), requested_relief: data.get('requested_relief'), practice_side: data.get('practice_side'), issues, witnesses, exhibits};
+    }
+
+    const statusLabel = (status) => ({active:'进行中',adjourned:'休庭',completed:'已完成',waiting:'待出庭',testifying:'作证中',proposed:'待提交',admitted:'准入',limited:'限缩准入',excluded:'排除'}[status] || status);
+    const taskLabel = (task) => ({call_case:'书记员宣布开庭',opening:'开庭陈述',call_witness:'传唤证人',qualify_expert:'专家资格审查',direct_round:'主询问',cross_round:'交叉询问',reexamination:'复询',release_witness:'证人退庭',side_rests:'举证结束',session_break:'休庭节点',reply_review:'回复证据审查',closing:'结案陈词',reply_closing:'原告有限回复',judgment:'宣判与评分'}[task] || task || '已完成');
+
+    function renderPhases(data) {
+        document.getElementById('trial-phase-strip').innerHTML = data.phase_nodes.map((item, index) => `<article class="trial-phase-node ${escapeHtml(item.status)}"><span>${index + 1}</span><strong>${escapeHtml(item.label)}</strong><small>${statusLabel(item.status)}</small></article>`).join('');
+    }
+
+    function renderTranscript(data) {
+        transcript.innerHTML = data.transcript.map((item) => `<article class="trial-event role-${escapeHtml(item.role)} type-${escapeHtml(item.event_type)}">
+            <div><strong>${escapeHtml(item.role_label)}</strong><span>第 ${item.session_no} 庭次</span><span>${escapeHtml(item.phase_label)}</span><span>${escapeHtml(item.event_type)}</span></div>
+            <p>${escapeHtml(item.content)}</p>
+            ${(item.witness_id || item.exhibit_id) ? `<small>${escapeHtml([item.witness_id, item.exhibit_id].filter(Boolean).join(' · '))}</small>` : ''}
+        </article>`).join('') || '<p class="muted">建立记录后，书记员将宣布开庭。</p>';
+        transcript.scrollTop = transcript.scrollHeight;
+        document.getElementById('trial-record-count').textContent = `${data.transcript.length} 条记录`;
+    }
+
+    function renderSide(data) {
+        document.getElementById('trial-witnesses').innerHTML = data.witnesses.map((item) => `<article><div><strong>${escapeHtml(item.witness_id)} · ${escapeHtml(item.name)}</strong><span class="trial-record-status ${escapeHtml(item.status)}">${statusLabel(item.status)}</span></div><p>${escapeHtml(item.role_description)}</p><small>${item.kind === 'expert' ? `专家：${escapeHtml(item.expert_field)}` : '事实证人'} · 可信性 ${Math.round(item.credibility_score * 100)}</small><small>证言记录 ${item.testimony_event_ids.length} 条</small></article>`).join('');
+        document.getElementById('trial-exhibits').innerHTML = data.exhibits.map((item) => `<article><div><strong>${escapeHtml(item.exhibit_id)} · ${escapeHtml(item.title)}</strong><span class="trial-record-status ${escapeHtml(item.status)}">${statusLabel(item.status)}</span></div><p>${escapeHtml(item.description)}</p><small>基础证人 ${escapeHtml(item.foundation_witness_id)} · ${escapeHtml(item.limitation || '未限缩')}</small></article>`).join('');
+        document.getElementById('trial-objections').innerHTML = data.objections.map((item) => `<article><strong>${escapeHtml(item.objection_id)} · ${escapeHtml(item.exhibit_id)}</strong><p>${escapeHtml(item.grounds.join('；'))}</p><small>裁定：${statusLabel(item.ruling)} · ${escapeHtml(item.reasons)}</small></article>`).join('') || '<p class="muted">尚无异议裁定。</p>';
+        document.getElementById('trial-authorities').innerHTML = data.authorities.map((item) => `<article><strong>${escapeHtml(item.authority_id)} · ${escapeHtml(item.title)}</strong><p>${escapeHtml(item.citation || '引文待核验')}</p><small>${escapeHtml(item.source_status)}</small>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">查看原文</a>` : '<small>没有来源链接</small>'}</article>`).join('');
+        document.getElementById('trial-agent-trace').innerHTML = data.agent_trace.slice(-30).reverse().map((item) => `<article><strong>${escapeHtml(item.role)} · ${escapeHtml(item.tool)}</strong><small>${escapeHtml((item.notes || []).join(' · ') || '完成')}</small></article>`).join('');
+        document.getElementById('trial-boundary-list').innerHTML = data.role_boundaries.map((item) => `<article><strong>${escapeHtml(item.role)}</strong><p>${escapeHtml(item.goal)}</p><small>停止边界：${escapeHtml(item.stop)}</small></article>`).join('');
+    }
+
+    function renderReport(data) {
+        const host = document.getElementById('trial-final-report');
+        const report = data.final_report;
+        host.hidden = !report;
+        if (!report) return;
+        const judgment = report.judicial_result;
+        const sides = [['plaintiff','原告律师'], ['defendant','被告律师']];
+        host.innerHTML = `<header><div><p class="eyebrow">Reasons for judgment</p><h2>${escapeHtml(judgment.outcome)}</h2><p>${escapeHtml(judgment.order)}</p></div><strong class="trial-judgment-mark">判决</strong></header>
+            <section><h3>逐项事实认定</h3><div class="trial-finding-list">${judgment.issue_findings.map((item) => `<article><div><strong>${escapeHtml(item.issue_id)} · ${escapeHtml(item.description)}</strong><span>${item.burden_met ? '完成证明责任' : '未完成证明责任'}</span></div><p>${escapeHtml(item.reasons)}</p><small>采信：${escapeHtml(item.accepted_evidence.join('、') || '仅证言')}；排除/不采：${escapeHtml(item.excluded_or_rejected_evidence.join('、') || '无')}</small></article>`).join('')}</div></section>
+            <section><h3>律师训练评分</h3><p class="muted">评分不参与判决。</p><div class="trial-score-grid">${sides.map(([side, label]) => { const score = report.advocacy_scores[side]; return `<article><span>${label}</span><strong>${score.total}</strong><small>/ 100</small><dl>${Object.entries(score.metrics).map(([key,value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${value}</dd></div>`).join('')}</dl>${score.corrections.map((item) => `<p>${escapeHtml(item)}</p>`).join('') || '<p>本次记录未产生规则化修正项。</p>'}</article>`; }).join('')}</div></section>
+            <section><h3>完整性指标</h3><div class="trial-metric-row">${Object.entries(report.record_metrics).map(([key,value]) => `<span>${escapeHtml(key)} <strong>${value}</strong></span>`).join('')}</div><p>${escapeHtml(report.score_separation)}</p></section>`;
+    }
+
+    function render(data) {
+        currentRun = data;
+        workbench.hidden = false;
+        document.getElementById('trial-run-label').textContent = `${data.case_title} · ${data.id}`;
+        document.getElementById('trial-phase-title').textContent = data.active_phase_label;
+        document.getElementById('trial-next-task').textContent = data.active_task ? `下一轮：${taskLabel(data.active_task.task)} · ${data.active_task.role}` : '庭审记录已封闭';
+        document.getElementById('trial-status').textContent = statusLabel(data.status);
+        document.getElementById('trial-session').textContent = `第 ${data.sessions.length} 庭次`;
+        document.getElementById('trial-progress').textContent = `${Math.round(data.progress * 100)}%`;
+        document.getElementById('trial-disclaimer').textContent = data.disclaimer;
+        document.getElementById('trial-advance').hidden = data.status !== 'active';
+        document.getElementById('trial-adjourn').hidden = data.status !== 'active';
+        document.getElementById('trial-resume').hidden = data.status !== 'adjourned';
+        actionForm.querySelector('textarea').disabled = data.status !== 'active';
+        actionForm.hidden = data.status === 'completed';
+        renderPhases(data); renderTranscript(data); renderSide(data); renderReport(data);
+    }
+
+    async function request(url, options = {}) {
+        const response = await fetch(url, {headers: {'Content-Type':'application/json'}, ...options});
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || '请求失败。');
+        render(payload); return payload;
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault(); createStatus.hidden = true;
+        try { await request('/api/civil-trial/runs', {method:'POST', body:JSON.stringify(parsePayload())}); workbench.scrollIntoView({behavior:'smooth', block:'start'}); }
+        catch (error) { createStatus.textContent = error.message; createStatus.hidden = false; }
+    });
+    actionForm.addEventListener('submit', async (event) => {
+        event.preventDefault(); actionStatus.hidden = true;
+        try { await request(`/api/civil-trial/runs/${currentRun.id}/actions`, {method:'POST', body:JSON.stringify({action:'advance', content:document.getElementById('trial-content').value})}); document.getElementById('trial-content').value = ''; }
+        catch (error) { actionStatus.textContent = error.message; actionStatus.hidden = false; }
+    });
+    document.getElementById('trial-adjourn').addEventListener('click', async () => { try { await request(`/api/civil-trial/runs/${currentRun.id}/actions`, {method:'POST', body:JSON.stringify({action:'adjourn', reason:'应庭审日程和证人安排休庭'})}); } catch (error) { actionStatus.textContent = error.message; actionStatus.hidden = false; } });
+    document.getElementById('trial-resume').addEventListener('click', async () => { try { await request(`/api/civil-trial/runs/${currentRun.id}/actions`, {method:'POST', body:JSON.stringify({action:'resume'})}); } catch (error) { actionStatus.textContent = error.message; actionStatus.hidden = false; } });
+    document.getElementById('trial-load-demo').addEventListener('click', loadDemo);
+    document.querySelectorAll('[data-trial-tab]').forEach((button) => button.addEventListener('click', () => {
+        document.querySelectorAll('[data-trial-tab]').forEach((item) => item.classList.toggle('active', item === button));
+        document.querySelectorAll('[data-trial-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.trialPanel === button.dataset.trialTab));
+    }));
+    loadDemo();
+    const existingRunId = new URLSearchParams(location.search).get('run_id');
+    if (existingRunId) {
+        request(`/api/civil-trial/runs/${encodeURIComponent(existingRunId)}`).catch((error) => {
+            createStatus.textContent = error.message; createStatus.hidden = false;
+        });
+    }
+})();
+</script>
+{% endblock %}

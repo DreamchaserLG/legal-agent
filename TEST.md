@@ -56,3 +56,42 @@
 截图保存于 `docs/assets/appeal-real-case-hryniak-initial.png`、`docs/assets/appeal-real-case-hryniak-final.png`、`docs/assets/appeal-real-case-hryniak-report.png` 和 `docs/assets/appeal-real-case-hryniak-mobile.png`。
 
 剩余风险：公开网页内容由外部检索后以带 URL 的快照注入测试案卷，庭审 Agent 只读取快照，尚未在产品内自主调用实时 `web_search/web_fetch`；法规历史版本与判例后续效力仍需专业 citator 和人工复核。评分衡量训练表现，不代表真实案件胜诉概率或法院意见。
+
+## 2026-09-29 安大略民事一审举证质证流程验证
+
+变更范围：新增独立的安大略民事事实审理状态机和 `/api/civil-trial` 接口；`/hearing` 改为多庭次审判工作台。新流程包含双方开庭陈述、逐名证人主询问/交叉询问/有限复询、专家资格审查、证物提交、异议与法官裁定、自动休庭和续庭、回复证据审查、结案陈词、逐争点判决及独立律师训练分。旧 `/api/hearing` 和上诉模块保留。完整设计和截图见 `docs/安大略民事审判模拟测试报告.md`。
+
+### 专项服务测试
+
+执行命令：`python scripts\test_civil_trial_workflow.py`
+
+预期：具体案卷跨多个庭次完成；证物覆盖准入、限缩准入和排除；休庭期间禁止普通推进；原告、被告、事实证人、专家、书记员、证据核验、法官和评估代理均留下受白名单约束的工具轨迹；跨租户读取和证人检索越权被拒绝；缺少一方证人、未知基础证人和完成后继续推进被拒绝；判决不输出胜诉概率或算法证据分。
+
+实际：6 项测试全部通过，约 `0.18s`。完整流程使用 4 名证人和 7 件证物，形成 4 个庭次、89 条庭审事件、21 条证言回答和 3 次异议裁定；证物结果为准入 5、限缩准入 1、排除 1。三个争点均生成证明责任、采信/排除材料和可信性理由，判决为原告部分胜诉。角色越界计数为 0；原告和被告律师训练分分别为 97 和 91，且评分明确不参与判决。另验证未登录 API 在业务服务调用前返回 401，页面包含证言和法律依据入口且不显示胜诉概率。
+
+结论：正常、异常、状态边界、角色权限和租户隔离路径通过。
+
+### 浏览器端到端测试
+
+执行命令：`python scripts\run_civil_trial_e2e.py`
+
+环境：隔离 SQLite、隔离账号、Microsoft Edge 无头模式；每次使用随机空闲端口，并为启动、HTTP 请求、浏览器等待和最多 80 次流程动作设置上限；`finally` 中关闭 Edge 和 Uvicorn。
+
+第一次在文件沙箱内启动 Edge 时约 19 秒失败，错误为临时浏览器配置目录访问被拒绝。服务端日志显示注册和创建庭审均返回 200，且浏览器未向 `/hearing` 发出请求，确认不是工作流卡死。按环境权限要求在沙箱外运行同一有界命令后通过，最后一次约 8 秒完成并明确停止两个进程。
+
+实际：47 次推进/续庭动作后完成 4 个庭次。页面显示 89 条庭审记录、4 名完成作证的证人、3 项逐争点认定和 2 份律师评分。七个阶段均为完成；完成态发言表单已隐藏。桌面 `1440x1100` 和移动端 `390x844` 均无横向溢出，移动阶段条使用横向滚动。截图保存于：
+
+- `docs/assets/civil-trial-northlake-initial.png`
+- `docs/assets/civil-trial-northlake-evidence.png`
+- `docs/assets/civil-trial-northlake-final.png`
+- `docs/assets/civil-trial-northlake-judgment.png`
+- `docs/assets/civil-trial-northlake-mobile.png`
+
+### 回归与静态检查
+
+- `python -m compileall -q app scripts`：通过。
+- `python scripts\test_hearing_workflow.py`：旧七阶段接口通过，最终规则报告为 59.7；用于兼容回归，不再作为 `/hearing` 主页面。
+- `python scripts\test_appeal_workflow.py`：26 项通过，固定九阶段、权限、租户隔离、回滚和无胜诉概率输出均无回归。
+- `python scripts\test_appeal_real_case_hryniak.py`：1 项通过，真实 Hryniak 上诉案卷和来源可追溯测试无回归。
+
+剩余风险：该确定性案卷没有穷尽陪审团审判、缺席审判、证人特权、翻译证人、远程出庭或复杂专家会议。实体法律依据仍依赖本地 RAG 语料更新；程序规则提供官方 URL，但法规历史版本和后续效力仍需专业 citator 与律师复核。用户提供的知乎文章在当前环境返回反爬验证页，未把无法读取的正文当作已核验来源；流程以用户明确要求和安大略法院官方资料为依据。

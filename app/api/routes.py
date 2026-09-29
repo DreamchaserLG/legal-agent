@@ -66,6 +66,13 @@ from app.service.appeal_workflow_service import (
     get_appeal_run,
     rollback_appeal_run,
 )
+from app.service.civil_trial_workflow_service import (
+    CivilTrialActionInput,
+    CivilTrialRunCreate,
+    create_civil_trial_run,
+    get_civil_trial_run,
+    perform_civil_trial_action,
+)
 from app.service.ofac_service import sync_ofac_demo
 from app.service.canlii_service import sync_canlii_demo
 from app.service.common_service import looks_mojibake, repair_text
@@ -1791,7 +1798,7 @@ def hearing_page(request: Request):
     page_user = _require_page_user(request, "/hearing")
     if isinstance(page_user, RedirectResponse):
         return page_user
-    return _cache_safe_template("hearing.html", _base_context(request, "hearing"))
+    return _cache_safe_template("civil_trial.html", _base_context(request, "hearing"))
 
 
 @router.get("/appeal-simulation", response_class=HTMLResponse)
@@ -2253,6 +2260,40 @@ def api_rollback_hearing_run(request: Request, run_id: str, stage_index: int):
     try:
         return rollback_hearing_run(run_id, stage_index=stage_index, user_id=int(user["id"]), tenant_id=_hearing_tenant_id(user))
     except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/civil-trial/runs")
+def api_create_civil_trial_run(request: Request, payload: CivilTrialRunCreate):
+    user = require_user(request)
+    try:
+        return create_civil_trial_run(payload, user_id=int(user["id"]), tenant_id=_hearing_tenant_id(user))
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/civil-trial/runs/{run_id}")
+def api_get_civil_trial_run(request: Request, run_id: str):
+    user = require_user(request)
+    try:
+        return get_civil_trial_run(run_id, tenant_id=_hearing_tenant_id(user))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/api/civil-trial/runs/{run_id}/actions")
+def api_perform_civil_trial_action(request: Request, run_id: str, payload: CivilTrialActionInput):
+    user = require_user(request)
+    try:
+        return perform_civil_trial_action(
+            run_id,
+            payload,
+            user_id=int(user["id"]),
+            tenant_id=_hearing_tenant_id(user),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (PermissionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
