@@ -125,8 +125,15 @@
         button.disabled = data.status === 'completed';
         renderStages(data); renderTranscript(data); renderPickers(data); renderSide(data); renderReport(data);
     }
-    createForm.addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(createForm); show(createStatus, '正在建立案卷并检索候选法律依据。'); try { await request('/api/appeal/runs', {method: 'POST', body: JSON.stringify(Object.fromEntries(form.entries()))}); show(createStatus, '上诉模拟已建立。'); workbench.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch (error) { show(createStatus, error.message, true); } });
+    createForm.addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(createForm); show(createStatus, '正在建立案卷并检索候选法律依据。'); try { const run = await request('/api/appeal/runs', {method: 'POST', body: JSON.stringify(Object.fromEntries(form.entries()))}); history.replaceState(null, '', `/appeal-simulation?run_id=${encodeURIComponent(run.id)}`); show(createStatus, '上诉模拟已建立。'); workbench.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch (error) { show(createStatus, error.message, true); } });
     turnForm.addEventListener('submit', async (event) => { event.preventDefault(); if (!currentRun || currentRun.status === 'completed') return; show(turnStatus, '正在核验角色边界、案卷引用和法律依据。'); try { await request(`/api/appeal/runs/${currentRun.id}/advance`, {method: 'POST', body: JSON.stringify({content: document.getElementById('appeal-turn-content').value, issue_ids: selected('appeal_issue'), record_ids: selected('appeal_record'), authority_ids: selected('appeal_authority')})}); document.getElementById('appeal-turn-content').value = ''; show(turnStatus, '本阶段已完成。'); } catch (error) { show(turnStatus, error.message, true); } });
+    const savedRunId = new URLSearchParams(window.location.search).get('run_id');
+    if (savedRunId) {
+        show(createStatus, '正在恢复上诉模拟。');
+        request(`/api/appeal/runs/${encodeURIComponent(savedRunId)}`)
+            .then(() => show(createStatus, '上诉模拟已恢复。'))
+            .catch((error) => show(createStatus, error.message, true));
+    }
 })();
 </script>
 {% endblock %}

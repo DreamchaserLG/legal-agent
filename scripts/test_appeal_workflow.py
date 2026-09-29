@@ -387,6 +387,8 @@ class AppealWorkflowTests(unittest.TestCase):
         environment.get_template("appeal.html")
         self.assertIn("安大略民事上诉模拟", source)
         self.assertIn("/api/appeal/runs", source)
+        self.assertIn("new URLSearchParams(window.location.search).get('run_id')", source)
+        self.assertIn("/api/appeal/runs/${encodeURIComponent(savedRunId)}", source)
         self.assertNotIn("胜诉概率", source)
 
     def test_api_requires_authentication_before_service_call(self):

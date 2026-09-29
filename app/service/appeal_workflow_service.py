@@ -686,6 +686,8 @@ def advance_appeal_run(run_id: str, payload: AppealAdvanceInput, *, user_id: int
         content = f"案卷审查完成：识别 {len(state['issues'])} 项上诉问题、{len(state['record'])} 项案卷记录和 {len(state['authorities'])} 项候选法律依据。预期审查标准：{', '.join(standards)}。"
         state["messages"].append({"message_id": str(uuid4()), "stage": stage, "speaker_role": "court_clerk", "content": content, "kind": "review", "warnings": warnings, "created_at": _now()})
         _trace(state, "court_clerk", "record_read", started, notes=warnings)
+        if state["authorities"]:
+            _trace(state, "court_clerk", "authority_read", started, notes=[f"authorities={len(state['authorities'])}"])
     elif stage == "panel_report":
         started = time.monotonic()
         _assert_tool("evaluation_service", "build_report")
@@ -702,6 +704,10 @@ def advance_appeal_run(run_id: str, payload: AppealAdvanceInput, *, user_id: int
         else:
             turn = _generate_agent_turn(state, stage, role)
             source = "agent"
+        if turn.record_ids or role == "judge_panel":
+            _trace(state, role, "record_read", started, notes=[f"records={len(turn.record_ids)}", f"stage={stage}"])
+        if turn.authority_ids or (role == "judge_panel" and state["authorities"]):
+            _trace(state, role, "authority_read", started, notes=[f"authorities={len(turn.authority_ids)}", f"stage={stage}"])
         verification_started = time.monotonic()
         verification = _validate_turn(state, stage, turn)
         _trace(state, "verification_service", "reference_validation", verification_started, notes=[f"claims={len(turn.claims)}", "invalid_references=0"])

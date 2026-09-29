@@ -33,6 +33,17 @@ def init_sqlite_tables():
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """,
+        # 用户扩展资料表；认证服务会在注册时同步写入。
+        """
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            real_name TEXT NOT NULL DEFAULT '',
+            country_preference TEXT NOT NULL DEFAULT '',
+            legal_type_preference TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '',
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
         # 案例表
         """
         CREATE TABLE IF NOT EXISTS legal_cases (
