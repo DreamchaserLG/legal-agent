@@ -7,12 +7,13 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.service.common_service import repair_text
 from app.service.hybrid_retrieval_service import hybrid_search
+from app.service.legal_research_tool_service import execute_research_tool
 from app.service.module_service import normalize_module
 from app.service.skill_collaboration_service import SkillCollaborationRequest, run_skill_collaboration
 from app.service.skill_runtime_service import list_legal_skills, run_legal_skill
 
 
-MCP_TOOL_VERSION = "local-readonly-1.0"
+MCP_TOOL_VERSION = "local-readonly-1.1"
 
 
 class MCPToolCall(BaseModel):
@@ -21,6 +22,11 @@ class MCPToolCall(BaseModel):
         "legal_authority_links",
         "legal_citation_verify",
         "legal_skill_collaboration",
+        "legal_case_law_search",
+        "legal_statute_search",
+        "legal_graph_search",
+        "legal_approved_web_search",
+        "legal_source_snapshot",
     ]
     query: str = Field(min_length=1, max_length=20000)
     module: str = "canada"
@@ -90,6 +96,31 @@ def list_mcp_tools() -> dict[str, Any]:
                 "description": "运行受预算、ACL 和 Skill 白名单约束的本地法律研究协作链。",
                 "required_context": ["tenant_id", "case_acl"],
             },
+            {
+                "name": "legal_case_law_search",
+                "description": "检索本地案例并返回可加入共享证据池的标准化资料。",
+                "required_context": ["tenant_id", "case_acl"],
+            },
+            {
+                "name": "legal_statute_search",
+                "description": "检索本地法规并返回引用、效力状态和来源元数据。",
+                "required_context": ["tenant_id", "case_acl"],
+            },
+            {
+                "name": "legal_graph_search",
+                "description": "沿案例、法规和法律争点关系进行最多两跳的可追溯图检索。",
+                "required_context": ["tenant_id", "case_acl"],
+            },
+            {
+                "name": "legal_approved_web_search",
+                "description": "只读检索 CanLII 等批准的公开法律来源。",
+                "required_context": ["tenant_id", "case_acl"],
+            },
+            {
+                "name": "legal_source_snapshot",
+                "description": "抓取批准域名下的 HTTPS 法律页面快照并计算内容哈希。",
+                "required_context": ["tenant_id", "case_acl"],
+            },
         ],
         "available_skills": list_legal_skills(),
         "limitations": [
@@ -124,6 +155,26 @@ def call_readonly_mcp_tool(call: MCPToolCall, *, user_id: int | None, tenant_id:
         result = _apply_acl_to_skill_result(
             run_legal_skill("evidence_verification", call.query, filters=filters, limit=call.limit),
             call.case_acl,
+        )
+    elif call.tool_name in {
+        "legal_case_law_search", "legal_statute_search", "legal_graph_search",
+        "legal_approved_web_search", "legal_source_snapshot",
+    }:
+        mapped_tool = {
+            "legal_case_law_search": "search_case_law",
+            "legal_statute_search": "search_statute",
+            "legal_graph_search": "search_legal_graph",
+            "legal_approved_web_search": "search_approved_web",
+            "legal_source_snapshot": "fetch_source_snapshot",
+        }[call.tool_name]
+        result = execute_research_tool(
+            agent="advocate_agent",
+            tool_name=mapped_tool,
+            query=call.query,
+            module=module,
+            filters=filters,
+            case_acl=call.case_acl,
+            limit=call.limit,
         )
     else:
         result = run_skill_collaboration(

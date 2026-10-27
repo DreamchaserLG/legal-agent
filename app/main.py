@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.routes import router
 from app.core.config import settings
@@ -12,19 +13,32 @@ from app.core.database import is_sqlite
 from app.service.archive_service import bootstrap_database_from_archive, ensure_archive_directories
 from app.service.ingestion_task_service import ensure_ingestion_tables
 from app.service.legal_data_service import ensure_legal_data_tables, schedule_canada_legal_data_sync, sync_canada_legal_data
+from app.service.legal_graph_rag_service import ensure_legal_graph_tables
 from app.service.module_service import ensure_module_support_tables
 from app.service.multi_agent_service import ensure_multi_agent_tables
+from app.service.legal_agent_runtime_service import (
+    ensure_legal_agent_runtime_tables,
+    schedule_legal_agent_worker,
+    stop_legal_agent_worker,
+)
 from app.service.skill_collaboration_service import ensure_skill_collaboration_tables
 from app.service.hearing_workflow_service import ensure_hearing_workflow_tables
 from app.service.appeal_workflow_service import ensure_appeal_workflow_tables
 from app.service.civil_trial_workflow_service import ensure_civil_trial_tables
 from app.service.risk_assessment_service import ensure_risk_assessment_tables
 from app.service.user_service import ensure_user_tables
+from app.service.user_preference_service import ensure_user_preference_tables
 from app.service.vector_store_service import ensure_vector_tables
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title=settings.app_name)
+app = FastAPI(
+    title=settings.app_name,
+    docs_url="/docs" if settings.api_docs_enabled else None,
+    redoc_url="/redoc" if settings.api_docs_enabled else None,
+    openapi_url="/openapi.json" if settings.api_docs_enabled else None,
+)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret,
@@ -66,6 +80,16 @@ def on_startup():
         ensure_appeal_workflow_tables()
         ensure_civil_trial_tables()
 
+    # 中国民事一审 v2 独立于旧 Ontario 流程，SQLite/PostgreSQL 均需初始化。
+
+    # 用户偏好是独立的数据库能力，不属于任何 Agent 上下文。
+    ensure_user_preference_tables()
+
+    # 交互式人机审理同时兼容 SQLite 与 PostgreSQL，并复用 multi_agent_runs。
+    ensure_legal_agent_runtime_tables()
+    ensure_legal_graph_tables()
+    schedule_legal_agent_worker()
+
     ensure_archive_directories()
     if settings.archive_bootstrap_enabled:
         bootstrap_database_from_archive()
@@ -76,6 +100,11 @@ def on_startup():
             sync_canada_legal_data(force=False)
         elif startup_sync_mode == "background":
             schedule_canada_legal_data_sync(force=False)
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    stop_legal_agent_worker()
 
 
 @app.get("/health")

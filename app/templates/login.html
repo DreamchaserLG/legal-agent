@@ -1,29 +1,181 @@
 {% extends "base.html" %}
 
-{% block title %}{{ app_name }} | 登录{% endblock %}
+{% block title %}{{ app_name }} | {{ tr('auth.login.page_title') }}{% endblock %}
 
 {% block content %}
-<section class="band auth-shell">
-    <div class="shell auth-grid">
-        <div class="hero-copy">
-            <p class="eyebrow">Sign In</p>
-            <h1>登录后保存案件历史，并恢复上次访问</h1>
-            <p class="hero-text">登录后，检索、分析和预测结果都会写入历史记录；会话未失效前，刷新页面仍可继续使用。</p>
-        </div>
-        <form class="tool-panel" method="post" action="/auth/login">
+<section class="auth-shell auth-login-shell">
+    <div class="shell auth-grid auth-login-grid">
+        <section class="auth-visual" aria-labelledby="auth-hero-title">
+            <p class="eyebrow">{{ tr('auth.login.kicker') }}</p>
+            <h1 id="auth-hero-title">{{ tr('auth.login.hero_title') }}</h1>
+            <p class="hero-text">{{ tr('auth.login.hero_body') }}</p>
+            <ul class="auth-assurance-list" aria-label="{{ tr('auth.login.kicker') }}">
+                <li><span aria-hidden="true">01</span>{{ tr('auth.login.hero_point1') }}</li>
+                <li><span aria-hidden="true">02</span>{{ tr('auth.login.hero_point2') }}</li>
+                <li><span aria-hidden="true">03</span>{{ tr('auth.login.hero_point3') }}</li>
+            </ul>
+        </section>
+
+        <form class="tool-panel auth-card auth-login-card" method="post" action="/auth/login" data-auth-form novalidate>
             <input type="hidden" name="next" value="{{ next_url or '/' }}" />
-            <label for="login">用户名或邮箱</label>
-            <input id="login" name="login" type="text" value="{{ login_value or '' }}" required />
-            <label for="password">密码</label>
-            <input id="password" name="password" type="password" required />
-            {% if auth_error %}
-            <p class="notice-text">{{ auth_error }}</p>
-            {% endif %}
-            <div class="action-row">
-                <button type="submit">登录</button>
-                <a class="pager-link secondary" href="/register{% if next_url %}?next={{ next_url|urlencode }}{% endif %}">去注册</a>
+            <input type="hidden" name="challenge_id" value="{{ login_challenge.id }}" data-challenge-id />
+
+            <header class="auth-card-head">
+                <span class="auth-card-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg>
+                </span>
+                <div>
+                    <p class="panel-kicker">{{ tr('auth.login.card_kicker') }}</p>
+                    <h2>{{ tr('auth.login.card_title') }}</h2>
+                    <p>{{ tr('auth.login.card_body') }}</p>
+                </div>
+            </header>
+
+            <div class="auth-field" data-field="login">
+                <label for="login">{{ tr('auth.login.identity') }}</label>
+                <input id="login" name="login" type="text" value="{{ login_value or '' }}"
+                       minlength="2" maxlength="254" autocomplete="username" autocapitalize="none"
+                       spellcheck="false" placeholder="{{ tr('auth.login.identity_placeholder') }}"
+                       aria-describedby="login-error" required autofocus />
+                <p class="auth-field-error" id="login-error" data-field-error hidden></p>
             </div>
+
+            <div class="auth-field" data-field="password">
+                <label for="password">{{ tr('auth.login.password') }}</label>
+                <div class="auth-password-control">
+                    <input id="password" name="password" type="password" minlength="6" maxlength="128"
+                           autocomplete="current-password" placeholder="{{ tr('auth.login.password_placeholder') }}"
+                           aria-describedby="password-error" required />
+                    <button type="button" class="auth-password-toggle" data-password-toggle
+                            aria-label="{{ tr('auth.login.show_password') }}"
+                            data-show-label="{{ tr('auth.login.show_password') }}"
+                            data-hide-label="{{ tr('auth.login.hide_password') }}">
+                        <svg class="auth-eye-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                        <svg class="auth-eye-closed" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 6.2A10.8 10.8 0 0 1 12 6c6 0 9.5 6 9.5 6a15.7 15.7 0 0 1-2.3 2.9M6.2 6.2C3.8 8 2.5 12 2.5 12s3.5 6 9.5 6c1.6 0 3-.4 4.2-1"/></svg>
+                    </button>
+                </div>
+                <p class="auth-field-error" id="password-error" data-field-error hidden></p>
+            </div>
+
+            <fieldset class="auth-verification" data-field="challenge_answer">
+                <legend>{{ tr('auth.login.verification') }}</legend>
+                <div class="auth-verification-row">
+                    <output class="auth-challenge-prompt" data-challenge-prompt>{{ login_challenge.prompt }}</output>
+                    <input id="challenge-answer" name="challenge_answer" type="text" inputmode="numeric"
+                           maxlength="3" pattern="-?[0-9]+" autocomplete="off"
+                           placeholder="{{ tr('auth.login.verification_placeholder') }}"
+                           aria-describedby="challenge-help challenge-error" required />
+                    <button type="button" class="auth-challenge-refresh" data-challenge-refresh>{{ tr('auth.login.refresh') }}</button>
+                </div>
+                <p class="auth-field-help" id="challenge-help">{{ tr('auth.login.verification_help') }}</p>
+                <p class="auth-field-error" id="challenge-error" data-field-error hidden></p>
+            </fieldset>
+
+            {% if auth_error %}
+            <div class="auth-alert" role="alert" aria-live="assertive">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 17h.01"/></svg>
+                <span>{{ auth_error }}</span>
+            </div>
+            {% endif %}
+
+            <button class="auth-submit" type="submit" data-submit
+                    data-loading-label="{{ tr('auth.login.submitting') }}">{{ tr('auth.login.submit') }}</button>
+
+            <div class="auth-card-footer">
+                <span>{{ tr('auth.login.no_account') }}</span>
+                <a href="/register{% if next_url %}?next={{ next_url|urlencode }}{% endif %}">{{ tr('auth.login.create_account') }}</a>
+            </div>
+            <p class="auth-privacy-note">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.7 2.9 8.3 7 10 4.1-1.7 7-5.3 7-10V6l-7-3z"/><path d="m9 12 2 2 4-4"/></svg>
+                {{ tr('auth.login.privacy') }}
+            </p>
         </form>
     </div>
 </section>
+
+<script>
+(() => {
+    const form = document.querySelector('[data-auth-form]');
+    if (!form) return;
+    const messages = {
+        identityRequired: {{ tr('auth.validation.identity_required') | tojson }},
+        identityShort: {{ tr('auth.validation.identity_short') | tojson }},
+        passwordRequired: {{ tr('auth.validation.password_required') | tojson }},
+        passwordShort: {{ tr('auth.validation.password_short') | tojson }},
+        challengeRequired: {{ tr('auth.validation.challenge_required') | tojson }},
+        challengeUnavailable: {{ tr('auth.validation.challenge_unavailable') | tojson }},
+    };
+
+    function setFieldError(name, message) {
+        const host = form.querySelector(`[data-field="${name}"]`);
+        const input = form.elements.namedItem(name);
+        const error = host?.querySelector('[data-field-error]');
+        host?.classList.toggle('is-invalid', Boolean(message));
+        if (input) input.setAttribute('aria-invalid', message ? 'true' : 'false');
+        if (error) {
+            error.textContent = message || '';
+            error.hidden = !message;
+        }
+    }
+
+    ['login', 'password', 'challenge_answer'].forEach((name) => {
+        form.elements.namedItem(name)?.addEventListener('input', () => setFieldError(name, ''));
+    });
+
+    const password = form.elements.namedItem('password');
+    const passwordToggle = form.querySelector('[data-password-toggle]');
+    passwordToggle?.addEventListener('click', () => {
+        const showing = password.type === 'text';
+        password.type = showing ? 'password' : 'text';
+        passwordToggle.classList.toggle('is-showing', !showing);
+        passwordToggle.setAttribute('aria-label', showing ? passwordToggle.dataset.showLabel : passwordToggle.dataset.hideLabel);
+    });
+
+    form.querySelector('[data-challenge-refresh]')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+            const response = await fetch('/api/auth/login-challenge', {credentials: 'same-origin', cache: 'no-store'});
+            if (!response.ok) throw new Error('challenge');
+            const challenge = await response.json();
+            form.querySelector('[data-challenge-id]').value = challenge.id;
+            form.querySelector('[data-challenge-prompt]').textContent = challenge.prompt;
+            form.elements.namedItem('challenge_answer').value = '';
+            setFieldError('challenge_answer', '');
+            form.elements.namedItem('challenge_answer').focus();
+        } catch (error) {
+            setFieldError('challenge_answer', messages.challengeUnavailable);
+        } finally {
+            button.disabled = false;
+        }
+    });
+
+    form.addEventListener('submit', (event) => {
+        const identity = String(form.elements.namedItem('login').value || '').trim();
+        const passwordValue = String(password.value || '');
+        const answer = String(form.elements.namedItem('challenge_answer').value || '').trim();
+        let valid = true;
+
+        if (!identity) { setFieldError('login', messages.identityRequired); valid = false; }
+        else if (identity.length < 2) { setFieldError('login', messages.identityShort); valid = false; }
+        else setFieldError('login', '');
+
+        if (!passwordValue) { setFieldError('password', messages.passwordRequired); valid = false; }
+        else if (passwordValue.length < 6) { setFieldError('password', messages.passwordShort); valid = false; }
+        else setFieldError('password', '');
+
+        if (!answer) { setFieldError('challenge_answer', messages.challengeRequired); valid = false; }
+        else setFieldError('challenge_answer', '');
+
+        if (!valid) {
+            event.preventDefault();
+            form.querySelector('[aria-invalid="true"]')?.focus();
+            return;
+        }
+        const submit = form.querySelector('[data-submit]');
+        submit.disabled = true;
+        submit.textContent = submit.dataset.loadingLabel;
+    });
+})();
+</script>
 {% endblock %}

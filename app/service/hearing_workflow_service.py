@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
 from app.core.database import engine, is_sqlite
@@ -16,27 +17,40 @@ from app.core.config import settings
 from app.service.common_service import repair_text
 from app.service.hybrid_retrieval_service import hybrid_search
 from app.service.llm_service import LLMServiceError, create_structured_response, is_llm_configured
-from app.service.module_service import normalize_module
+from app.service.legal_safety_service import (
+    build_role_instruction,
+    enforce_grounded_legal_text,
+    find_role_repetition,
+)
 from app.service.multi_agent_service import assert_agent_tool
+from app.service.rag_service import rag_search
 
 
-WORKFLOW_VERSION = "hearing-simulation-2.0"
-HEARING_STAGES = ["庭前准备", "开庭陈述", "举证质证", "法庭辩论", "法官总结与评议", "状态评估与检索", "胜诉概率报告"]
-HEARING_ROLES = {"我方代理人", "对方代理人", "审判长", "书记员", "系统"}
+WORKFLOW_VERSION = "canadian-hearing-simulation-3.0"
+HEARING_STAGES = [
+    "Pre-Hearing Preparation",
+    "Opening Statements",
+    "Evidence Examination",
+    "Legal Arguments",
+    "Judicial Questions and Summary",
+    "Record and Authority Review",
+    "Final Training Report",
+]
+HEARING_ROLES = {"User Counsel", "Opposing Counsel", "Presiding Judge", "Court Clerk", "System"}
 STAGE_FOCUS = {
-    "庭前准备": "明确争议焦点、证据清单、程序时点和检索范围。",
-    "开庭陈述": "围绕请求事项、争点事实和证明责任作开场陈述。",
-    "举证质证": "逐项审查证据真实性、合法性、关联性与证明力。",
-    "法庭辩论": "围绕法律要件、事实适用和类案差异展开辩论。",
-    "法官总结与评议": "归纳已确认和未确认事实，核查程序与举证缺口。",
-    "状态评估与检索": "复核风险、类案支持、法规时效与优化动作。",
-    "胜诉概率报告": "仅汇总已完成阶段的规则评分、引用和免责声明。",
+    "Pre-Hearing Preparation": "Define the issues, exhibit list, procedural timeline, jurisdiction, and research scope.",
+    "Opening Statements": "State the requested relief, material facts, theory of the case, and applicable burdens.",
+    "Evidence Examination": "Examine authenticity, admissibility, relevance, weight, and the evidentiary foundation of each item.",
+    "Legal Arguments": "Apply verified Canadian authorities to the facts and distinguish adverse authorities.",
+    "Judicial Questions and Summary": "Answer neutral judicial questions and identify admitted, disputed, and unproven propositions.",
+    "Record and Authority Review": "Audit the record, citation currency, authority hierarchy, and remaining verification gaps.",
+    "Final Training Report": "Summarize completed stages, traceable sources, safety gates, and training feedback only.",
 }
 
 HEARING_REPLY_SCHEMA = {
     "type": "object",
     "properties": {
-        "speaker": {"type": "string", "enum": ["对方代理人", "审判长"]},
+        "speaker": {"type": "string", "enum": ["Opposing Counsel", "Presiding Judge"]},
         "content": {"type": "string"},
         "disputed_issue": {"type": "string"},
         "cited_evidence_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
@@ -55,6 +69,13 @@ class HearingRunCreate(BaseModel):
     case_acl: list[str] = Field(default_factory=list, max_length=500)
     jurisdiction: str = ""
 
+    @field_validator("case_summary", "jurisdiction")
+    @classmethod
+    def require_english_input(cls, value: str) -> str:
+        if re.search(r"[\u3400-\u9fff]", value or ""):
+            raise ValueError("The Canadian hearing workflow accepts English input only.")
+        return value
+
 
 class HearingTurnInput(BaseModel):
     content: str = Field(min_length=2, max_length=12000)
@@ -63,9 +84,16 @@ class HearingTurnInput(BaseModel):
     legal_basis_ids: list[str] = Field(default_factory=list, max_length=12)
     omission_basis: str = Field(default="", max_length=1200)
 
+    @field_validator("content", "omission_basis")
+    @classmethod
+    def require_english_input(cls, value: str) -> str:
+        if re.search(r"[\u3400-\u9fff]", value or ""):
+            raise ValueError("The Canadian hearing workflow accepts English submissions only.")
+        return value
+
 
 class SimulatedReply(BaseModel):
-    speaker: Literal["对方代理人", "审判长"]
+    speaker: Literal["Opposing Counsel", "Presiding Judge"]
     content: str = Field(min_length=1, max_length=3000)
     disputed_issue: str = Field(default="", max_length=600)
     cited_evidence_ids: list[str] = Field(default_factory=list, max_length=3)
@@ -81,11 +109,11 @@ def _now() -> str:
 def _stage_template(stage: str, evidence: list[dict[str, Any]], laws: list[dict[str, Any]]) -> dict[str, Any]:
     evidence_ids = [item["doc_id"] for item in evidence[:3]]
     law_ids = [item["doc_id"] for item in laws[:3]]
-    pending = [] if law_ids else ["未检索到可核验的法规依据，请补充法条编号或调整案情描述。"]
+    pending = [] if law_ids else ["No verifiable Canadian authority was retrieved. Refine the facts or research query; do not guess a citation."]
     return {
         "stage": stage,
         "status": "active" if stage == HEARING_STAGES[0] else "pending",
-        "participants": ["我方代理人", "对方代理人", "审判长"],
+        "participants": ["User Counsel", "Opposing Counsel", "Presiding Judge"],
         "focus": STAGE_FOCUS[stage],
         "disputed_issues": [],
         "facts": [],
@@ -104,25 +132,25 @@ def _stage_template(stage: str, evidence: list[dict[str, Any]], laws: list[dict[
 
 
 def _normalize_legacy_state(state: dict[str, Any]) -> dict[str, Any]:
-    """Adapt persisted v1 hearing runs without changing their stored schema or deleting data."""
+    """Upgrade earlier Chinese-keyed hearing records into the English Canadian workflow."""
     if state.get("workflow_version") == WORKFLOW_VERSION:
         return state
     legacy = state.get("stages") or {}
     evidence = state.get("evidence_catalog") or []
     laws = [item for item in evidence if item.get("source_kind") == "law"]
-    stage_map = {
-        "庭前准备": "庭前准备",
-        "开庭陈述": "法庭调查",
-        "举证质证": "举证质证",
-        "法庭辩论": "法庭辩论",
-        "法官总结与评议": "最后陈述",
-        "状态评估与检索": None,
-        "胜诉概率报告": "裁判预测",
+    stage_aliases = {
+        "Pre-Hearing Preparation": ["Pre-Hearing Preparation", "庭前准备"],
+        "Opening Statements": ["Opening Statements", "开庭陈述", "法庭调查"],
+        "Evidence Examination": ["Evidence Examination", "举证质证"],
+        "Legal Arguments": ["Legal Arguments", "法庭辩论"],
+        "Judicial Questions and Summary": ["Judicial Questions and Summary", "法官总结与评议", "最后陈述"],
+        "Record and Authority Review": ["Record and Authority Review", "状态评估与检索"],
+        "Final Training Report": ["Final Training Report", "胜诉概率报告", "裁判预测"],
     }
     upgraded = {}
     for stage in HEARING_STAGES:
         template = _stage_template(stage, evidence, laws)
-        previous = legacy.get(stage_map[stage]) if stage_map[stage] else None
+        previous = next((legacy.get(alias) for alias in stage_aliases[stage] if legacy.get(alias)), None)
         if previous:
             template.update({key: value for key, value in previous.items() if key in template})
             template["focus"] = STAGE_FOCUS[stage]
@@ -131,10 +159,7 @@ def _normalize_legacy_state(state: dict[str, Any]) -> dict[str, Any]:
             template.setdefault("risks", [])
         upgraded[stage] = template
     old_index = int(state.get("active_stage_index") or 0)
-    old_stage = ["庭前准备", "法庭调查", "举证质证", "法庭辩论", "最后陈述", "裁判预测"]
-    active_name = old_stage[min(old_index, len(old_stage) - 1)]
-    reverse_map = {value: key for key, value in stage_map.items() if value}
-    state["active_stage_index"] = HEARING_STAGES.index(reverse_map.get(active_name, "庭前准备"))
+    state["active_stage_index"] = min(max(old_index, 0), len(HEARING_STAGES) - 1)
     state["stages"] = upgraded
     state["workflow_version"] = WORKFLOW_VERSION
     state.setdefault("agent_trace", [])
@@ -188,10 +213,21 @@ def ensure_hearing_workflow_tables() -> None:
             conn.execute(text(statement))
 
 
-def _evidence_from_search(query: str, module: str, case_acl: list[str]) -> list[dict[str, Any]]:
+def _evidence_from_search(query: str, module: str, case_acl: list[str], jurisdiction: str = "") -> list[dict[str, Any]]:
+    filters = {"jurisdiction": repair_text(jurisdiction)} if repair_text(jurisdiction) else {}
+
+    def search(source_filter: str, limit: int) -> dict[str, Any]:
+        try:
+            return hybrid_search(query, module=module, source_filter=source_filter, limit=limit, filters=filters)
+        except Exception as exc:
+            result = rag_search(query, module=module, source_filter=source_filter, limit=limit, filters=filters)
+            result["fallback_reason"] = f"hybrid_search_unavailable: {type(exc).__name__}"
+            result["strategy"] = "lexical_fallback"
+            return result
+
     with ThreadPoolExecutor(max_workers=2) as executor:
-        case_future = executor.submit(hybrid_search, query, module=module, source_filter="case", limit=6, filters={})
-        law_future = executor.submit(hybrid_search, query, module=module, source_filter="law", limit=4, filters={})
+        case_future = executor.submit(search, "case", 6)
+        law_future = executor.submit(search, "law", 4)
         results = [case_future.result(), law_future.result()]
     output = []
     allowed = {repair_text(item) for item in case_acl if repair_text(item)}
@@ -205,7 +241,7 @@ def _evidence_from_search(query: str, module: str, case_acl: list[str]) -> list[
             output.append(
                 {
                     "doc_id": doc_id,
-                    "title": repair_text(item.get("title")) or "未命名资料",
+                    "title": repair_text(item.get("title")) or "Untitled source",
                     "citation": repair_text(item.get("citation") or metadata.get("citation")),
                     "source_kind": repair_text(item.get("source_kind")) or "unknown",
                     "source_url": repair_text(item.get("source_url")),
@@ -250,7 +286,7 @@ def _checkpoint(state: dict[str, Any], tenant_id: str) -> None:
             conn.execute(text("""INSERT INTO hearing_checkpoints (id, run_id, stage, version, state_json, created_at) VALUES (:id,:run_id,:stage,:version,:state,:now)"""), params)
         else:
             conn.execute(text("""INSERT INTO hearing_checkpoints (id, run_id, stage, version, state_json, created_at) VALUES (CAST(:id AS uuid),CAST(:run_id AS uuid),:stage,:version,CAST(:state AS jsonb),:now)"""), params)
-    state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "系统", "kind": "checkpoint", "content": f"{stage}已保存检查点 v{version}。", "created_at": _now()})
+    state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "System", "kind": "checkpoint", "content": f"Checkpoint v{version} saved for {stage}.", "created_at": _now()})
 
 
 def _load_run(run_id: str, tenant_id: str) -> dict[str, Any]:
@@ -259,7 +295,7 @@ def _load_run(run_id: str, tenant_id: str) -> dict[str, Any]:
     with engine.connect() as conn:
         row = conn.execute(text(sql), {"id": run_id, "tenant": tenant_id}).mappings().first()
     if not row:
-        raise LookupError("未找到庭审模拟记录或无权访问。")
+        raise LookupError("The hearing simulation was not found or access is not permitted.")
     value = row["state_json"]
     state = json.loads(value) if isinstance(value, str) else dict(value)
     return _normalize_legacy_state(state)
@@ -283,30 +319,73 @@ def _allowed_ids(state: dict[str, Any]) -> set[str]:
     return {item["doc_id"] for item in state.get("evidence_catalog") or []}
 
 
-def _simulate_reply(state: dict[str, Any], stage: str) -> SimulatedReply:
+def _role_fallback_content(role: Literal["Opposing Counsel", "Presiding Judge"], stage: str) -> str:
+    if role == "Presiding Judge":
+        return f"The Court asks counsel to address the following focus: {STAGE_FOCUS.get(stage, stage)} Identify the record references and any matter that remains unverified."
+    return "Opposing counsel disputes propositions that are not tied to the record. Identify the evidence for each required element, alleged loss, and causal link."
+
+
+def _guard_simulated_reply(
+    state: dict[str, Any],
+    reply: SimulatedReply,
+    role: Literal["Opposing Counsel", "Presiding Judge"],
+    stage: str,
+) -> SimulatedReply:
+    catalog = list(state.get("evidence_catalog") or [])
+    allowed_ids = {item["doc_id"] for item in catalog}
+    law_ids = {item["doc_id"] for item in catalog if item.get("source_kind") == "law"}
+    evidence_refs = [item for item in reply.cited_evidence_ids if item in allowed_ids]
+    legal_refs = [item for item in reply.legal_basis_ids if item in law_ids]
+    grounded = enforce_grounded_legal_text(reply.content, catalog)
+    content = grounded["safe_text"]
+    repetition = find_role_repetition(content, state.get("messages") or [], speaker=role)
+    pending = list(reply.pending_verifications)
+    if grounded["blocked_count"]:
+        pending.append(f"Blocked {grounded['blocked_count']} legal citation(s) not supported by the retrieved sources.")
+    if repetition["repeated"]:
+        content = _role_fallback_content(role, stage)
+        pending.append(f"The draft matched earlier speech at {repetition['similarity']:.2f} similarity and was rewritten for this role.")
+    if re.search(r"[\u3400-\u9fff]", content):
+        content = _role_fallback_content(role, stage)
+        pending.append("A non-English draft was blocked and replaced with role-specific English training copy.")
+    return reply.model_copy(
+        update={
+            "speaker": role,
+            "content": content,
+            "cited_evidence_ids": evidence_refs,
+            "legal_basis_ids": legal_refs,
+            "pending_verifications": list(dict.fromkeys(pending))[:3],
+        }
+    )
+
+
+def _simulate_reply(
+    state: dict[str, Any],
+    stage: str,
+    role: Literal["Opposing Counsel", "Presiding Judge"] = "Opposing Counsel",
+) -> SimulatedReply:
     current = state["stages"][stage]
     allowed_ids = _allowed_ids(state)
     evidence = [item for item in state["evidence_catalog"] if item["doc_id"] in current["evidence_ids"]][:3]
     compact_evidence = [{"id": item["doc_id"], "title": item["title"], "citation": item["citation"], "kind": item["source_kind"]} for item in evidence]
-    instructions = (
-        "你是加拿大法律庭审模拟中的对方代理人或审判长。只能提出模拟性问题或抗辩，不代表真实当事人。"
-        "不得创建事实、法律依据或证据 ID；只能使用提供的候选 ID。输出中文 JSON，内容简洁，指出待验证事项。"
+    role_key = "judge" if role == "Presiding Judge" else "opposing_counsel"
+    instructions = build_role_instruction(
+        role_key,
+        "This is a Canadian civil-hearing training simulation. Ask a focused question or advance a simulated response; do not represent a real party. "
+        "Do not create facts, authorities, or evidence IDs. Use only candidate IDs supplied in the input. Return concise English JSON and identify verification gaps. ",
     )
-    user_input = json.dumps({"stage": stage, "case_summary": state["case_summary"][:3000], "our_latest": current["our_responses"][-1:] or current["facts"][-1:], "candidate_evidence": compact_evidence}, ensure_ascii=False)
+    user_input = json.dumps({"required_speaker": role, "stage": stage, "case_summary": state["case_summary"][:3000], "our_latest": current["our_responses"][-1:] or current["facts"][-1:], "candidate_evidence": compact_evidence}, ensure_ascii=False)
     if is_llm_configured():
         try:
             raw = create_structured_response("hearing_simulated_reply_v1", HEARING_REPLY_SCHEMA, instructions, user_input)
             reply = SimulatedReply.model_validate(raw["data"])
-            reply.cited_evidence_ids = [item for item in reply.cited_evidence_ids if item in allowed_ids]
-            reply.legal_basis_ids = [item for item in reply.legal_basis_ids if item in allowed_ids]
-            return reply
+            return _guard_simulated_reply(state, reply, role, stage)
         except (LLMServiceError, ValueError):
             pass
     evidence_ids = [item["doc_id"] for item in evidence[:1]]
     law_ids = [item["doc_id"] for item in evidence if item["source_kind"] == "law"][:1]
-    speaker = "审判长" if stage in {"法庭调查", "举证质证", "最后陈述"} else "对方代理人"
-    content = "请明确说明该主张对应的事实来源、证据形成时间及与争议焦点的直接关系。" if speaker == "审判长" else "模拟抗辩：现有陈述仍需以可核验材料证明关键构成要件及损失因果关系。"
-    return SimulatedReply(speaker=speaker, content=content, disputed_issue="关键事实、证据关联性与法律要件尚待核验。", cited_evidence_ids=evidence_ids, legal_basis_ids=law_ids, pending_verifications=["该发言为规则化模拟，须由律师根据原始材料核验。"], confidence=0.35)
+    reply = SimulatedReply(speaker=role, content=_role_fallback_content(role, stage), disputed_issue="The material facts, evidentiary nexus, and applicable legal elements remain to be verified.", cited_evidence_ids=evidence_ids, legal_basis_ids=law_ids, pending_verifications=["This is deterministic training copy and must be checked against the original record by Canadian counsel."], confidence=0.35)
+    return _guard_simulated_reply(state, reply, role, stage)
 
 
 def _refresh_stage_metrics(stage_state: dict[str, Any]) -> None:
@@ -321,12 +400,11 @@ def _refresh_stage_metrics(stage_state: dict[str, Any]) -> None:
 
 
 def _simulate_replies(state: dict[str, Any], stage: str) -> list[SimulatedReply]:
-    """在同一份受候选证据约束的上下文中生成对方代理人与审判长各一轮发言。"""
+    """Generate one role-distinct reply for opposing counsel and the presiding judge."""
     replies = []
-    for role, agent, tool in (("对方代理人", "opposing_counsel_agent", "authority_links"), ("审判长", "judge_agent", "evidence_verification")):
+    for role, agent, tool in (("Opposing Counsel", "opposing_counsel_agent", "authority_links"), ("Presiding Judge", "judge_agent", "evidence_verification")):
         started = time.monotonic()
-        reply = _simulate_reply(state, stage)
-        reply = reply.model_copy(update={"speaker": role})
+        reply = _simulate_reply(state, stage, role)
         _record_agent_step(state, agent, tool, started, notes=[f"stage={stage}", "simulated=true"])
         replies.append(reply)
     return replies
@@ -351,20 +429,20 @@ def _turn_risks(state: dict[str, Any], stage: str, content: str, stage_state: di
             "suggestion": suggestion,
             "confidence": confidence,
             "references": reference_payload,
-            "direct_authority_status": "已绑定候选依据" if reference_payload else "未检索到直接依据",
+            "direct_authority_status": "candidate_authority_attached" if reference_payload else "no_verified_direct_authority_retrieved",
         })
     if any(token in lowered for token in ("没签合同", "未签合同", "no contract", "without contract")):
-        add("实体风险", "高", "陈述显示缺少书面合同，法律关系和关键条款的证明可能不足。", "补充聊天记录、付款记录、履行记录、报价或其他可证明合意和履行的材料。", 0.82)
+        add("substantive", "high", "The submission indicates that no written contract is available, which may impair proof of the relationship and material terms.", "Add communications, payment records, performance records, quotations, or other evidence of agreement and performance.", 0.82)
     if any(token in lowered for token in ("微信截图", "截图", "screenshot", "screen shot")):
-        add("证据风险", "高", "截图的原始载体、生成方式和完整性尚未核验，对方可能质疑真实性。", "保留原始设备和原始文件，补充导出记录、时间线、公证或当庭演示方案。", 0.86)
+        add("evidence", "high", "The original device, method of capture, and completeness of the screenshot have not been verified.", "Preserve the original device and file, export metadata, establish a timeline, and prepare an authentication foundation.", 0.86)
     if any(token in lowered for token in ("投资款", "investment")) and any(token in lowered for token in ("借", "loan")):
-        add("实体风险", "高", "借款与投资款表述可能矛盾，影响事实一致性和款项性质认定。", "逐笔解释转账备注，并补充借贷合意、催收、利息或风险承担的证据。", 0.8)
+        add("substantive", "high", "Describing the funds as both a loan and an investment may create a material factual inconsistency.", "Explain each transfer and add evidence of repayment terms, demands, interest, or allocation of investment risk.", 0.8)
     if any(token in lowered for token in ("三年", "时效", "limitation", "limitation period")):
-        add("程序风险", "中", "陈述涉及潜在时效或期间问题，需要核验起算、中断和中止事实。", "补充知悉损害、送达、催收、确认债务或其他可能影响期限的日期证据。", 0.7)
+        add("procedure", "medium", "The submission raises a possible limitation-period issue; discoverability and any suspension or acknowledgment require verification.", "Add dated evidence concerning discovery, service, demands, acknowledgment, and any event that may affect the limitation analysis.", 0.7)
     if any(token in lowered for token in ("无财产", "没有财产", "履行能力", "资产", "asset", "insolvent")):
-        add("执行风险", "中", "陈述涉及履行能力或财产线索不足，胜诉后仍可能面临执行回收风险。", "补充可执行财产、账户、雇主、登记信息或保全可行性的线索，并由律师评估执行措施。", 0.68)
+        add("enforcement", "medium", "The record suggests limited information about assets or ability to satisfy a judgment.", "Identify assets, accounts, employment, registrations, and preservation options for review by Canadian counsel.", 0.68)
     if not stage_state.get("legal_basis_ids"):
-        add("实体风险", "高", "当前阶段未绑定可核验法律依据。", "通过本地法规检索补充现行有效的法条、条款和适用时点。", 0.9)
+        add("substantive", "high", "No verifiable Canadian legal authority is attached to this stage.", "Retrieve an in-force provision or controlling Canadian authority and verify its jurisdiction, date, and source.", 0.9)
     return risks
 
 
@@ -385,7 +463,7 @@ def _evaluate_turn(state: dict[str, Any], stage: str, content: str, stage_state:
     risks = _turn_risks(state, stage, content, stage_state)
     stage_state["risks"] = risks
     stage_state["evidence_assessments"] = [
-        {"doc_id": row["doc_id"], "authenticity": "待核验", "legality": "待核验", "relevance": "已由本地检索候选，需律师复核"}
+        {"doc_id": row["doc_id"], "authenticity": "unverified", "admissibility": "unverified", "relevance": "retrieval candidate requiring counsel review"}
         for row in _reference_rows(state, stage_state.get("evidence_ids") or [])
     ]
     _record_agent_step(state, "evaluation_agent", "risk_annotation", started, notes=[f"stage={stage}", f"risks={len(risks)}"])
@@ -397,28 +475,28 @@ def _stage_missing_v2(stage_state: dict[str, Any]) -> list[str]:
         return []
     missing = []
     if not stage_state.get("facts"):
-        missing.append("缺少我方事实或回应。")
+        missing.append("User counsel has not supplied facts or a response.")
     if not stage_state.get("evidence_ids"):
-        missing.append("未绑定证据。")
+        missing.append("No record evidence is attached.")
     if not stage_state.get("legal_basis_ids"):
-        missing.append("未绑定可核验法律依据。")
-    if stage_state["stage"] not in {"庭前准备", "胜诉概率报告"} and not stage_state.get("opponent_defences"):
-        missing.append("未生成对方抗辩或法官问话。")
+        missing.append("No verifiable Canadian authority is attached.")
+    if stage_state["stage"] not in {"Pre-Hearing Preparation", "Final Training Report"} and not stage_state.get("opponent_defences"):
+        missing.append("No opposing submission or judicial question has been recorded.")
     return missing
 
 
 def _stage_missing(stage_state: dict[str, Any]) -> list[str]:
     missing = []
     if not stage_state["facts"]:
-        missing.append("缺少我方输入的事实或回应。")
+        missing.append("User counsel has not supplied facts or a response.")
     if not stage_state["evidence_ids"]:
-        missing.append("未绑定证据。")
+        missing.append("No record evidence is attached.")
     if not stage_state["legal_basis_ids"]:
-        missing.append("未绑定可核验法律依据。")
-    if not stage_state["opponent_defences"] and stage_state["stage"] not in {"庭前准备", "裁判预测"}:
-        missing.append("尚未形成对方抗辩或法官问话。")
-    if not stage_state["our_responses"] and stage_state["stage"] not in {"庭前准备", "裁判预测"}:
-        missing.append("缺少我方对抗辩或问话的回应。")
+        missing.append("No verifiable Canadian authority is attached.")
+    if not stage_state["opponent_defences"] and stage_state["stage"] not in {"Pre-Hearing Preparation", "Final Training Report"}:
+        missing.append("No opposing submission or judicial question has been recorded.")
+    if not stage_state["our_responses"] and stage_state["stage"] not in {"Pre-Hearing Preparation", "Final Training Report"}:
+        missing.append("User counsel has not answered the opposing submission or judicial question.")
     return missing
 
 
@@ -431,26 +509,26 @@ def _aggregate(state: dict[str, Any]) -> dict[str, Any]:
     pending = [note for item in completed for note in item["pending_verifications"]]
     risks = []
     if evidence < 0.75:
-        risks.append({"node": "举证质证", "type": "证据风险", "reason": "证据覆盖不足，需补充原始材料、形成时间或保全链。", "action": "为每个待证事实绑定至少一项可核验证据。"})
+        risks.append({"node": "Evidence Examination", "type": "evidence", "reason": "The record does not adequately cover the material propositions or chain of preservation.", "action": "Attach at least one verifiable record item to each material proposition."})
     if legal < 0.75:
-        risks.append({"node": "法庭辩论", "type": "法律风险", "reason": "法规或先例依据不足，不能形成稳定的法律要件映射。", "action": "补充适用法条、效力状态和同级以上法院先例。"})
+        risks.append({"node": "Legal Arguments", "type": "authority", "reason": "The available statutes or precedents do not support a stable element-by-element analysis.", "action": "Add applicable in-force legislation and controlling or persuasive Canadian authorities."})
     if pending:
-        risks.append({"node": "庭前准备", "type": "待核验", "reason": f"仍有 {len(pending)} 项待验证内容。", "action": "完成来源、时效和权限核验后再请求最终报告。"})
+        risks.append({"node": "Pre-Hearing Preparation", "type": "verification", "reason": f"{len(pending)} item(s) remain unverified.", "action": "Verify source, currency, jurisdiction, and access before requesting the final report."})
     return {
         "status": "unavailable_unvalidated_model",
         "probability": None,
         "display_probability": False,
-        "reason": "当前未接入经时间外测试和校准验证的结果模型，系统不展示任意胜诉百分比。",
+        "reason": "No outcome model has passed out-of-time testing and calibration, so the system does not display an arbitrary probability of success.",
         "readiness": {"evidence_sufficiency": round(evidence, 2), "legal_relevance": round(legal, 2), "workflow_completeness": round(readiness, 2)},
         "risks": risks,
-        "required_for_probability": ["锁定法域与案由的真实结果标签", "时间外测试集", "Brier score、ECE 和可靠性曲线验收", "律师复核与版本化评估报告"],
+        "required_for_probability": ["jurisdiction- and claim-specific outcome labels", "an out-of-time test set", "Brier score, ECE, and reliability-curve acceptance", "Canadian counsel review and a versioned evaluation report"],
     }
 
 
 def _aggregate_final_report(state: dict[str, Any]) -> dict[str, Any]:
     completed = [state["stages"][stage] for stage in HEARING_STAGES[:-1] if state["stages"][stage]["status"] in {"completed", "procedure_omitted"}]
     if not completed:
-        return {"status": "blocked", "display_probability": False, "probability": None, "reason": "没有完成的庭审阶段，不能生成最终报告。", "disclaimer": "非法律意见，仅供参考，建议咨询执业律师。"}
+        return {"status": "blocked", "display_probability": False, "probability": None, "reason": "No hearing stage has been completed; a final report cannot be generated.", "disclaimer": "Training simulation only; not legal advice. Consult qualified Canadian counsel."}
     keys = ("evidence_sufficiency", "legal_relevance", "fact_consistency", "procedure_compliance", "opposing_strength", "case_support")
     averages = {key: round(sum(item["state_delta"].get(key, 0) for item in completed) / len(completed), 2) for key in keys}
     score = (
@@ -481,20 +559,20 @@ def _aggregate_final_report(state: dict[str, Any]) -> dict[str, Any]:
         "confidence_interval": [max(0, round(probability - uncertainty, 1)), min(100, round(probability + uncertainty, 1))] if probability_enabled else None,
         "optimized_probability": optimized_probability if probability_enabled else None,
         "score": round(score, 2),
-        "score_formula": "配置权重 × 六项状态评分，经 sigmoid 转换；仅反映本次模拟状态。",
-        "calibration_status": "未校准：尚未使用冻结的真实结果标签完成时间外测试、Brier score、ECE 和可靠性曲线验收。",
+        "score_formula": "Configured weights across six record-quality dimensions; this is a training-readiness score, not an outcome probability.",
+        "calibration_status": "Uncalibrated: no frozen outcome-labelled dataset has passed out-of-time Brier score, ECE, and reliability-curve review.",
         "state_metrics": averages,
         "risks": all_risks,
         "key_drivers": [
-            {"name": "证据充分性", "value": averages["evidence_sufficiency"]},
-            {"name": "法律相关性", "value": averages["legal_relevance"]},
-            {"name": "事实一致性", "value": averages["fact_consistency"]},
-            {"name": "程序合规性", "value": averages["procedure_compliance"]},
-            {"name": "类案支持度", "value": averages["case_support"]},
-            {"name": "对方抗辩强度", "value": averages["opposing_strength"]},
+            {"name": "Evidence sufficiency", "value": averages["evidence_sufficiency"]},
+            {"name": "Authority relevance", "value": averages["legal_relevance"]},
+            {"name": "Factual consistency", "value": averages["fact_consistency"]},
+            {"name": "Procedural compliance", "value": averages["procedure_compliance"]},
+            {"name": "Case-law support", "value": averages["case_support"]},
+            {"name": "Opposing-case strength", "value": averages["opposing_strength"]},
         ],
         "citations": citation_rows,
-        "disclaimer": "本报告为基于本地检索资料和庭审模拟状态的辅助分析，非法律意见，仅供参考，建议咨询具备相应法域资格的执业律师。",
+        "disclaimer": "This report is a training aid based on the local record and retrieved Canadian sources. It is not legal advice and requires review by qualified Canadian counsel.",
     }
 
 
@@ -503,7 +581,7 @@ def _view(state: dict[str, Any]) -> dict[str, Any]:
     for index, stage in enumerate(HEARING_STAGES):
         record = state["stages"][stage]
         stage_nodes.append({"stage": stage, "status": record["status"], "index": index, "readiness": record["confidence"]["stage_readiness"], "pending_count": len(record["pending_verifications"])})
-    return {**state, "stage_nodes": stage_nodes, "active_stage": HEARING_STAGES[state["active_stage_index"]] if state["active_stage_index"] < len(HEARING_STAGES) else "已完成", "disclaimer": "庭审对话与抗辩为研究模拟，不代表真实对方或法院意见；所有材料须由具备相应法域资格的律师复核。"}
+    return {**state, "stage_nodes": stage_nodes, "active_stage": HEARING_STAGES[state["active_stage_index"]] if state["active_stage_index"] < len(HEARING_STAGES) else "Completed", "disclaimer": "This is a Canadian legal research and hearing simulation. It does not represent a real party or court, and every source and conclusion requires review by qualified Canadian counsel."}
 
 
 def _workflow_view(state: dict[str, Any]) -> dict[str, Any]:
@@ -517,20 +595,21 @@ def _workflow_view(state: dict[str, Any]) -> dict[str, Any]:
 
 def create_hearing_run(payload: HearingRunCreate, *, user_id: int | None, tenant_id: str) -> dict[str, Any]:
     if not settings.hearing_simulation_enabled:
-        raise ValueError("庭审模拟当前已由配置关闭。")
+        raise ValueError("The Canadian hearing simulation is disabled by configuration.")
     started = time.monotonic()
-    module = normalize_module(payload.module)
-    evidence = _evidence_from_search(payload.case_summary, module, payload.case_acl)
+    module = "canada"
+    jurisdiction = repair_text(payload.jurisdiction) or "Canada"
+    evidence = _evidence_from_search(payload.case_summary, module, payload.case_acl, jurisdiction)
     laws = [item for item in evidence if item["source_kind"] == "law"]
     run_id = str(uuid4())
     state = {
         "id": run_id, "workflow_version": WORKFLOW_VERSION, "module": module, "status": "active", "active_stage_index": 0,
-        "case_summary": repair_text(payload.case_summary), "jurisdiction": repair_text(payload.jurisdiction),
+        "case_summary": repair_text(payload.case_summary), "jurisdiction": jurisdiction,
         "evidence_catalog": evidence, "messages": [], "stages": {stage: _stage_template(stage, evidence, laws) for stage in HEARING_STAGES},
         "turn_results": [], "agent_trace": [], "final_report": None, "created_at": _now(), "updated_at": _now(),
     }
     _record_agent_step(state, "hearing_orchestrator", "hearing_state", started, notes=["run_created", f"evidence={len(evidence)}"])
-    state["messages"].append({"id": str(uuid4()), "stage": HEARING_STAGES[0], "speaker": "系统", "kind": "system", "content": "庭审模拟已建立。请先补充请求事项、关键事实、已掌握证据和适用法域。", "created_at": _now()})
+    state["messages"].append({"id": str(uuid4()), "stage": HEARING_STAGES[0], "speaker": "System", "kind": "system", "content": "The Canadian hearing simulation is ready. State the relief sought, material facts, available evidence, procedural dates, and the applicable province or federal jurisdiction.", "created_at": _now()})
     _persist_run(state, user_id=user_id, tenant_id=tenant_id, is_new=True)
     return _workflow_view(state)
 
@@ -542,7 +621,7 @@ def get_hearing_run(run_id: str, *, tenant_id: str) -> dict[str, Any]:
 def _submit_hearing_turn_v1(run_id: str, payload: HearingTurnInput, *, user_id: int | None, tenant_id: str) -> dict[str, Any]:
     state = _load_run(run_id, tenant_id)
     if state["status"] != "active":
-        raise ValueError("该庭审模拟已结束，不能继续提交。")
+        raise ValueError("This hearing simulation is closed and cannot accept another submission.")
     stage = HEARING_STAGES[state["active_stage_index"]]
     stage_state = state["stages"][stage]
     allowed_ids = _allowed_ids(state)
@@ -552,12 +631,13 @@ def _submit_hearing_turn_v1(run_id: str, payload: HearingTurnInput, *, user_id: 
         stage_state["evidence_ids"] = list(dict.fromkeys(stage_state["evidence_ids"] + evidence_ids))
     if legal_ids:
         stage_state["legal_basis_ids"] = list(dict.fromkeys(stage_state["legal_basis_ids"] + legal_ids))
-    message = {"id": str(uuid4()), "stage": stage, "speaker": "我方代理人", "kind": "user", "content": repair_text(payload.content), "evidence_ids": evidence_ids, "legal_basis_ids": legal_ids, "created_at": _now()}
+    message = {"id": str(uuid4()), "stage": stage, "speaker": "User Counsel", "kind": "user", "content": repair_text(payload.content), "evidence_ids": evidence_ids, "legal_basis_ids": legal_ids, "created_at": _now()}
     state["messages"].append(message)
     stage_state["facts"].append(repair_text(payload.content))
     stage_state["our_responses"].append(repair_text(payload.content))
-    if stage != "裁判预测":
-        reply = _simulate_reply(state, stage)
+    if stage != "Final Training Report":
+        default_role: Literal["Opposing Counsel", "Presiding Judge"] = "Presiding Judge" if stage in {"Evidence Examination", "Judicial Questions and Summary"} else "Opposing Counsel"
+        reply = _simulate_reply(state, stage, default_role)
         stage_state["opponent_defences"].append(reply.content)
         if reply.disputed_issue:
             stage_state["disputed_issues"].append(reply.disputed_issue)
@@ -567,8 +647,8 @@ def _submit_hearing_turn_v1(run_id: str, payload: HearingTurnInput, *, user_id: 
     if payload.action == "complete_stage":
         missing = _stage_missing(stage_state)
         if missing:
-            state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "系统", "kind": "blocked", "content": "本阶段不能完成：" + "；".join(missing), "created_at": _now()})
-        elif stage == "裁判预测":
+            state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "System", "kind": "blocked", "content": "This stage cannot be completed: " + "; ".join(missing), "created_at": _now()})
+        elif stage == "Final Training Report":
             state["final_report"] = _aggregate(state)
             stage_state["status"] = "completed"
             state["status"] = "completed"
@@ -579,7 +659,7 @@ def _submit_hearing_turn_v1(run_id: str, payload: HearingTurnInput, *, user_id: 
             state["active_stage_index"] += 1
             next_stage = HEARING_STAGES[state["active_stage_index"]]
             state["stages"][next_stage]["status"] = "active"
-            state["messages"].append({"id": str(uuid4()), "stage": next_stage, "speaker": "系统", "kind": "stage_start", "content": f"进入{next_stage}。请围绕该阶段的争议焦点、证据和法律依据提交我方回应。", "created_at": _now()})
+            state["messages"].append({"id": str(uuid4()), "stage": next_stage, "speaker": "System", "kind": "stage_start", "content": f"The simulation has moved to {next_stage}. Address the stage focus with record evidence and verified Canadian authorities.", "created_at": _now()})
     state["updated_at"] = _now()
     _persist_run(state, user_id=user_id, tenant_id=tenant_id)
     return _workflow_view(state)
@@ -593,13 +673,13 @@ def _advance_stage(state: dict[str, Any], tenant_id: str) -> None:
     state["active_stage_index"] += 1
     next_stage = HEARING_STAGES[state["active_stage_index"]]
     state["stages"][next_stage]["status"] = "active"
-    state["messages"].append({"id": str(uuid4()), "stage": next_stage, "speaker": "系统", "kind": "stage_start", "content": f"进入{next_stage}：{STAGE_FOCUS[next_stage]}", "created_at": _now()})
+    state["messages"].append({"id": str(uuid4()), "stage": next_stage, "speaker": "System", "kind": "stage_start", "content": f"Entering {next_stage}: {STAGE_FOCUS[next_stage]}", "created_at": _now()})
 
 
 def submit_hearing_turn(run_id: str, payload: HearingTurnInput, *, user_id: int | None, tenant_id: str) -> dict[str, Any]:
     state = _load_run(run_id, tenant_id)
     if state.get("status") != "active":
-        raise ValueError("该庭审模拟已结束，不能继续提交。")
+        raise ValueError("This hearing simulation is closed and cannot accept another submission.")
     started = time.monotonic()
     stage = HEARING_STAGES[state["active_stage_index"]]
     stage_state = state["stages"][stage]
@@ -609,7 +689,7 @@ def submit_hearing_turn(run_id: str, payload: HearingTurnInput, *, user_id: int 
     legal_ids = [item for item in payload.legal_basis_ids if item in allowed_ids]
     stage_state["evidence_ids"] = list(dict.fromkeys(stage_state.get("evidence_ids", []) + evidence_ids))
     stage_state["legal_basis_ids"] = list(dict.fromkeys(stage_state.get("legal_basis_ids", []) + legal_ids))
-    user_message = {"id": str(uuid4()), "stage": stage, "speaker": "我方代理人", "kind": "user", "content": repair_text(payload.content), "evidence_ids": evidence_ids, "legal_basis_ids": legal_ids, "created_at": _now()}
+    user_message = {"id": str(uuid4()), "stage": stage, "speaker": "User Counsel", "kind": "user", "content": repair_text(payload.content), "evidence_ids": evidence_ids, "legal_basis_ids": legal_ids, "created_at": _now()}
     state["messages"].append(user_message)
     stage_state["facts"].append(user_message["content"])
     stage_state["our_responses"].append(user_message["content"])
@@ -618,12 +698,12 @@ def submit_hearing_turn(run_id: str, payload: HearingTurnInput, *, user_id: int 
     if payload.action == "procedure_omission":
         basis = repair_text(payload.omission_basis) or user_message["content"]
         if not basis:
-            raise ValueError("程序省略必须记录程序依据或原因。")
-        stage_state["procedure_omission"] = {"reason": basis, "recorded_at": _now(), "recorded_by": "我方代理人"}
-        state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "系统", "kind": "procedure_omission", "content": f"程序省略已记录，仍需律师核验：{basis}", "created_at": _now()})
-    elif stage != "胜诉概率报告":
+            raise ValueError("A procedural omission requires a recorded legal or practical basis.")
+        stage_state["procedure_omission"] = {"reason": basis, "recorded_at": _now(), "recorded_by": "User Counsel"}
+        state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "System", "kind": "procedure_omission", "content": f"The procedural omission has been recorded and still requires counsel review: {basis}", "created_at": _now()})
+    elif stage != "Final Training Report":
         for reply in _simulate_replies(state, stage):
-            if reply.speaker == "对方代理人":
+            if reply.speaker == "Opposing Counsel":
                 stage_state["opponent_defences"].append(reply.content)
                 role = "opposing_counsel"
             else:
@@ -638,31 +718,31 @@ def submit_hearing_turn(run_id: str, payload: HearingTurnInput, *, user_id: int 
     selected = _reference_rows(state, list(dict.fromkeys(stage_state["evidence_ids"] + stage_state["legal_basis_ids"])))
     missing_direct = [row["doc_id"] for row in selected if not (row.get("citation") or row.get("source_url"))]
     if missing_direct:
-        stage_state["pending_verifications"] = list(dict.fromkeys(stage_state["pending_verifications"] + ["部分候选资料缺少可追溯引文或来源链接，未检索到直接依据。"] ))
+        stage_state["pending_verifications"] = list(dict.fromkeys(stage_state["pending_verifications"] + ["One or more candidate sources lack a traceable citation or URL; no verified direct authority was retrieved for those items."] ))
     _record_agent_step(state, "evidence_agent", "evidence_verification", citation_started, notes=[f"references={len(selected)}", f"unverified={len(missing_direct)}"])
     state_delta, risks = _evaluate_turn(state, stage, user_message["content"], stage_state)
     for risk in risks:
-        state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "系统", "kind": "risk", "content": f"{risk['level']}风险：{risk['reason']} 建议：{risk['suggestion']}", "risk": risk, "created_at": _now()})
+        state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "System", "kind": "risk", "content": f"{risk['level'].title()} risk: {risk['reason']} Recommended action: {risk['suggestion']}", "risk": risk, "created_at": _now()})
 
-    next_step = "等待用户回应法官问题或补充证据"
+    next_step = "Awaiting user counsel's response or additional record evidence."
     if payload.action in {"complete_stage", "procedure_omission"}:
         missing = _stage_missing_v2(stage_state)
         if missing:
-            next_step = "本阶段待补充后才能进入下一阶段：" + "；".join(missing)
-            state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "系统", "kind": "blocked", "content": next_step, "created_at": _now()})
-        elif stage == "胜诉概率报告":
+            next_step = "Complete the following before advancing: " + "; ".join(missing)
+            state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "System", "kind": "blocked", "content": next_step, "created_at": _now()})
+        elif stage == "Final Training Report":
             report_started = time.monotonic()
             _record_agent_step(state, "report_agent", "rule_arbitration", report_started, notes=["final_aggregate"])
             state["final_report"] = _aggregate_final_report(state)
             stage_state["status"] = "completed"
             state["status"] = "completed"
             _checkpoint(state, tenant_id)
-            next_step = "最终报告已生成；请复核引用、模拟评分假设和免责声明。"
+            next_step = "The final training report is ready. Review every citation, scoring assumption, and disclaimer."
         else:
             _advance_stage(state, tenant_id)
-            next_step = f"进入{HEARING_STAGES[state['active_stage_index']]}。"
+            next_step = f"Entering {HEARING_STAGES[state['active_stage_index']]}."
 
-    turn_result = {"stage": stage, "messages": turn_messages, "state_delta": state_delta, "risks": risks, "next_step": next_step, "references": [{"doc_id": row["doc_id"], "citation": row["citation"], "source_url": row["source_url"], "source_kind": row["source_kind"]} for row in selected], "disclaimer": "非法律意见，仅供参考，建议咨询执业律师。"}
+    turn_result = {"stage": stage, "messages": turn_messages, "state_delta": state_delta, "risks": risks, "next_step": next_step, "references": [{"doc_id": row["doc_id"], "citation": row["citation"], "source_url": row["source_url"], "source_kind": row["source_kind"]} for row in selected], "disclaimer": "Training simulation only; not legal advice. Consult qualified Canadian counsel."}
     state.setdefault("turn_results", []).append(turn_result)
     state["updated_at"] = _now()
     _persist_run(state, user_id=user_id, tenant_id=tenant_id)
@@ -672,16 +752,16 @@ def submit_hearing_turn(run_id: str, payload: HearingTurnInput, *, user_id: int 
 def rollback_hearing_run(run_id: str, *, stage_index: int, user_id: int | None, tenant_id: str) -> dict[str, Any]:
     state = _load_run(run_id, tenant_id)
     if stage_index < 0 or stage_index >= len(HEARING_STAGES):
-        raise ValueError("无效的回滚阶段。")
+        raise ValueError("The rollback stage is invalid.")
     stage = HEARING_STAGES[stage_index]
     if state["stages"][stage]["checkpoint_version"] <= 0:
-        raise ValueError("该阶段尚无可回滚检查点。")
+        raise ValueError("No rollback checkpoint exists for this stage.")
     state["active_stage_index"] = stage_index
     state["status"] = "active"
     state["final_report"] = None
     for later in HEARING_STAGES[stage_index + 1:]:
         state["stages"][later]["status"] = "pending"
     state["stages"][stage]["status"] = "active"
-    state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "系统", "kind": "rollback", "content": f"已回滚至{stage}的最近检查点；后续阶段需要重新确认。", "created_at": _now()})
+    state["messages"].append({"id": str(uuid4()), "stage": stage, "speaker": "System", "kind": "rollback", "content": f"Rolled back to the latest checkpoint for {stage}. Later stages must be reconfirmed.", "created_at": _now()})
     _persist_run(state, user_id=user_id, tenant_id=tenant_id)
     return _workflow_view(state)

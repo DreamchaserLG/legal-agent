@@ -94,6 +94,8 @@ def rerank_legal_evidence(query: str, items: list[dict], plan: dict | None = Non
         score += max(float(current.get("vector_score") or 0) - 0.52, 0.0) * 0.12
         if {"lexical", "vector"} <= channels:
             score += 0.01
+        if "graph" in channels:
+            score += min(max(float(current.get("graph_score") or 0.0), 0.0) * 0.025, 0.02)
         if source_kind in preferred_sources:
             score += 0.006 if preferred_sources.index(source_kind) == 0 else 0.003
         if source_kind == "case" and {"tenant", "landlord", "eviction", "lease"} & query_terms:
@@ -123,6 +125,7 @@ def rerank_legal_evidence(query: str, items: list[dict], plan: dict | None = Non
         current["rerank_signals"] = {
             "term_overlap": sorted(overlap)[:12],
             "domain_overlap": sorted(domain_overlap)[:12],
+            "graph_supported": "graph" in channels,
             "penalty": round(penalty, 6),
         }
         reranked.append(current)

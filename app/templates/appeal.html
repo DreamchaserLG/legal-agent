@@ -75,16 +75,30 @@
     const createStatus = document.getElementById('appeal-create-status');
     const turnStatus = document.getElementById('appeal-turn-status');
     let currentRun = null;
+    // 界面语言：en 时优先使用后端返回的 *_en 字段
+    const EN = window.APP_LANG === 'en';
+    const pick = (zh, en) => (EN && en) ? en : (zh ?? en ?? '');
     const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (character) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character]));
     const percent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
-    const roleLabel = (role) => ({court_clerk:'书记员', appellant_counsel:'上诉方代理人', respondent_counsel:'被上诉方代理人', judge_panel:'合议庭', evaluation_service:'评估服务'}[role] || role || '系统');
+    const ROLE_LABELS = {
+        court_clerk: ['书记员', 'Court Clerk'],
+        appellant_counsel: ['上诉方代理人', 'Appellant Counsel'],
+        respondent_counsel: ['被上诉方代理人', 'Respondent Counsel'],
+        judge_panel: ['合议庭', 'Panel'],
+        evaluation_service: ['评估服务', 'Evaluation Service'],
+    };
+    const roleLabel = (role) => {
+        const pair = ROLE_LABELS[role];
+        if (!pair) return role || (EN ? 'System' : '系统');
+        return EN ? pair[1] : pair[0];
+    };
     async function request(url, options = {}) { const response = await fetch(url, {headers: {'Content-Type': 'application/json'}, ...options}); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.detail || '请求失败'); currentRun = body; render(body); return body; }
     function selected(name) { return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map((item) => item.value); }
     function show(element, message, error = false) { element.hidden = false; element.textContent = message; element.classList.toggle('error', error); }
 
     function renderStages(data) {
         const root = document.getElementById('appeal-stage-strip');
-        root.innerHTML = data.stage_nodes.map((node) => `<article class="appeal-stage-node ${escapeHtml(node.status)} ${node.stage === data.active_stage ? 'current' : ''}"><span>${node.index + 1}</span><strong>${escapeHtml(node.label)}</strong>${node.status === 'completed' && data.status !== 'completed' ? `<button type="button" class="appeal-rollback" data-stage-index="${node.index}" title="回滚到此阶段">↶</button>` : ''}</article>`).join('');
+        root.innerHTML = data.stage_nodes.map((node) => `<article class="appeal-stage-node ${escapeHtml(node.status)} ${node.stage === data.active_stage ? 'current' : ''}"><span>${node.index + 1}</span><strong>${escapeHtml(pick(node.label, node.label_en))}</strong>${node.status === 'completed' && data.status !== 'completed' ? `<button type="button" class="appeal-rollback" data-stage-index="${node.index}" title="${EN ? 'Roll back to this stage' : '回滚到此阶段'}">↶</button>` : ''}</article>`).join('');
         root.querySelectorAll('.appeal-rollback').forEach((button) => button.addEventListener('click', async () => { try { await request(`/api/appeal/runs/${currentRun.id}/rollback/${button.dataset.stageIndex}`, {method: 'POST'}); } catch (error) { show(turnStatus, error.message, true); } }));
     }
     function renderTranscript(data) {
@@ -112,16 +126,21 @@
     function render(data) {
         workbench.hidden = false;
         document.getElementById('appeal-case-label').textContent = data.case_title;
-        document.getElementById('appeal-stage-title').textContent = data.active_stage_label;
-        document.getElementById('appeal-stage-focus').textContent = data.active_stage_focus;
+        document.getElementById('appeal-stage-title').textContent = pick(data.active_stage_label, data.active_stage_label_en);
+        document.getElementById('appeal-stage-focus').textContent = pick(data.active_stage_focus, data.active_stage_focus_en);
         document.getElementById('appeal-run-status').textContent = data.status === 'completed' ? '已完成' : '进行中';
         document.getElementById('appeal-speaker').textContent = `当前：${roleLabel(data.expected_speaker)}`;
-        document.getElementById('appeal-disclaimer').textContent = data.disclaimer;
+        document.getElementById('appeal-disclaimer').textContent = pick(data.disclaimer, data.disclaimer_en);
         document.getElementById('appeal-user-fields').hidden = !data.requires_user_input;
         document.getElementById('appeal-turn-content').required = data.requires_user_input;
         for (const id of ['appeal-issue-picker', 'appeal-record-picker', 'appeal-authority-picker']) document.getElementById(id).hidden = !data.requires_user_input;
         const button = document.getElementById('appeal-advance-button');
-        button.textContent = data.status === 'completed' ? '模拟已完成' : data.requires_user_input ? '提交本轮陈述' : `运行${data.active_stage_label}`;
+        const stageLabel = pick(data.active_stage_label, data.active_stage_label_en);
+        button.textContent = data.status === 'completed'
+            ? (EN ? 'Simulation complete' : '模拟已完成')
+            : data.requires_user_input
+                ? (EN ? 'Submit this round' : '提交本轮陈述')
+                : (EN ? `Run ${stageLabel}` : `运行${stageLabel}`);
         button.disabled = data.status === 'completed';
         renderStages(data); renderTranscript(data); renderPickers(data); renderSide(data); renderReport(data);
     }

@@ -132,18 +132,42 @@ def _normalized_rule(law: dict) -> dict | None:
 
 
 def _normalized_case(case: dict) -> dict | None:
-    case_id = case.get("case_id") or case.get("id")
+    case_id = case.get("case_id") or case.get("id") or case.get("doc_id") or case.get("chunk_id")
     title = repair_text(case.get("title"))
     if not case_id or not title:
         return None
+    context_bundle = case.get("context_bundle") or {}
     return {
         "case_id": str(case_id),
         "title": title,
         "court": repair_text(case.get("court_name") or case.get("court_level")),
         "date": repair_text(case.get("judgment_date") or case.get("published_at")),
-        "excerpt": repair_text(case.get("summary") or case.get("facts") or case.get("excerpt"))[:600],
+        "excerpt": repair_text(
+            context_bundle.get("text") or case.get("summary") or case.get("facts") or case.get("excerpt")
+        )[:1200],
         "source_url": repair_text(case.get("source_url") or case.get("url")),
         "relation_status": repair_text(case.get("relation_status") or "retrieved_case"),
+    }
+
+
+def _normalized_retrieved_rule(law: dict) -> dict | None:
+    rule_id = law.get("rule_id") or law.get("law_id") or law.get("doc_id") or law.get("chunk_id")
+    title = repair_text(law.get("title"))
+    source_url = repair_text(law.get("source_url") or law.get("detail_url"))
+    citation = repair_text(law.get("article_no") or law.get("citation"))
+    if not rule_id or not title or not (citation or source_url):
+        return None
+    context_bundle = law.get("context_bundle") or {}
+    return {
+        "rule_id": str(rule_id),
+        "title": title,
+        "article_no": citation,
+        "excerpt": repair_text(
+            context_bundle.get("text") or law.get("article_summary") or law.get("excerpt")
+        )[:1200],
+        "citation_status": "retrieved_source_pending_legal_review",
+        "effectiveness_status": repair_text(law.get("effectiveness_status") or "unknown"),
+        "source_url": source_url,
     }
 
 
@@ -157,8 +181,15 @@ def _authority_sets(module_packet: dict, retrieval_items: list[dict] | None = No
         if normalized and normalized["rule_id"] not in seen_rules:
             seen_rules.add(normalized["rule_id"])
             rules.append(normalized)
+    for item in retrieval_items or []:
+        if repair_text(item.get("source_kind")).lower() != "law":
+            continue
+        normalized = _normalized_retrieved_rule(item)
+        if normalized and normalized["rule_id"] not in seen_rules:
+            seen_rules.add(normalized["rule_id"])
+            rules.append(normalized)
     for case in list(module_packet.get("case_law_rows") or []) + list(retrieval_items or []):
-        if repair_text(case.get("source_kind")) == "law":
+        if repair_text(case.get("source_kind")).lower() == "law":
             continue
         normalized = _normalized_case(case)
         if normalized and normalized["case_id"] not in seen_cases:

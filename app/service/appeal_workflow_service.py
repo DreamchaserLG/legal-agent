@@ -22,6 +22,10 @@ DISCLAIMER = (
     "这是安大略民事上诉训练模拟。评分只反映本次陈述对案卷、法律依据和程序要求的覆盖情况，"
     "不代表法院意见、案件结果或胜诉概率。"
 )
+DISCLAIMER_EN = (
+    "This is an Ontario civil appeal training simulation. Scores only reflect how well this round covered the record, "
+    "authorities and procedural requirements; they are not a court opinion, an outcome, or a win probability."
+)
 
 APPEAL_STAGES = [
     "record_review",
@@ -36,15 +40,69 @@ APPEAL_STAGES = [
 ]
 
 STAGE_DEFINITIONS: dict[str, dict[str, str]] = {
-    "record_review": {"label": "案卷审查", "speaker": "court_clerk", "focus": "确认上诉问题、案卷范围、请求裁定和候选法律依据。"},
-    "appellant_main": {"label": "上诉方主要陈述", "speaker": "appellant_counsel", "focus": "说明可审查错误、审查标准、案卷依据和请求裁定。"},
-    "judge_question_appellant": {"label": "合议庭向上诉方提问", "speaker": "judge_panel", "focus": "针对审查标准、案卷支持或决定性影响提出问题。"},
-    "appellant_answer": {"label": "上诉方回答", "speaker": "appellant_counsel", "focus": "直接回答合议庭问题，不引入案卷外事实。"},
-    "respondent_main": {"label": "被上诉方主要陈述", "speaker": "respondent_counsel", "focus": "回应上诉理由，说明原决定为何应受尊重或维持。"},
-    "judge_question_respondent": {"label": "合议庭向被上诉方提问", "speaker": "judge_panel", "focus": "检验被上诉方对错误、影响和救济的回应。"},
-    "respondent_answer": {"label": "被上诉方回答", "speaker": "respondent_counsel", "focus": "直接回答合议庭问题并回到案卷和法律依据。"},
-    "appellant_reply": {"label": "上诉方答复", "speaker": "appellant_counsel", "focus": "只回应被上诉方提出的新点，不重做主要陈述。"},
-    "panel_report": {"label": "合议庭训练报告", "speaker": "evaluation_service", "focus": "汇总双方表现、引用缺口和可执行修正方案。"},
+    "record_review": {
+        "label": "案卷审查",
+        "label_en": "Record Review",
+        "speaker": "court_clerk",
+        "focus": "确认上诉问题、案卷范围、请求裁定和候选法律依据。",
+        "focus_en": "Confirm the grounds of appeal, record scope, order sought and candidate authorities.",
+    },
+    "appellant_main": {
+        "label": "上诉方主要陈述",
+        "label_en": "Appellant’s Main Submission",
+        "speaker": "appellant_counsel",
+        "focus": "说明可审查错误、审查标准、案卷依据和请求裁定。",
+        "focus_en": "Set out the reviewable error, standard of review, record support and order sought.",
+    },
+    "judge_question_appellant": {
+        "label": "合议庭向上诉方提问",
+        "label_en": "Panel Questions to Appellant",
+        "speaker": "judge_panel",
+        "focus": "针对审查标准、案卷支持或决定性影响提出问题。",
+        "focus_en": "Probe the standard of review, record support or material impact.",
+    },
+    "appellant_answer": {
+        "label": "上诉方回答",
+        "label_en": "Appellant’s Answer",
+        "speaker": "appellant_counsel",
+        "focus": "直接回答合议庭问题，不引入案卷外事实。",
+        "focus_en": "Answer the panel’s questions directly without introducing facts outside the record.",
+    },
+    "respondent_main": {
+        "label": "被上诉方主要陈述",
+        "label_en": "Respondent’s Main Submission",
+        "speaker": "respondent_counsel",
+        "focus": "回应上诉理由，说明原决定为何应受尊重或维持。",
+        "focus_en": "Answer the grounds of appeal and show why the decision below should be upheld.",
+    },
+    "judge_question_respondent": {
+        "label": "合议庭向被上诉方提问",
+        "label_en": "Panel Questions to Respondent",
+        "speaker": "judge_panel",
+        "focus": "检验被上诉方对错误、影响和救济的回应。",
+        "focus_en": "Test the respondent’s answer on error, impact and remedy.",
+    },
+    "respondent_answer": {
+        "label": "被上诉方回答",
+        "label_en": "Respondent’s Answer",
+        "speaker": "respondent_counsel",
+        "focus": "直接回答合议庭问题并回到案卷和法律依据。",
+        "focus_en": "Answer the panel’s questions directly and return to the record and authorities.",
+    },
+    "appellant_reply": {
+        "label": "上诉方答复",
+        "label_en": "Appellant’s Reply",
+        "speaker": "appellant_counsel",
+        "focus": "只回应被上诉方提出的新点，不重做主要陈述。",
+        "focus_en": "Address only new points raised by the respondent; do not repeat the main submission.",
+    },
+    "panel_report": {
+        "label": "合议庭训练报告",
+        "label_en": "Panel Training Report",
+        "speaker": "evaluation_service",
+        "focus": "汇总双方表现、引用缺口和可执行修正方案。",
+        "focus_en": "Summarise both sides’ performance, citation gaps and actionable fixes.",
+    },
 }
 
 ROLE_TOOL_ALLOWLIST = {
@@ -561,7 +619,13 @@ def _stage_nodes(state: dict[str, Any]) -> list[dict[str, Any]]:
         status = "completed" if index < active else "active" if index == active and state["status"] == "active" else "pending"
         if state["status"] == "completed" and index == len(APPEAL_STAGES) - 1:
             status = "completed"
-        nodes.append({"stage": stage, "label": STAGE_DEFINITIONS[stage]["label"], "index": index, "status": status})
+        nodes.append({
+            "stage": stage,
+            "label": STAGE_DEFINITIONS[stage]["label"],
+            "label_en": STAGE_DEFINITIONS[stage].get("label_en", STAGE_DEFINITIONS[stage]["label"]),
+            "index": index,
+            "status": status,
+        })
     return nodes
 
 
@@ -615,11 +679,14 @@ def _view(state: dict[str, Any]) -> dict[str, Any]:
         **state,
         "active_stage": stage,
         "active_stage_label": STAGE_DEFINITIONS[stage]["label"],
+        "active_stage_label_en": STAGE_DEFINITIONS[stage].get("label_en", STAGE_DEFINITIONS[stage]["label"]),
         "active_stage_focus": STAGE_DEFINITIONS[stage]["focus"],
+        "active_stage_focus_en": STAGE_DEFINITIONS[stage].get("focus_en", STAGE_DEFINITIONS[stage]["focus"]),
         "expected_speaker": STAGE_DEFINITIONS[stage]["speaker"],
         "requires_user_input": state["status"] == "active" and _requires_user_input(state, stage),
         "stage_nodes": _stage_nodes(state),
         "disclaimer": DISCLAIMER,
+        "disclaimer_en": DISCLAIMER_EN,
     }
 
 

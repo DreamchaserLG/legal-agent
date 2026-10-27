@@ -15,10 +15,19 @@ def _split_csv(value: str) -> list[str]:
 
 class Settings:
     def __init__(self):
-        self.app_name = os.getenv("APP_NAME", "Legal Demo MVP")
+        self.app_name = os.getenv("APP_NAME", "Foreign-related Legal AI")
         self.app_env = os.getenv("APP_ENV", "development").strip().lower()
         self.app_host = os.getenv("APP_HOST", "127.0.0.1")
         self.app_port = int(os.getenv("APP_PORT", "8000"))
+        self.api_docs_enabled = (
+            os.getenv(
+                "API_DOCS_ENABLED",
+                "false" if self.app_env == "production" else "true",
+            ).strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        default_allowed_hosts = "127.0.0.1,localhost" if self.app_env == "production" else "*"
+        self.allowed_hosts = _split_csv(os.getenv("ALLOWED_HOSTS", default_allowed_hosts))
 
         self.database_url = os.getenv(
             "DATABASE_URL",
@@ -106,6 +115,58 @@ class Settings:
             os.getenv("HEARING_SIMULATION_PROBABILITY_ENABLED", "true").strip().lower()
             in {"1", "true", "yes", "on"}
         )
+        # 中国民事一审模拟庭审：所有程序上限均由配置注入，编排逻辑不得写死。
+        self.civil_trial_user_turn_timeout_seconds = int(
+            os.getenv("CIVIL_TRIAL_USER_TURN_TIMEOUT_SECONDS", "300")
+        )
+        self.civil_trial_warning_before_seconds = int(
+            os.getenv("CIVIL_TRIAL_WARNING_BEFORE_SECONDS", "30")
+        )
+        self.civil_trial_agent_call_timeout_seconds = int(
+            os.getenv("CIVIL_TRIAL_AGENT_CALL_TIMEOUT_SECONDS", "30")
+        )
+        self.civil_trial_agent_retry_count = int(os.getenv("CIVIL_TRIAL_AGENT_RETRY_COUNT", "1"))
+        self.civil_trial_opponent_tool_limit = int(os.getenv("CIVIL_TRIAL_OPPONENT_TOOL_LIMIT", "3"))
+        self.civil_trial_opponent_max_tokens = int(os.getenv("CIVIL_TRIAL_OPPONENT_MAX_TOKENS", "500"))
+        self.civil_trial_procedure_max_tokens = int(os.getenv("CIVIL_TRIAL_PROCEDURE_MAX_TOKENS", "800"))
+        self.civil_trial_adjudication_max_tokens = int(
+            os.getenv("CIVIL_TRIAL_ADJUDICATION_MAX_TOKENS", "2400")
+        )
+        self.civil_trial_evidence_exchange_rounds = int(
+            os.getenv("CIVIL_TRIAL_EVIDENCE_EXCHANGE_ROUNDS", "2")
+        )
+        self.civil_trial_issue_summary_rounds = int(
+            os.getenv("CIVIL_TRIAL_ISSUE_SUMMARY_ROUNDS", "2")
+        )
+        self.civil_trial_simple_debate_rounds = int(
+            os.getenv("CIVIL_TRIAL_SIMPLE_DEBATE_ROUNDS", "1")
+        )
+        self.civil_trial_ordinary_debate_rounds = int(
+            os.getenv("CIVIL_TRIAL_ORDINARY_DEBATE_ROUNDS", "2")
+        )
+        self.civil_trial_complex_debate_rounds = int(
+            os.getenv("CIVIL_TRIAL_COMPLEX_DEBATE_ROUNDS", "3")
+        )
+        self.civil_trial_max_user_timeouts = int(os.getenv("CIVIL_TRIAL_MAX_USER_TIMEOUTS", "3"))
+        self.civil_trial_max_opponent_fallbacks = int(
+            os.getenv("CIVIL_TRIAL_MAX_OPPONENT_FALLBACKS", "5")
+        )
+        self.civil_trial_max_total_tokens = int(
+            os.getenv("CIVIL_TRIAL_MAX_TOTAL_TOKENS", "30000")
+        )
+        self.civil_trial_max_api_calls = int(os.getenv("CIVIL_TRIAL_MAX_API_CALLS", "80"))
+        self.civil_trial_judgment_reserve_calls = int(
+            os.getenv("CIVIL_TRIAL_JUDGMENT_RESERVE_CALLS", "2")
+        )
+        self.civil_trial_judgment_reserve_tokens = int(
+            os.getenv("CIVIL_TRIAL_JUDGMENT_RESERVE_TOKENS", "5000")
+        )
+        self.civil_trial_budget_warning_ratio = float(
+            os.getenv("CIVIL_TRIAL_BUDGET_WARNING_RATIO", "0.8")
+        )
+        self.civil_trial_procedure_model = os.getenv("CIVIL_TRIAL_PROCEDURE_MODEL", "").strip()
+        self.civil_trial_opponent_model = os.getenv("CIVIL_TRIAL_OPPONENT_MODEL", "").strip()
+        self.civil_trial_adjudication_model = os.getenv("CIVIL_TRIAL_ADJUDICATION_MODEL", "").strip()
         self.agent_collaboration_enabled = (
             os.getenv("AGENT_COLLABORATION_ENABLED", "true").strip().lower()
             in {"1", "true", "yes", "on"}
@@ -143,6 +204,22 @@ class Settings:
         self.rag_vector_weight = float(os.getenv("RAG_VECTOR_WEIGHT", "0.45"))
         self.rag_vector_candidate_limit = int(os.getenv("RAG_VECTOR_CANDIDATE_LIMIT", "24"))
         self.rag_lexical_candidate_limit = int(os.getenv("RAG_LEXICAL_CANDIDATE_LIMIT", "24"))
+        self.rag_context_window_enabled = (
+            os.getenv("RAG_CONTEXT_WINDOW_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.rag_context_window_radius = int(os.getenv("RAG_CONTEXT_WINDOW_RADIUS", "1"))
+        self.rag_context_window_seed_limit = int(os.getenv("RAG_CONTEXT_WINDOW_SEED_LIMIT", "4"))
+        self.rag_context_window_max_chunks = int(os.getenv("RAG_CONTEXT_WINDOW_MAX_CHUNKS", "12"))
+        self.rag_context_window_token_budget = int(os.getenv("RAG_CONTEXT_WINDOW_TOKEN_BUDGET", "8000"))
+        self.rag_graph_enabled = (
+            os.getenv("RAG_GRAPH_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.rag_graph_weight = float(os.getenv("RAG_GRAPH_WEIGHT", "0.25"))
+        self.rag_graph_candidate_limit = int(os.getenv("RAG_GRAPH_CANDIDATE_LIMIT", "20"))
+        self.rag_graph_max_hops = int(os.getenv("RAG_GRAPH_MAX_HOPS", "2"))
+        self.rag_graph_edge_min_confidence = float(os.getenv("RAG_GRAPH_EDGE_MIN_CONFIDENCE", "0.65"))
         self.rag_vector_index_type = os.getenv("RAG_VECTOR_INDEX_TYPE", "hnsw").strip().lower()
         self.rag_hnsw_m = int(os.getenv("RAG_HNSW_M", "16"))
         self.rag_hnsw_ef_construction = int(os.getenv("RAG_HNSW_EF_CONSTRUCTION", "64"))
@@ -198,8 +275,28 @@ class Settings:
         )
         self.ingestion_worker_stale_seconds = int(os.getenv("INGESTION_WORKER_STALE_SECONDS", "600"))
         self.ingestion_worker_name = os.getenv("INGESTION_WORKER_NAME", "").strip()
-        self.default_search_limit = int(os.getenv("DEFAULT_SEARCH_LIMIT", "30"))
+        self.agent_worker_in_process_enabled = (
+            os.getenv("AGENT_WORKER_IN_PROCESS_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.agent_worker_poll_seconds = float(os.getenv("AGENT_WORKER_POLL_SECONDS", "0.8"))
+        self.agent_worker_stale_seconds = int(os.getenv("AGENT_WORKER_STALE_SECONDS", "900"))
+        self.agent_worker_name = os.getenv("AGENT_WORKER_NAME", "").strip()
+        self.default_search_limit = int(os.getenv("DEFAULT_SEARCH_LIMIT", "10"))
         self.session_secret = os.getenv("SESSION_SECRET", "legal-demo-dev-session-secret").strip()
+        if self.app_env == "production" and (
+            len(self.session_secret) < 32
+            or self.session_secret
+            in {
+                "legal-demo-dev-session-secret",
+                "replace-with-a-long-random-string",
+                "change_this_to_a_random_string",
+            }
+        ):
+            raise RuntimeError(
+                "SESSION_SECRET must be replaced with a random value of at least 32 characters "
+                "when APP_ENV=production"
+            )
         self.session_max_age_seconds = int(os.getenv("SESSION_MAX_AGE_SECONDS", "604800"))
         self.demo_history_seed_enabled = (
             os.getenv(

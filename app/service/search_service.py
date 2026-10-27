@@ -1233,16 +1233,26 @@ def _search_items_fast_rag(
     query_language: str,
     keyword_bundle: dict,
     skill_profile: dict,
+    filters: dict | None = None,
 ) -> dict | None:
     if not _can_use_fast_rag_search(module, source):
         return None
     try:
         from app.service.rag_service import rag_search
+        from app.service.query_translation_service import translate_query
 
         search_keywords = _fast_rag_keywords(keywords_input, keywords, skill_profile)
         query_text = _normalize_keywords_input(keywords_input) or " ".join(search_keywords)
         if isinstance(keywords_input, list):
             query_text = " ".join(search_keywords)
+        # The corpus and its full-text index are English; a Chinese query must be
+        # mapped to English legal terms before retrieval.
+        translation = translate_query(query_text)
+        retrieval_query = translation.get("translated") or query_text
+        # NOTE: synonym expansion measured *worse* than the plain translated query
+        # (Recall@10 0.06 vs 0.21, see scripts/evaluate_recall.py) because the extra
+        # terms dilute ranking. Kept in the codebase for a future "low-recall
+        # fallback" pass, but deliberately not applied to the primary query.
         fetch_limit = max(limit, min(offset + limit + 1, 30))
         if source == "canlii":
             case_target = fetch_limit
@@ -1254,19 +1264,21 @@ def _search_items_fast_rag(
         law_items = []
         if law_target:
             law_result = rag_search(
-                query_text,
+                retrieval_query,
                 keywords=search_keywords,
                 module=module,
                 source_filter="law",
                 limit=law_target,
+                filters=filters,
             )
             law_items = law_result.get("items") or []
         case_result = rag_search(
-            query_text,
+            retrieval_query,
             keywords=search_keywords,
             module=module,
             source_filter="case",
             limit=case_target,
+            filters=filters,
         )
         case_items = case_result.get("items") or []
     except Exception:
@@ -1350,6 +1362,7 @@ def search_items(
     refresh: bool = False,
     display_language: str | None = None,
     keyword_weights: dict[str, float] | None = None,
+    filters: dict | None = None,
 ):
     module = normalize_module(module)
     keyword_bundle = build_bilingual_keyword_bundle(keywords_input, module)
@@ -1424,6 +1437,7 @@ def search_items(
         query_language=query_language,
         keyword_bundle=keyword_bundle,
         skill_profile=skill_profile,
+        filters=filters,
     )
     if fast_payload is not None:
         _set_cached_result(_SEARCH_CACHE, cache_key, fast_payload)
@@ -1675,6 +1689,7 @@ def search_with_remote_hydration(
     display_language: str | None = None,
     local_only: bool = False,
     keyword_weights: dict[str, float] | None = None,
+    filters: dict | None = None,
 ):
     normalized_limit = _normalize_limit(limit)
     normalized_offset = _normalize_offset(offset)
@@ -1692,6 +1707,7 @@ def search_with_remote_hydration(
         refresh=refresh,
         display_language=display_language,
         keyword_weights=keyword_weights,
+        filters=filters,
     )
 
     remote_fetch = {
@@ -1894,6 +1910,7 @@ def search_and_optionally_sync(
     refresh: bool = False,
     origin_page: str = "search",
     display_language: str | None = None,
+    filters: dict | None = None,
 ):
     sync_info = None
     keyword_weights = None
@@ -1935,6 +1952,7 @@ def search_and_optionally_sync(
             refresh=refresh,
             origin_page=origin_page,
             display_language=display_language,
+            filters=filters,
         )
 
     return {

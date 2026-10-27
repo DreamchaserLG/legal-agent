@@ -5,8 +5,11 @@ from datetime import datetime
 
 from app.core.config import settings
 from app.service.common_service import repair_text
+from app.service.context_window_service import expand_context_windows
+from app.service.legal_graph_rag_service import rebuild_legal_graph, search_legal_graph
 from app.service.legal_query_planner_service import build_legal_query_plan
 from app.service.module_service import normalize_module
+from app.service.query_translation_service import translate_query
 from app.service.rag_service import rag_search, rebuild_rag_index
 from app.service.reranker_service import rerank_legal_evidence
 from app.service.vector_store_service import rebuild_chunk_embeddings, vector_search
@@ -144,19 +147,29 @@ def hybrid_search(
     vector_limit = max(final_limit, int(vector_limit or getattr(settings, "rag_vector_candidate_limit", 40)))
     lexical_weight = float(getattr(settings, "rag_lexical_weight", 0.55))
     vector_weight = float(getattr(settings, "rag_vector_weight", 0.45))
+    graph_weight = float(getattr(settings, "rag_graph_weight", 0.25))
     rrf_k = 60.0
 
     query_plan = build_legal_query_plan(clean_query, keywords=keywords or [])
+    # Chinese queries cannot hit the English full-text index, so translate the
+    # lexical side into English legal terms while keeping the original text for
+    # the multilingual vector channel.
+    query_translation = translate_query(clean_query)
+    lexical_query = query_translation.get("translated") or clean_query
+    # Graph lookup and reranking are English-corpus operations; scoring a Chinese
+    # query against English documents drops every candidate.
+    rerank_query = lexical_query
     expanded_keywords = list(keywords or []) + list(query_plan.get("meaningful_terms") or [])[:8]
     lexical_items: list[dict] = []
     vector_items: list[dict] = []
+    graph_items: list[dict] = []
     partition_stats = []
     vector_embedding = {}
     vector_status = ""
     vector_pgvector_enabled = False
     for partition_name, partition_source, partition_query in _retrieval_partitions(source_filter, query_plan):
         lexical_result = rag_search(
-            clean_query,
+            lexical_query,
             keywords=keywords or [],
             module=module,
             source_filter=partition_source,
@@ -190,14 +203,34 @@ def hybrid_search(
                 "vector_total": len(vector_result.get("items") or []),
             }
         )
+    graph_result: dict = {"status": "disabled", "items": [], "total": 0}
+    if bool(getattr(settings, "rag_graph_enabled", True)) and normalize_module(module) == "canada":
+        try:
+            graph_result = search_legal_graph(
+                lexical_query,
+                keywords=expanded_keywords,
+                module=module,
+                source_filter=source_filter,
+                limit=max(final_limit, int(getattr(settings, "rag_graph_candidate_limit", 20))),
+                filters=filters,
+            )
+            graph_items = [dict(item) for item in graph_result.get("items") or []]
+        except Exception as exc:
+            graph_result = {
+                "status": "error",
+                "items": [],
+                "total": 0,
+                "error": repair_text(str(exc))[:300],
+            }
     vector_provider = repair_text(vector_embedding.get("provider")).lower()
     vector_diagnostic_only = vector_provider == "hash"
     effective_vector_weight = 0.0 if vector_diagnostic_only else vector_weight
     lexical_ranks = _rank_map(lexical_items)
     vector_ranks = _rank_map(vector_items)
+    graph_ranks = _rank_map(graph_items)
 
     merged: dict[str, dict] = {}
-    for channel, items in (("lexical", lexical_items), ("vector", vector_items)):
+    for channel, items in (("lexical", lexical_items), ("vector", vector_items), ("graph", graph_items)):
         for item in items:
             key = _item_key(item)
             if not key:
@@ -208,8 +241,12 @@ def hybrid_search(
             current["search_channels"] = sorted(channels)
             if channel == "lexical":
                 current["lexical_score"] = item.get("score", 0)
-            else:
+            elif channel == "vector":
                 current["vector_score"] = item.get("vector_score", item.get("score", 0))
+            else:
+                current["graph_score"] = item.get("graph_score", item.get("score", 0))
+                current["graph_path"] = item.get("graph_path") or current.get("graph_path")
+                current["graph_entity_id"] = item.get("graph_entity_id") or current.get("graph_entity_id")
 
     query_terms = _terms(
         " ".join(
@@ -224,11 +261,12 @@ def hybrid_search(
     for key, item in merged.items():
         channels = set(item.get("search_channels") or [])
         overlap = _meaningful_query_overlap(item, query_terms)
+        graph_supported = "graph" in channels and float(item.get("graph_score") or 0) >= 0.2
         if vector_diagnostic_only and channels == {"vector"} and not overlap:
             continue
         if channels == {"vector"} and not overlap and float(item.get("vector_score") or 0) < 0.58:
             continue
-        if not overlap and ("vector" not in channels or vector_diagnostic_only):
+        if not overlap and not graph_supported and ("vector" not in channels or vector_diagnostic_only):
             continue
         score = 0.0
         if key in lexical_ranks:
@@ -236,11 +274,15 @@ def hybrid_search(
         if key in vector_ranks:
             score += effective_vector_weight / (rrf_k + vector_ranks[key])
             score += max(float(item.get("vector_score") or 0) - 0.5, 0.0) * 0.1
+        if key in graph_ranks:
+            score += graph_weight / (rrf_k + graph_ranks[key])
+            score += max(float(item.get("graph_score") or 0) - 0.4, 0.0) * 0.06
         score += _authority_boost(item, query_terms)
         item["hybrid_score"] = round(score, 6)
         item["score"] = item["hybrid_score"]
         item.setdefault("lexical_score", 0)
         item.setdefault("vector_score", 0)
+        item.setdefault("graph_score", 0)
         if vector_diagnostic_only:
             item["vector_diagnostic_only"] = True
         scored_items.append(item)
@@ -249,15 +291,24 @@ def hybrid_search(
         scored_items,
         key=lambda item: (
             float(item.get("hybrid_score") or 0),
+            float(item.get("graph_score") or 0),
             float(item.get("vector_score") or 0),
             float(item.get("lexical_score") or 0),
         ),
         reverse=True,
     )
-    items = rerank_legal_evidence(clean_query, fused_items, plan=query_plan, limit=final_limit)
+    items = rerank_legal_evidence(rerank_query, fused_items, plan=query_plan, limit=final_limit)
+    try:
+        window_result = expand_context_windows(items)
+        items = window_result.get("items") or items
+        window_stats = window_result.get("stats") or {}
+    except Exception as exc:
+        window_stats = {"enabled": True, "status": "error", "error": repair_text(str(exc))[:300]}
 
     return {
         "query": clean_query,
+        "retrieval_query": lexical_query,
+        "query_translation": query_translation,
         "keywords": keywords or [],
         "structured_query": query_plan,
         "module": normalize_module(module),
@@ -266,7 +317,7 @@ def hybrid_search(
         "items": items,
         "total": len(items),
         "status": "ok",
-        "strategy": "structured_hybrid_rrf_rerank",
+        "strategy": "structured_hybrid_graph_rrf_rerank_window",
         "channels": {
             "lexical": {
                 "status": "ok",
@@ -282,6 +333,16 @@ def hybrid_search(
                 "pgvector_enabled": vector_pgvector_enabled,
                 "embedding": vector_embedding,
             },
+            "graph": {
+                "status": graph_result.get("status", "disabled"),
+                "total": len(graph_items),
+                "weight": graph_weight,
+                "paths": graph_result.get("paths", 0),
+                "entry_entities": graph_result.get("entry_entities") or [],
+                "query_graph": graph_result.get("query_graph") or {},
+                "error": graph_result.get("error", ""),
+            },
+            "context_window": window_stats,
             "partitions": partition_stats,
         },
     }
@@ -291,12 +352,21 @@ def rebuild_hybrid_index(source_filter: str = "all", limit: int | None = None, m
     started_at = datetime.utcnow()
     rag_result = rebuild_rag_index(source_filter=source_filter, limit=limit)
     vector_result = rebuild_chunk_embeddings(source_filter=source_filter, limit=limit, module=module)
-    status = "completed" if rag_result.get("status") == "completed" and vector_result.get("status") == "completed" else "failed"
+    graph_result = (
+        rebuild_legal_graph(source_filter=source_filter, limit=limit)
+        if bool(getattr(settings, "rag_graph_enabled", True)) and normalize_module(module) == "canada"
+        else {"status": "disabled"}
+    )
+    required_statuses = [rag_result.get("status"), vector_result.get("status")]
+    if graph_result.get("status") != "disabled":
+        required_statuses.append(graph_result.get("status"))
+    status = "completed" if all(value == "completed" for value in required_statuses) else "failed"
     return {
         "status": status,
         "source_filter": source_filter,
         "module": normalize_module(module),
         "rag": rag_result,
         "vector": vector_result,
+        "graph": graph_result,
         "duration_seconds": round((datetime.utcnow() - started_at).total_seconds(), 3),
     }

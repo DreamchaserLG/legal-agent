@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import secrets
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -8,6 +10,15 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+
+from app.i18n import (
+    LANG_COOKIE,
+    LANG_COOKIE_MAX_AGE,
+    LANG_LABELS,
+    SUPPORTED_LANGS,
+    make_translator,
+    normalize_lang,
+)
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -48,6 +59,21 @@ from app.service.module_service import (
     resolve_source_for_module,
 )
 from app.service.multi_agent_service import MultiAgentRequest, run_multi_agent_analysis
+from app.service.legal_agent_runtime_service import (
+    HumanSubmissionCreate,
+    InteractiveAgentRunCreate,
+    cancel_legal_agent_run,
+    enqueue_legal_agent_run,
+    get_legal_agent_run,
+    list_legal_agent_events,
+    submit_human_turn,
+)
+from app.service.user_preference_service import (
+    clear_user_preference_history,
+    get_user_preference_summary,
+    set_preference_tracking,
+    update_explicit_preferences,
+)
 from app.service.mcp_tool_service import MCPToolCall, call_readonly_mcp_tool, list_mcp_tools
 from app.service.skill_collaboration_service import SkillCollaborationRequest, run_skill_collaboration
 from app.service.hearing_workflow_service import (
@@ -78,6 +104,15 @@ from app.service.canlii_service import sync_canlii_demo
 from app.service.common_service import looks_mojibake, repair_text
 from app.service.pdf_service import PDFRenderError, render_legal_memo_pdf
 from app.service.hybrid_retrieval_service import hybrid_search, rebuild_hybrid_index
+from app.service.query_translation_service import translate_query
+from app.service.legal_graph_rag_service import get_legal_graph_status, rebuild_legal_graph, search_legal_graph
+from app.service.legal_safety_service import (
+    LabelEvaluationRequest,
+    LegalGroundingRequest,
+    enforce_grounded_legal_text,
+    evaluate_multilabel,
+    evaluation_metric_catalog,
+)
 from app.service.rag_service import export_rag_chunks, get_rag_status, rag_search, rebuild_rag_index
 from app.service.risk_assessment_service import list_risk_training_samples, record_risk_feedback_label
 from app.service.search_service import search_and_optionally_sync
@@ -113,8 +148,19 @@ from app.service.user_service import (
 
 router = APIRouter()
 
+
+class PreferenceTrackingUpdate(BaseModel):
+    enabled: bool = False
+
+
+class UserPreferenceUpdate(BaseModel):
+    response_style: str = Field(default="balanced", max_length=20)
+    focus_areas: list[str] = Field(default_factory=list, max_length=8)
+    note: str = Field(default="", max_length=500)
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+templates.env.globals["translate_query"] = translate_query
 
 
 def _rag_structured_filters(
@@ -641,6 +687,32 @@ def _sanitize_module_packet(module_packet: dict, module_code: str) -> dict:
     return packet
 
 
+def _group_law_cases_by_court(module_packet: dict) -> dict:
+    """Add presentation-only court groups without changing retrieval ranking."""
+    packet = dict(module_packet or {})
+    laws = []
+    for raw_law in packet.get("relevant_laws", []) or []:
+        law = dict(raw_law)
+        grouped: dict[str, list[dict]] = {}
+        for raw_case in law.get("related_cases", []) or []:
+            case = dict(raw_case)
+            court = repair_text(
+                case.get("court_level")
+                or case.get("court_name")
+                or case.get("court")
+                or case.get("case_type")
+                or "Court not specified"
+            )
+            grouped.setdefault(court, []).append(case)
+        law["court_groups"] = [
+            {"label": court, "items": cases}
+            for court, cases in grouped.items()
+        ]
+        laws.append(law)
+    packet["relevant_laws"] = laws
+    return packet
+
+
 def _sanitize_prediction_payload(payload: dict, module_code: str) -> dict:
     clean_payload = dict(payload or {})
     clean_payload["module_packet"] = _sanitize_module_packet(clean_payload.get("module_packet") or {}, module_code)
@@ -793,10 +865,17 @@ def _base_context(request: Request, page_id: str) -> dict:
         {"value": "us_sanctions", **_presentation_module_profile("us_sanctions")},
     ]
     current_user = get_current_user(request)
+    lang = normalize_lang(request.cookies.get(LANG_COOKIE))
     return {
         "request": request,
         "app_name": settings.app_name,
         "page_id": page_id,
+        "lang": lang,
+        "tr": make_translator(lang),
+        "lang_options": [
+            {"code": code, "label": LANG_LABELS[code], "active": code == lang}
+            for code in SUPPORTED_LANGS
+        ],
         "dashboard": metrics,
         "module_options": module_options,
         "module_source_map": {item["value"]: item.get("source_options", []) for item in module_options},
@@ -810,6 +889,18 @@ def _to_bool(value) -> bool:
     if value is None:
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+SEARCH_PAGE_SIZES = (5, 10, 15, 20)
+
+
+def _normalize_search_page_size(value: int) -> int:
+    """Keep the public search UI on predictable, reviewable page sizes."""
+    try:
+        page_size = int(value)
+    except (TypeError, ValueError):
+        page_size = 10
+    return page_size if page_size in SEARCH_PAGE_SIZES else 10
 
 
 def _safe_float(value) -> float:
@@ -840,6 +931,59 @@ def _normalize_next_url(next_url: str | None, user: dict | None = None) -> str:
     if user and not user.get("is_admin") and clean.startswith("/admin"):
         return "/home?message=" + quote("当前账号无权限访问该页面")
     return clean
+
+
+_LOGIN_CHALLENGE_KEY = "login_verification"
+_LOGIN_CHALLENGE_MAX_AGE_SECONDS = 600
+
+
+def _issue_login_challenge(request: Request) -> dict:
+    left = secrets.randbelow(8) + 2
+    right = secrets.randbelow(8) + 1
+    challenge_id = secrets.token_urlsafe(12)
+    request.session[_LOGIN_CHALLENGE_KEY] = {
+        "id": challenge_id,
+        "answer": str(left + right),
+        "issued_at": int(time.time()),
+    }
+    return {"id": challenge_id, "prompt": f"{left} + {right} = ?"}
+
+
+def _consume_login_challenge(request: Request, challenge_id: str, answer: str) -> str:
+    challenge = request.session.pop(_LOGIN_CHALLENGE_KEY, None)
+    if not str(answer or "").strip():
+        return "auth.validation.challenge_required"
+    if not isinstance(challenge, dict):
+        return "auth.validation.challenge_invalid"
+    issued_at = int(challenge.get("issued_at") or 0)
+    if (
+        not challenge_id
+        or not secrets.compare_digest(str(challenge.get("id") or ""), str(challenge_id))
+        or int(time.time()) - issued_at > _LOGIN_CHALLENGE_MAX_AGE_SECONDS
+        or not secrets.compare_digest(str(challenge.get("answer") or ""), str(answer).strip())
+    ):
+        return "auth.validation.challenge_invalid"
+    return ""
+
+
+def _login_context(
+    request: Request,
+    *,
+    next_url: str,
+    auth_error: str = "",
+    login_value: str = "",
+) -> dict:
+    context = _base_context(request, "login")
+    context.update(
+        {
+            "next_url": _normalize_next_url(next_url),
+            "auth_error": auth_error,
+            "login_value": login_value,
+            "login_challenge": _issue_login_challenge(request),
+            "page_notice": "",
+        }
+    )
+    return context
 
 
 def _login_redirect(next_url: str = "/home", message: str = "登录状态已过期，请重新登录") -> RedirectResponse:
@@ -1476,11 +1620,26 @@ def _memo_context_payload(text: str, limit: int, offset: int, source: str, sort:
     return payload
 
 
+@router.get("/lang/{code}")
+def switch_language(request: Request, code: str, next: str = "/home"):
+    """Persist the UI language in a cookie and return to the current page."""
+    target = (next or "/home").strip()
+    if not target.startswith("/") or target.startswith("//"):
+        target = "/home"
+    response = RedirectResponse(url=target, status_code=303)
+    response.set_cookie(
+        LANG_COOKIE,
+        normalize_lang(code),
+        max_age=LANG_COOKIE_MAX_AGE,
+        path="/",
+        samesite="lax",
+    )
+    return response
+
+
 @router.get("/", response_class=HTMLResponse)
 def root_page(request: Request):
-    context = _base_context(request, "login")
-    context.update({"next_url": "/", "auth_error": "", "login_value": "", "page_notice": ""})
-    return _cache_safe_template("login.html", context)
+    return _cache_safe_template("login.html", _login_context(request, next_url="/"))
 
 
 @router.get("/home", response_class=HTMLResponse)
@@ -1499,6 +1658,82 @@ def index(request: Request):
     return _cache_safe_template("index.html", context)
 
 
+_FACET_CACHE: dict[str, tuple[float, dict]] = {}
+_FACET_TTL_SECONDS = 300.0
+
+
+@router.get("/api/facets")
+def api_search_facets(
+    request: Request,
+    keywords: str = Query(""),
+    source: str = Query("all"),
+    module: str = Query("canada"),
+):
+    """Counts for the court / year filters, scoped to the current query."""
+    require_user(request)
+    import time as _time
+
+    from app.core.database import fetch_all
+
+    clean = (keywords or "").strip()
+    translation = translate_query(clean)
+    retrieval_query = translation.get("translated") or clean
+    cache_key = f"{retrieval_query}|{source}"
+    cached = _FACET_CACHE.get(cache_key)
+    if cached and (_time.time() - cached[0]) < _FACET_TTL_SECONDS:
+        return cached[1]
+
+    where: list[str] = []
+    params: dict = {}
+    if retrieval_query:
+        where.append("search_vector @@ plainto_tsquery('english', :q)")
+        params["q"] = retrieval_query
+    if source == "law":
+        where.append("source_kind = 'law'")
+    elif source in {"case", "canlii"}:
+        where.append("source_kind = 'case'")
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    joiner = " AND " if where else " WHERE "
+
+    try:
+        court_rows = fetch_all(
+            "SELECT court_level AS value, count(*) AS n FROM rag_chunks"
+            + clause
+            + joiner
+            + "court_level <> '' GROUP BY 1 ORDER BY n DESC LIMIT 80",
+            params,
+        )
+        year_rows = fetch_all(
+            "SELECT extract(year FROM published_at)::int AS value, count(*) AS n FROM rag_chunks"
+            + clause
+            + joiner
+            + "published_at IS NOT NULL GROUP BY 1 ORDER BY 1 DESC LIMIT 10",
+            params,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        raise HTTPException(status_code=500, detail=f"facet aggregation failed: {exc}") from exc
+
+    from app.i18n import LANG_COOKIE as _LANG_COOKIE, normalize_lang as _normalize_lang
+    from app.service.court_normalization import normalize_court_list
+
+    lang = _normalize_lang(request.cookies.get(_LANG_COOKIE))
+    courts = normalize_court_list(
+        [{"value": row["value"], "count": row["n"]} for row in court_rows],
+        lang,
+    )[:8]
+
+    payload = {
+        "query": clean,
+        "retrieval_query": retrieval_query,
+        "courts": courts,
+        "years": [{"value": r["value"], "count": r["n"]} for r in year_rows],
+    }
+    _FACET_CACHE[cache_key] = (_time.time(), payload)
+    if len(_FACET_CACHE) > 64:
+        _FACET_CACHE.clear()
+    return payload
+
+
 @router.get("/results", response_class=HTMLResponse)
 def results_page(
     request: Request,
@@ -1510,7 +1745,24 @@ def results_page(
     sort: str = Query("relevance"),
     module: str = Query("canada"),
     refresh: bool = Query(False),
+    court: str = Query(""),
+    year: str = Query(""),
 ):
+    limit = _normalize_search_page_size(limit)
+    offset = max(0, int(offset or 0))
+    offset = (offset // limit) * limit
+    search_filters: dict = {}
+    if court.strip():
+        from app.service.court_normalization import court_aliases, resolve_court
+
+        raw_court = court.strip()
+        code = resolve_court(raw_court)
+        # a canonical code expands to every stored spelling; unknown values are
+        # passed through as a single alias so the filter still works
+        search_filters["court_levels"] = court_aliases(code) if code else [raw_court]
+    if year.strip().isdigit():
+        search_filters["date_from"] = f"{year.strip()}-01-01"
+        search_filters["date_to"] = f"{year.strip()}-12-31"
     page_user = _require_page_user(
         request,
         f"/results?{_build_query_string(keywords=keywords, limit=limit, offset=offset, source=source, sort=sort, module=module, refresh='1' if refresh else None)}",
@@ -1529,7 +1781,19 @@ def results_page(
         module=module_code,
         refresh=refresh,
         origin_page="search",
+        filters=search_filters or None,
     )
+    if module_code == "canada" and result.get("module_packet"):
+        result["module_packet"] = _group_law_cases_by_court(result["module_packet"])
+
+    from app.service.query_intent_service import analyze_intent, needs_guidance
+
+    intent = analyze_intent(keywords)
+    if needs_guidance(intent):
+        # Vague input would only produce an empty result list; show guidance instead.
+        result["intent_hint"] = intent
+        result["total"] = 0
+        result["items"] = []
 
     context = _base_context(request, "search")
     context.update(result)
@@ -1538,6 +1802,10 @@ def results_page(
         "module_profile": _presentation_module_profile(module_code),
         "source_options": _presentation_source_options(module_code),
         "source": effective_source,
+        "page_sizes": SEARCH_PAGE_SIZES,
+        "current_page": (offset // limit) + 1,
+        "active_court": court.strip(),
+        "active_year": year.strip(),
     })
     context.update(
         _task_context(
@@ -1798,7 +2066,23 @@ def hearing_page(request: Request):
     page_user = _require_page_user(request, "/hearing")
     if isinstance(page_user, RedirectResponse):
         return page_user
+    return _cache_safe_template("hearing.html", _base_context(request, "hearing"))
+
+
+@router.get("/ontario-civil-trial", response_class=HTMLResponse)
+def ontario_civil_trial_page(request: Request):
+    page_user = _require_page_user(request, "/ontario-civil-trial")
+    if isinstance(page_user, RedirectResponse):
+        return page_user
     return _cache_safe_template("civil_trial.html", _base_context(request, "hearing"))
+
+
+@router.get("/agent-hearing", response_class=HTMLResponse)
+def interactive_agent_hearing_page(request: Request):
+    page_user = _require_page_user(request, "/agent-hearing")
+    if isinstance(page_user, RedirectResponse):
+        return page_user
+    return _cache_safe_template("agent_run.html", _base_context(request, "agent_hearing"))
 
 
 @router.get("/appeal-simulation", response_class=HTMLResponse)
@@ -2069,6 +2353,27 @@ def api_data_readiness(request: Request):
     return get_source_quality_snapshot()
 
 
+@router.get("/api/evaluation/metrics")
+def api_evaluation_metrics(request: Request):
+    require_user(request)
+    return evaluation_metric_catalog()
+
+
+@router.post("/api/evaluation/labels")
+def api_evaluate_labels(request: Request, payload: LabelEvaluationRequest):
+    require_user(request)
+    try:
+        return evaluate_multilabel(payload.gold, payload.predicted, payload.labels)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/api/evaluation/grounding")
+def api_evaluate_grounding(request: Request, payload: LegalGroundingRequest):
+    require_user(request)
+    return enforce_grounded_legal_text(payload.text, payload.authorities)
+
+
 @router.get("/api/rag/status")
 def api_rag_status(request: Request):
     require_user(request)
@@ -2132,6 +2437,33 @@ def api_rag_hybrid_search(
     return hybrid_search(query, module=normalize_module(module), source_filter=source, limit=limit, filters=filters)
 
 
+@router.get("/api/rag/graph-search")
+def api_rag_graph_search(
+    request: Request,
+    query: str = Query(...),
+    module: str = Query("canada"),
+    source: str = Query("all"),
+    limit: int = Query(8, ge=1, le=30),
+    max_hops: int = Query(2, ge=0, le=2),
+    jurisdiction: str | None = Query(None),
+    document_type: str | None = Query(None),
+    court_level: str | None = Query(None),
+    language: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+):
+    require_user(request)
+    filters = _rag_structured_filters(jurisdiction, document_type, court_level, language, date_from, date_to)
+    return search_legal_graph(
+        query,
+        module=normalize_module(module),
+        source_filter=source,
+        limit=limit,
+        filters=filters,
+        max_hops=max_hops,
+    )
+
+
 @router.get("/api/skills")
 def api_list_legal_skills(request: Request):
     require_user(request)
@@ -2160,6 +2492,121 @@ def api_run_multi_agent(request: Request, payload: MultiAgentRequest):
         return run_multi_agent_analysis(payload, user_id=int(user["id"]), tenant_id=tenant_id)
     except (PermissionError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/multi-agent/runs", status_code=202)
+def api_create_interactive_agent_run(request: Request, payload: InteractiveAgentRunCreate):
+    user = require_user(request)
+    tenant_id = repair_text(user.get("organization")) or f"user:{user['id']}"
+    try:
+        return enqueue_legal_agent_run(payload, user_id=int(user["id"]), tenant_id=tenant_id)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/multi-agent/runs/{run_id}")
+def api_get_interactive_agent_run(request: Request, run_id: int):
+    user = require_user(request)
+    tenant_id = repair_text(user.get("organization")) or f"user:{user['id']}"
+    try:
+        return get_legal_agent_run(run_id, user_id=int(user["id"]), tenant_id=tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/api/multi-agent/runs/{run_id}/events")
+def api_get_interactive_agent_events(request: Request, run_id: int, after_seq: int = Query(0, ge=0)):
+    user = require_user(request)
+    tenant_id = repair_text(user.get("organization")) or f"user:{user['id']}"
+    try:
+        return list_legal_agent_events(
+            run_id,
+            user_id=int(user["id"]),
+            tenant_id=tenant_id,
+            after_seq=after_seq,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/api/multi-agent/runs/{run_id}/submissions")
+def api_submit_interactive_human_turn(request: Request, run_id: int, payload: HumanSubmissionCreate):
+    user = require_user(request)
+    tenant_id = repair_text(user.get("organization")) or f"user:{user['id']}"
+    try:
+        return submit_human_turn(run_id, payload, user_id=int(user["id"]), tenant_id=tenant_id)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/multi-agent/runs/{run_id}/cancel")
+def api_cancel_interactive_agent_run(request: Request, run_id: int):
+    user = require_user(request)
+    tenant_id = repair_text(user.get("organization")) or f"user:{user['id']}"
+    try:
+        return cancel_legal_agent_run(run_id, user_id=int(user["id"]), tenant_id=tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _current_preference_owner(request: Request) -> tuple[str, int]:
+    user = require_user(request)
+    tenant_id = repair_text(user.get("organization")) or f"user:{user['id']}"
+    return tenant_id, int(user["id"])
+
+
+@router.get("/api/users/me/preferences")
+def api_get_user_preferences(request: Request):
+    tenant_id, user_id = _current_preference_owner(request)
+    return get_user_preference_summary(tenant_id=tenant_id, user_id=user_id)
+
+
+@router.put("/api/users/me/preferences/tracking")
+def api_set_user_preference_tracking(request: Request, payload: PreferenceTrackingUpdate):
+    tenant_id, user_id = _current_preference_owner(request)
+    return set_preference_tracking(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        enabled=payload.enabled,
+    )
+
+
+@router.put("/api/users/me/preferences")
+def api_update_user_preferences(request: Request, payload: UserPreferenceUpdate):
+    tenant_id, user_id = _current_preference_owner(request)
+    try:
+        return update_explicit_preferences(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            response_style=payload.response_style,
+            focus_areas=payload.focus_areas,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/api/users/me/preferences/history")
+def api_clear_user_preference_history(request: Request):
+    tenant_id, user_id = _current_preference_owner(request)
+    return clear_user_preference_history(tenant_id=tenant_id, user_id=user_id)
+
+
+# Deprecated aliases retained for existing clients. They now address a plain
+# database-backed preference summary, never an Agent memory/context.
+@router.get("/api/multi-agent/review-memory", deprecated=True)
+def api_get_legacy_review_memory(request: Request):
+    return api_get_user_preferences(request)
+
+
+@router.put("/api/multi-agent/review-memory")
+def api_set_legacy_review_memory(request: Request, payload: PreferenceTrackingUpdate):
+    return api_set_user_preference_tracking(request, payload)
+
+
+@router.delete("/api/multi-agent/review-memory")
+def api_clear_legacy_review_memory(request: Request):
+    return api_clear_user_preference_history(request)
 
 
 @router.post("/api/agent/collaborate")
@@ -2313,6 +2760,12 @@ def api_rag_vector_status(request: Request):
     return get_vector_status()
 
 
+@router.get("/api/rag/graph-status")
+def api_rag_graph_status(request: Request):
+    require_user(request)
+    return get_legal_graph_status()
+
+
 @router.post("/api/rag/rebuild-vectors")
 def api_rag_rebuild_vectors(
     request: Request,
@@ -2333,6 +2786,16 @@ def api_rag_rebuild_hybrid(
 ):
     require_admin(request)
     return rebuild_hybrid_index(source_filter=source, limit=limit, module=normalize_module(module))
+
+
+@router.post("/api/rag/rebuild-graph")
+def api_rag_rebuild_graph(
+    request: Request,
+    source: str = Query("all"),
+    limit: int | None = Query(None, ge=1),
+):
+    require_admin(request)
+    return rebuild_legal_graph(source_filter=source, limit=limit)
 
 
 @router.post("/api/rag/export")
@@ -2399,16 +2862,22 @@ def api_sync_all(request: Request):
 
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, next: str = Query("/"), message: str = Query("")):
-    context = _base_context(request, "login")
-    context.update(
-        {
-            "next_url": _normalize_next_url(next),
-            "auth_error": str(message or "").strip(),
-            "login_value": "",
-            "page_notice": "",
-        }
+    lang = normalize_lang(request.cookies.get(LANG_COOKIE))
+    tr = make_translator(lang)
+    raw_message = str(message or "").strip()
+    if raw_message in {"已退出登录，请重新登录", "已退出登录，请重新登录。"}:
+        raw_message = tr("auth.message.signed_out")
+    elif raw_message.startswith("登录状态已过期") or raw_message.lower() in {"not authenticated", "authentication required"}:
+        raw_message = tr("auth.message.session_expired")
+    return _cache_safe_template(
+        "login.html",
+        _login_context(request, next_url=next, auth_error=raw_message),
     )
-    return _cache_safe_template("login.html", context)
+
+
+@router.get("/api/auth/login-challenge")
+def api_login_challenge(request: Request):
+    return _issue_login_challenge(request)
 
 
 @router.get("/register", response_class=HTMLResponse)
@@ -2430,21 +2899,55 @@ def login_submit(
     request: Request,
     login: str = Form(""),
     password: str = Form(""),
+    challenge_id: str = Form(""),
+    challenge_answer: str = Form(""),
     next: str = Form("/"),
 ):
+    lang = normalize_lang(request.cookies.get(LANG_COOKIE))
+    tr = make_translator(lang)
+    clean_login = str(login or "").strip()
+    if not clean_login:
+        return _cache_safe_template(
+            "login.html",
+            _login_context(request, next_url=next, auth_error=tr("auth.validation.identity_required")),
+            status_code=400,
+        )
+    if len(clean_login) < 2:
+        return _cache_safe_template(
+            "login.html",
+            _login_context(request, next_url=next, auth_error=tr("auth.validation.identity_short"), login_value=login),
+            status_code=400,
+        )
+    if not password:
+        return _cache_safe_template(
+            "login.html",
+            _login_context(request, next_url=next, auth_error=tr("auth.validation.password_required"), login_value=login),
+            status_code=400,
+        )
+    if len(password) < 6:
+        return _cache_safe_template(
+            "login.html",
+            _login_context(request, next_url=next, auth_error=tr("auth.validation.password_short"), login_value=login),
+            status_code=400,
+        )
+    challenge_error = _consume_login_challenge(request, challenge_id, challenge_answer)
+    if challenge_error:
+        return _cache_safe_template(
+            "login.html",
+            _login_context(request, next_url=next, auth_error=tr(challenge_error), login_value=login),
+            status_code=400,
+        )
     try:
         user = authenticate_user(login, password)
         set_session_user(request, user)
         return RedirectResponse(url=_normalize_next_url(next, user), status_code=303)
     except HTTPException as exc:
-        context = _base_context(request, "login")
-        context.update(
-            {
-                "next_url": _normalize_next_url(next),
-                "auth_error": str(exc.detail),
-                "login_value": login,
-                "page_notice": "",
-            }
+        error_key = "auth.error.disabled" if exc.status_code == 403 else "auth.error.credentials"
+        context = _login_context(
+            request,
+            next_url=next,
+            auth_error=tr(error_key),
+            login_value=login,
         )
         return _cache_safe_template("login.html", context, status_code=exc.status_code)
 

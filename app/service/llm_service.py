@@ -28,31 +28,33 @@ _HTTP_SESSION.trust_env = False
 _CIRCUIT_OPEN_UNTIL: dict[str, float] = {}
 
 
-def _timeout_value() -> int:
+def _timeout_value(timeout_seconds: int | None = None) -> int:
+    if timeout_seconds is not None:
+        return max(1, int(timeout_seconds))
     return max(settings.request_timeout, settings.llm_timeout, 30)
 
 
-def _circuit_key(provider: str) -> str:
+def _circuit_key(provider: str, model: str | None = None) -> str:
     if provider == "custom":
-        return f"custom:{_get_custom_base_url()}:{settings.custom_model}"
+        return f"custom:{_get_custom_base_url()}:{model or settings.custom_model}"
     if provider == "openai":
-        return f"openai:{settings.openai_base_url}:{settings.openai_model}"
-    return f"spark:{settings.spark_base_url}:{settings.spark_model}"
+        return f"openai:{settings.openai_base_url}:{model or settings.openai_model}"
+    return f"spark:{settings.spark_base_url}:{model or settings.spark_model}"
 
 
 def _circuit_failure_seconds() -> int:
     return max(0, int(getattr(settings, "llm_circuit_breaker_seconds", 120)))
 
 
-def _check_circuit(provider: str):
-    key = _circuit_key(provider)
+def _check_circuit(provider: str, model: str | None = None):
+    key = _circuit_key(provider, model)
     open_until = float(_CIRCUIT_OPEN_UNTIL.get(key) or 0)
     if open_until > time.time():
         wait_seconds = int(open_until - time.time())
         raise LLMServiceError(f"{provider} model endpoint is temporarily marked unavailable for {wait_seconds}s.")
 
 
-def _mark_circuit_failure(provider: str, error_message: str):
+def _mark_circuit_failure(provider: str, error_message: str, model: str | None = None):
     seconds = _circuit_failure_seconds()
     if seconds <= 0:
         return
@@ -73,11 +75,11 @@ def _mark_circuit_failure(provider: str, error_message: str):
         "504",
     ]
     if any(marker in lowered for marker in transient_markers):
-        _CIRCUIT_OPEN_UNTIL[_circuit_key(provider)] = time.time() + seconds
+        _CIRCUIT_OPEN_UNTIL[_circuit_key(provider, model)] = time.time() + seconds
 
 
-def _mark_circuit_success(provider: str):
-    _CIRCUIT_OPEN_UNTIL.pop(_circuit_key(provider), None)
+def _mark_circuit_success(provider: str, model: str | None = None):
+    _CIRCUIT_OPEN_UNTIL.pop(_circuit_key(provider, model), None)
 
 
 def get_llm_provider() -> str:
@@ -179,6 +181,11 @@ def _create_openai_structured_response(
     schema: dict,
     instructions: str,
     user_input: str,
+    *,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    timeout_seconds: int | None = None,
 ) -> dict:
     schema_text = json.dumps(schema, ensure_ascii=False)
     messages = [
@@ -198,10 +205,10 @@ def _create_openai_structured_response(
     ]
 
     payload = {
-        "model": settings.openai_model,
+        "model": model or settings.openai_model,
         "messages": messages,
-        "temperature": 0.3,
-        "max_tokens": 4096,
+        "temperature": 0.3 if temperature is None else temperature,
+        "max_tokens": max_tokens or 4096,
         "response_format": {"type": "json_object"},
     }
 
@@ -213,7 +220,7 @@ def _create_openai_structured_response(
                 "Content-Type": "application/json",
             },
             json=payload,
-            timeout=_timeout_value(),
+            timeout=_timeout_value(timeout_seconds),
         )
     except requests.RequestException as exc:
         raise LLMServiceError(f"OpenAI request failed: {exc}") from exc
@@ -229,9 +236,11 @@ def _create_openai_structured_response(
 
     return {
         "data": parsed,
-        "model": data.get("model", settings.openai_model),
+        "model": data.get("model", model or settings.openai_model),
         "response_id": data.get("id", ""),
         "provider": "openai",
+        "http_attempts": 1,
+        "usage": data.get("usage") or {},
     }
 
 
@@ -291,7 +300,7 @@ def _spark_messages(schema_name: str, schema: dict, instructions: str, user_inpu
     ]
 
 
-def _spark_request_payload(messages: list[dict]) -> dict:
+def _spark_request_payload(messages: list[dict], *, domain: str | None = None) -> dict:
     return {
         "header": {
             "app_id": settings.spark_app_id,
@@ -299,7 +308,7 @@ def _spark_request_payload(messages: list[dict]) -> dict:
         },
         "parameter": {
             "chat": {
-                "domain": settings.spark_domain,
+                "domain": domain or settings.spark_domain,
                 "temperature": settings.spark_temperature,
             }
         },
@@ -354,13 +363,16 @@ def _create_spark_structured_response(
     schema: dict,
     instructions: str,
     user_input: str,
+    *,
+    model: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> dict:
     messages = _spark_messages(schema_name=schema_name, schema=schema, instructions=instructions, user_input=user_input)
-    payload = _spark_request_payload(messages)
+    payload = _spark_request_payload(messages, domain=model)
     signed_url = _spark_signed_url()
 
     try:
-        ws = create_connection(signed_url, timeout=_timeout_value())
+        ws = create_connection(signed_url, timeout=_timeout_value(timeout_seconds))
     except Exception as exc:
         raise LLMServiceError(f"Spark WebSocket connect failed: {exc}") from exc
 
@@ -380,9 +392,11 @@ def _create_spark_structured_response(
 
     return {
         "data": parsed,
-        "model": settings.spark_model,
+        "model": model or settings.spark_model,
         "response_id": response_id,
         "provider": "spark",
+        "http_attempts": 1,
+        "usage": {},
     }
 
 
@@ -391,6 +405,11 @@ def _create_custom_structured_response(
     schema: dict,
     instructions: str,
     user_input: str,
+    *,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    timeout_seconds: int | None = None,
 ) -> dict:
     schema_text = json.dumps(schema, ensure_ascii=False)
     messages = [
@@ -410,10 +429,10 @@ def _create_custom_structured_response(
     ]
 
     payload = {
-        "model": settings.custom_model,
+        "model": model or settings.custom_model,
         "messages": messages,
-        "temperature": settings.custom_temperature,
-        "max_tokens": settings.custom_max_tokens,
+        "temperature": settings.custom_temperature if temperature is None else temperature,
+        "max_tokens": max_tokens or settings.custom_max_tokens,
     }
     if getattr(settings, "custom_strict_json_mode", True):
         payload["response_format"] = {"type": "json_object"}
@@ -429,11 +448,12 @@ def _create_custom_structured_response(
             f"{base_url}/chat/completions",
             headers=headers,
             json=payload,
-            timeout=_timeout_value(),
+            timeout=_timeout_value(timeout_seconds),
         )
     except requests.RequestException as exc:
         raise LLMServiceError(f"Custom model request failed: {exc}") from exc
 
+    http_attempts = 1
     if response.status_code >= 400 and "response_format" in response.text and "response_format" in payload:
         retry_payload = dict(payload)
         retry_payload.pop("response_format", None)
@@ -442,10 +462,11 @@ def _create_custom_structured_response(
                 f"{base_url}/chat/completions",
                 headers=headers,
                 json=retry_payload,
-                timeout=_timeout_value(),
+                timeout=_timeout_value(timeout_seconds),
             )
         except requests.RequestException as exc:
             raise LLMServiceError(f"Custom model request failed: {exc}") from exc
+        http_attempts += 1
 
     if response.status_code >= 400:
         raise LLMServiceError(
@@ -458,9 +479,11 @@ def _create_custom_structured_response(
 
     return {
         "data": parsed,
-        "model": data.get("model", settings.custom_model),
+        "model": data.get("model", model or settings.custom_model),
         "response_id": data.get("id", ""),
         "provider": "custom",
+        "http_attempts": http_attempts,
+        "usage": data.get("usage") or {},
     }
 
 
@@ -469,6 +492,12 @@ def create_structured_response(
     schema: dict,
     instructions: str,
     user_input: str,
+    *,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    timeout_seconds: int | None = None,
+    bypass_circuit_breaker: bool = False,
 ) -> dict:
     if not is_llm_configured():
         provider = get_llm_provider()
@@ -483,17 +512,43 @@ def create_structured_response(
         )
 
     provider = get_llm_provider()
-    _check_circuit(provider)
+    if not bypass_circuit_breaker:
+        _check_circuit(provider, model)
     try:
         if provider == "openai":
-            response = _create_openai_structured_response(schema_name, schema, instructions, user_input)
+            response = _create_openai_structured_response(
+                schema_name,
+                schema,
+                instructions,
+                user_input,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout_seconds=timeout_seconds,
+            )
         elif provider == "custom":
-            response = _create_custom_structured_response(schema_name, schema, instructions, user_input)
+            response = _create_custom_structured_response(
+                schema_name,
+                schema,
+                instructions,
+                user_input,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout_seconds=timeout_seconds,
+            )
         else:
-            response = _create_spark_structured_response(schema_name, schema, instructions, user_input)
+            response = _create_spark_structured_response(
+                schema_name,
+                schema,
+                instructions,
+                user_input,
+                model=model,
+                timeout_seconds=timeout_seconds,
+            )
     except LLMServiceError as exc:
-        _mark_circuit_failure(provider, str(exc))
+        _mark_circuit_failure(provider, str(exc), model)
         raise
 
-    _mark_circuit_success(provider)
+    _mark_circuit_success(provider, model)
     return response

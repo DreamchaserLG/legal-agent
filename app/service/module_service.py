@@ -311,6 +311,42 @@ def _source_title_pair(original_title: str, preview: dict | None) -> dict:
     return {"primary": english or original, "secondary": secondary}
 
 
+_CJK_PATTERN = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _contains_cjk(value: str) -> bool:
+    return bool(_CJK_PATTERN.search(repair_text(value)))
+
+
+def _attach_law_bilingual(law: dict) -> dict:
+    """为法规条目补齐「原始英文 / 中文」双字段，供页面上的独立中英切换使用。
+
+    - title_en / summary_en 始终指向来源原文（加拿大法源为英文）
+    - summary_zh 只有在确实存在中文内容时才写入，避免假装翻译
+    """
+    if not isinstance(law, dict):
+        return law
+    title = repair_text(law.get("title"))
+    article_summary = repair_text(law.get("article_summary"))
+    reason = repair_text(law.get("reason"))
+
+    english_summary = repair_text(law.get("summary_en") or law.get("reason_en"))
+    if not english_summary and article_summary and not _contains_cjk(article_summary):
+        english_summary = article_summary
+
+    chinese_summary = repair_text(law.get("summary_zh"))
+    if not chinese_summary:
+        if article_summary and _contains_cjk(article_summary):
+            chinese_summary = article_summary
+        elif reason and _contains_cjk(reason):
+            chinese_summary = reason
+
+    law["title_en"] = repair_text(law.get("title_en")) or title
+    law["summary_en"] = english_summary or article_summary or reason
+    law["summary_zh"] = chinese_summary
+    return law
+
+
 def _row_preview(row: dict) -> dict:
     meta = row.get("raw_json") or {}
     preview = ((meta.get("translations") or {}).get("preview") or {})
@@ -1257,6 +1293,12 @@ def _build_canada_packet(analysis_result: dict, refresh: bool = False) -> dict:
         limit=max(12, int(getattr(settings, "default_search_limit", 8) or 8)),
         keywords=retrieval_keywords,
     )
+
+    for law in laws:
+        _attach_law_bilingual(law)
+    for row in case_rows:
+        for rule in row.get("rules") or []:
+            _attach_law_bilingual(rule)
 
     return {
         "module_code": "canada",

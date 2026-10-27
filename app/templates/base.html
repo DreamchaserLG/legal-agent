@@ -1,57 +1,127 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{% if lang == 'zh' %}zh-CN{% else %}en-CA{% endif %}">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+    (function () {
+        try {
+            var root = document.documentElement;
+            var mode = localStorage.getItem('ui-theme') || 'system';
+            var accent = localStorage.getItem('ui-accent') || 'claude';
+            var dark = mode === 'dark' ||
+                (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            root.setAttribute('data-theme', dark ? 'dark' : 'light');
+            root.setAttribute('data-theme-mode', mode);
+            root.setAttribute('data-accent', accent);
+        } catch (e) {}
+    })();
+    </script>
     <title>{% block title %}{{ app_name }}{% endblock %}</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/style.css?v=20261027k" />
+    <script>
+        window.APP_LANG = "{{ 'zh' if lang == 'zh' else 'en' }}";
+    </script>
+    <script src="/static/i18n-en.js?v=20261027" defer></script>
 </head>
 <body class="page-{{ page_id }}">
 {% set is_auth_page = page_id in ['login', 'register'] %}
 
+<a class="skip-link" href="#main-content">{{ tr('nav.skip') }}</a>
+
 <header class="site-header">
     <div class="shell header-row">
-        <a class="brand" href="{% if is_auth_page %}/{% elif current_user %}{% if current_user.is_admin %}/admin{% else %}/home{% endif %}{% else %}/{% endif %}">{{ app_name }}</a>
+        <a class="brand" href="{% if is_auth_page %}/{% elif current_user %}{% if current_user.is_admin %}/admin{% else %}/home{% endif %}{% else %}/{% endif %}" aria-label="{{ app_name }} home">
+            <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v18M8 21h8M12 6l-6 2 6-2 6 2M6 8l-2.6 5.2a2.9 2.9 0 0 0 5.2 0L6 8zm12 0l-2.6 5.2a2.9 2.9 0 0 0 5.2 0L18 8z"/></svg></span>
+            <span class="brand-copy"><strong>{{ app_name }}</strong><small>{{ tr('shell.brand_subtitle') }}</small></span>
+        </a>
 
         {% if current_user and not is_auth_page %}
-        <nav class="site-nav">
-            <a class="{% if page_id in ['home', 'search'] %}active{% endif %}" href="/home">首页</a>
-            <a class="{% if page_id == 'analysis' %}active{% endif %}" href="/analysis">案情分析</a>
-            <a class="{% if page_id in ['hearing', 'predict'] %}active{% endif %}" href="/hearing">庭审模拟</a>
-            <a class="{% if page_id == 'appeal' %}active{% endif %}" href="/appeal-simulation">上诉模拟</a>
-            <a class="{% if page_id in ['histories', 'histories_graph', 'history_detail'] %}active{% endif %}" href="/histories">历史记录</a>
+        <nav class="site-nav" aria-label="Primary navigation">
+            <a class="{% if page_id == 'home' %}active{% endif %}" href="/home">{{ tr('nav.home') }}</a>
+            <a class="{% if page_id == 'search' %}active{% endif %}" href="/results">{{ tr('nav.research') }}</a>
+            <a class="{% if page_id == 'analysis' %}active{% endif %}" href="/analysis">{{ tr('nav.analysis') }}</a>
+            <a class="{% if page_id in ['hearing', 'predict'] %}active{% endif %}" href="/hearing">{{ tr('nav.hearing') }}</a>
+            <a class="{% if page_id == 'agent_hearing' %}active{% endif %}" href="/agent-hearing">{{ tr('nav.review') }}</a>
+            <a class="{% if page_id == 'appeal' %}active{% endif %}" href="/appeal-simulation">{{ tr('nav.appeal') }}</a>
+            <a class="{% if page_id in ['histories', 'histories_graph', 'history_detail'] %}active{% endif %}" href="/histories">{{ tr('nav.history') }}</a>
             {% if current_user.is_admin %}
-            <a class="{% if page_id in ['admin_users', 'admin_histories', 'admin_cases', 'admin_rules', 'admin_imports'] %}active{% endif %}" href="/admin/users">管理员后台</a>
+            <a class="{% if page_id in ['admin_users', 'admin_histories', 'admin_cases', 'admin_rules', 'admin_imports'] %}active{% endif %}" href="/admin/users">{{ tr('nav.admin') }}</a>
             {% endif %}
         </nav>
         {% endif %}
 
         <div class="header-actions">
+            <div class="header-controls">
+                <div class="lang-switch" role="group" aria-label="{{ tr('shell.lang_label') }}">
+                    {% for opt in lang_options %}
+                    <a class="lang-option{% if opt.active %} is-active{% endif %}"
+                       href="/lang/{{ opt.code }}?next={{ request.url.path }}"
+                       hreflang="{{ 'zh-CN' if opt.code == 'zh' else 'en-CA' }}"
+                       {% if opt.active %}aria-current="true"{% endif %}>{{ opt.label }}</a>
+                    {% endfor %}
+                </div>
+
+                <div class="theme-switch" id="theme-switch">
+                    <button type="button" class="theme-trigger" id="theme-trigger"
+                            aria-haspopup="true" aria-expanded="false"
+                            aria-controls="theme-menu" aria-label="{{ tr('theme.label') }}">
+                        <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.2 12H1.8M22.2 12h-2.4M6.3 6.3 4.6 4.6M19.4 19.4l-1.7-1.7M6.3 17.7l-1.7 1.7M19.4 4.6l-1.7 1.7"/></svg>
+                        <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.3A8.6 8.6 0 0 1 9.7 3.5a8.6 8.6 0 1 0 10.8 10.8z"/></svg>
+                    </button>
+
+                    <div class="theme-menu" id="theme-menu" role="dialog" aria-label="{{ tr('theme.label') }}">
+                        <p>{{ tr('theme.appearance') }}</p>
+                        <div class="theme-modes">
+                            <button type="button" class="theme-mode" data-theme-mode="light">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.5 6.5 5 5M19 19l-1.5-1.5M6.5 17.5 5 19M19 5l-1.5 1.5"/></svg>
+                                <span>{{ tr('theme.light') }}</span>
+                            </button>
+                            <button type="button" class="theme-mode" data-theme-mode="dark">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.3A8.6 8.6 0 0 1 9.7 3.5a8.6 8.6 0 1 0 10.8 10.8z"/></svg>
+                                <span>{{ tr('theme.dark') }}</span>
+                            </button>
+                            <button type="button" class="theme-mode" data-theme-mode="system">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12.5" rx="2"/><path d="M9 20.5h6M12 16.5v4"/></svg>
+                                <span>{{ tr('theme.system') }}</span>
+                            </button>
+                        </div>
+
+                        <p>{{ tr('theme.accent') }}</p>
+                        <div class="theme-swatches">
+                            <button type="button" class="theme-swatch" data-accent="blue" style="--swatch:#1F6FEB" title="{{ tr('theme.blue') }}" aria-label="{{ tr('theme.blue') }}"></button>
+                            <button type="button" class="theme-swatch" data-accent="indigo" style="--swatch:#4F46E5" title="{{ tr('theme.indigo') }}" aria-label="{{ tr('theme.indigo') }}"></button>
+                            <button type="button" class="theme-swatch" data-accent="teal" style="--swatch:#0F766E" title="{{ tr('theme.teal') }}" aria-label="{{ tr('theme.teal') }}"></button>
+                            <button type="button" class="theme-swatch" data-accent="amber" style="--swatch:#B45309" title="{{ tr('theme.amber') }}" aria-label="{{ tr('theme.amber') }}"></button>
+                            <button type="button" class="theme-swatch" data-accent="rose" style="--swatch:#BE123C" title="{{ tr('theme.rose') }}" aria-label="{{ tr('theme.rose') }}"></button>
+                            <button type="button" class="theme-swatch" data-accent="claude" style="--swatch:#D97757" title="{{ tr('theme.claude') }}" aria-label="{{ tr('theme.claude') }}"></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
             {% if not is_auth_page %}
-            {% if current_user and last_query.url %}
-            <a class="status-pill neutral" href="{{ last_query.url }}">继续上次访问</a>
-            {% endif %}
-            <div class="status-pill {% if dashboard.llm_configured %}ready{% else %}waiting{% endif %}">
+            <div class="status-pill system-status {% if dashboard.llm_configured %}ready{% else %}waiting{% endif %}" title="{% if dashboard.llm_configured %}{{ dashboard.llm_provider }} / {{ dashboard.llm_model }}{% else %}Local retrieval mode{% endif %}">
+                <span class="status-dot" aria-hidden="true"></span>
                 {% if dashboard.llm_configured %}
-                模型已接入 / {{ dashboard.llm_provider }} / {{ dashboard.llm_model }}
+                {{ tr('shell.status.model') }}
                 {% else %}
-                当前使用本地检索与结构化分析
+                {{ tr('shell.status.local') }}
                 {% endif %}
             </div>
+            {% if current_user and last_query.url %}
+            <a class="header-resume" href="{{ last_query.url }}">{{ tr('nav.resume') }}</a>
+            {% endif %}
             {% if current_user %}
             <button type="button" class="avatar-button" id="profile-trigger" aria-haspopup="dialog" aria-controls="profile-modal">
                 <span class="avatar-initial">{{ (current_user.real_name or current_user.username or "U")[:1]|upper }}</span>
                 <span class="avatar-name">{{ current_user.real_name or current_user.username }}</span>
             </button>
             <form method="post" action="/auth/logout" class="inline-form">
-                <button type="submit" class="secondary compact-action">退出</button>
+                <button type="submit" class="secondary compact-action">{{ tr('nav.signout') }}</button>
             </form>
             {% else %}
-            <a class="pager-link secondary" href="/login">登录</a>
-            <a class="pager-link" href="/register">注册</a>
+            <a class="pager-link secondary" href="/login">{{ tr('nav.signin') }}</a>
+            <a class="pager-link" href="/register">{{ tr('nav.register') }}</a>
             {% endif %}
             {% endif %}
         </div>
@@ -126,6 +196,51 @@
                 <p class="notice-text profile-status" id="password-status" hidden></p>
             </form>
         </div>
+
+        <section class="tool-panel compact profile-preference-panel" id="preference-summary-panel">
+            <div class="preference-panel-head">
+                <div>
+                    <p class="panel-kicker">偏好与复盘摘要</p>
+                    <h3>我的使用习惯</h3>
+                </div>
+                <label class="preference-tracking-switch">
+                    <input id="preference-tracking-enabled" type="checkbox" />
+                    <span>记录去标识化统计</span>
+                </label>
+            </div>
+            <p class="muted preference-privacy-note">这里只汇总表达长度、证据绑定数量和复盘类别，不保存原始案情，不参与代理或法官判断。</p>
+            <div class="preference-summary-grid" id="preference-summary-grid" aria-live="polite">
+                <article><span>已复盘</span><strong id="preference-review-count">0 次</strong></article>
+                <article><span>表达习惯</span><strong id="preference-style-summary">暂无足够数据</strong></article>
+                <article><span>证据绑定</span><strong id="preference-evidence-count">0 次</strong></article>
+                <article><span>事实绑定</span><strong id="preference-fact-count">0 次</strong></article>
+            </div>
+            <div class="preference-detail-grid">
+                <form id="preference-form" class="preference-form">
+                    <label for="preference-response-style">期望回复方式</label>
+                    <select id="preference-response-style" name="response_style">
+                        <option value="concise">简洁</option>
+                        <option value="balanced" selected>均衡</option>
+                        <option value="detailed">详细</option>
+                    </select>
+                    <label for="preference-focus-areas">重点关注（用逗号分隔）</label>
+                    <input id="preference-focus-areas" name="focus_areas" type="text" maxlength="240" placeholder="例如：证据完整性，合同履行" />
+                    <label for="preference-note">自定义说明</label>
+                    <textarea id="preference-note" name="note" rows="3" maxlength="500" placeholder="可随时修改；只用于个人查看。"></textarea>
+                    <div class="action-row">
+                        <button type="submit" class="secondary">保存偏好</button>
+                        <button type="button" class="danger-text-button" id="preference-clear-history">清除摘要与历史</button>
+                    </div>
+                </form>
+                <div>
+                    <h4>常见复盘重点</h4>
+                    <ul id="preference-focus-summary" class="preference-list"><li>暂无记录</li></ul>
+                    <h4>针对性建议</h4>
+                    <ul id="preference-suggestions" class="preference-list"><li>完成复盘后将在此显示建议</li></ul>
+                </div>
+            </div>
+            <p class="notice-text profile-status" id="preference-status" hidden></p>
+        </section>
     </section>
 </div>
 {% endif %}
@@ -161,7 +276,7 @@
     </section>
 </div>
 
-<main>
+<main id="main-content">
     {% if page_notice %}
     <section class="band">
         <div class="shell">
@@ -173,9 +288,31 @@
 </main>
 
 <footer class="site-footer">
-    <div class="shell footer-row">
-        <span>本地资料条目 {{ dashboard.local_material_items or dashboard.external_total_items }}</span>
-        <span>已分析案情 {{ dashboard.analyzed_case_count }}</span>
+    <div class="shell footer-grid">
+        <div class="footer-brand">
+            <strong>{{ app_name }}</strong>
+            <p>{{ tr('footer.blurb') }}</p>
+        </div>
+        <div>
+            <strong>{{ tr('footer.product') }}</strong>
+            <a href="/results">{{ tr('footer.p1') }}</a>
+            <a href="/analysis">{{ tr('footer.p2') }}</a>
+            <a href="/hearing">{{ tr('footer.p3') }}</a>
+        </div>
+        <div>
+            <strong>{{ tr('footer.assurance') }}</strong>
+            <span>{{ tr('footer.a1') }}</span>
+            <span>{{ tr('footer.a2') }}</span>
+            <span>{{ tr('footer.a3') }}</span>
+        </div>
+        <div class="footer-metrics">
+            <span><strong>{{ dashboard.local_material_items or dashboard.external_total_items }}</strong> {{ tr('footer.metrics') }}</span>
+            <span><strong>{{ dashboard.analyzed_case_count }}</strong> {{ tr('footer.analyses') }}</span>
+        </div>
+    </div>
+    <div class="shell footer-bottom">
+        <span>{{ tr('footer.note') }}</span>
+        <span>{{ tr('footer.rights') }}</span>
     </div>
 </footer>
 
@@ -309,8 +446,12 @@
             if (event.defaultPrevented) return;
             if (link.target && link.target !== '_self') return;
             if (link.hasAttribute('download')) return;
-            const targetUrl = sameOriginAction(link.getAttribute('href'));
+            const href = link.getAttribute('href') || '';
+            if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
+            const targetUrl = sameOriginAction(href);
             if (!targetUrl) return;
+            // instant feedback so a slow navigation never looks like a dead click
+            document.body.classList.add('is-navigating');
             if (!['/results', '/analysis', '/predict'].some((prefix) => targetUrl.pathname.startsWith(prefix))) return;
             if (!targetUrl.search) return;
             showLoading(modeFromPath(targetUrl.pathname));
@@ -341,7 +482,7 @@
 
             slider.dataset.sliderReady = 'true';
 
-            const cards = () => Array.from(track.children).filter((item) => item instanceof HTMLElement);
+            const cards = () => Array.from(track.children).filter((item) => item instanceof HTMLElement && !item.classList.contains('is-filtered-out'));
 
             function currentIndex() {
                 const items = cards();
@@ -428,6 +569,10 @@
     const passwordForm = document.getElementById('password-form');
     const profileStatus = document.getElementById('profile-status');
     const passwordStatus = document.getElementById('password-status');
+    const preferenceForm = document.getElementById('preference-form');
+    const preferenceStatus = document.getElementById('preference-status');
+    const preferenceTracking = document.getElementById('preference-tracking-enabled');
+    const preferenceClear = document.getElementById('preference-clear-history');
 
     if (!modal || !trigger) return;
 
@@ -437,6 +582,7 @@
         modal.inert = false;
         modal.setAttribute('aria-hidden', 'false');
         document.body.classList.add('modal-active');
+        loadPreferences();
     }
 
     function hideModal() {
@@ -455,12 +601,10 @@
         target.classList.toggle('status-success', !isError);
     }
 
-    async function sendJson(url, method, payload) {
-        const response = await fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
+    async function sendJson(url, method = 'GET', payload) {
+        const options = {method, headers: { 'Content-Type': 'application/json' }};
+        if (payload !== undefined) options.body = JSON.stringify(payload);
+        const response = await fetch(url, options);
         const data = await response.json().catch(() => ({}));
         if (response.status === 401) {
             window.location.href = '/login?message=' + encodeURIComponent('登录状态已过期，请重新登录');
@@ -470,6 +614,39 @@
             throw new Error(data.detail || data.message || '请求失败');
         }
         return data;
+    }
+
+    const escapePreferenceHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+
+    function renderPreferenceList(elementId, items, formatter) {
+        const element = document.getElementById(elementId);
+        if (!element) return;
+        element.innerHTML = items.length
+            ? items.map((item) => `<li>${escapePreferenceHtml(formatter(item))}</li>`).join('')
+            : '<li>暂无记录</li>';
+    }
+
+    function renderPreferences(data) {
+        const summary = data.summary || {};
+        const explicit = data.explicit_preferences || {};
+        preferenceTracking.checked = Boolean(data.tracking_enabled);
+        document.getElementById('preference-review-count').textContent = `${summary.completed_reviews || 0} 次`;
+        document.getElementById('preference-style-summary').textContent = summary.communication_style || '暂无足够数据';
+        document.getElementById('preference-evidence-count').textContent = `${summary.evidence_bindings || 0} 次`;
+        document.getElementById('preference-fact-count').textContent = `${summary.fact_bindings || 0} 次`;
+        document.getElementById('preference-response-style').value = explicit.response_style || 'balanced';
+        document.getElementById('preference-focus-areas').value = (explicit.focus_areas || []).join('，');
+        document.getElementById('preference-note').value = explicit.note || '';
+        renderPreferenceList('preference-focus-summary', summary.common_focus_areas || [], (item) => `${item.label}（${item.count} 次）`);
+        renderPreferenceList('preference-suggestions', summary.suggestions || [], (item) => item);
+    }
+
+    async function loadPreferences() {
+        try {
+            renderPreferences(await sendJson('/api/users/me/preferences'));
+        } catch (error) {
+            setStatus(preferenceStatus, error.message || '偏好摘要加载失败', true);
+        }
     }
 
     trigger.addEventListener('click', (event) => {
@@ -516,8 +693,135 @@
             setStatus(passwordStatus, error.message || '密码更新失败', true);
         }
     });
+
+    preferenceTracking?.addEventListener('change', async () => {
+        try {
+            const data = await sendJson('/api/users/me/preferences/tracking', 'PUT', {enabled: preferenceTracking.checked});
+            renderPreferences(data);
+            setStatus(preferenceStatus, preferenceTracking.checked ? '后续勾选保存的复盘将写入偏好摘要' : '偏好统计已暂停，已有摘要仍保留');
+        } catch (error) {
+            preferenceTracking.checked = !preferenceTracking.checked;
+            setStatus(preferenceStatus, error.message || '设置更新失败', true);
+        }
+    });
+
+    preferenceForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const focusAreas = document.getElementById('preference-focus-areas').value
+            .split(/[,，;；、\n]+/).map((item) => item.trim()).filter(Boolean);
+        try {
+            const data = await sendJson('/api/users/me/preferences', 'PUT', {
+                response_style: document.getElementById('preference-response-style').value,
+                focus_areas: focusAreas,
+                note: document.getElementById('preference-note').value,
+            });
+            renderPreferences(data);
+            setStatus(preferenceStatus, '个人偏好已保存');
+        } catch (error) {
+            setStatus(preferenceStatus, error.message || '偏好保存失败', true);
+        }
+    });
+
+    preferenceClear?.addEventListener('click', async () => {
+        if (!window.confirm('确定清除全部偏好摘要和去标识化历史吗？此操作不可恢复。')) return;
+        try {
+            const data = await sendJson('/api/users/me/preferences/history', 'DELETE');
+            renderPreferences(data);
+            setStatus(preferenceStatus, '偏好摘要与历史已清除');
+        } catch (error) {
+            setStatus(preferenceStatus, error.message || '清除失败', true);
+        }
+    });
 })();
 </script>
 {% endif %}
+<script>
+(function () {
+    var root = document.documentElement;
+    var wrap = document.getElementById('theme-switch');
+    var trigger = document.getElementById('theme-trigger');
+    var menu = document.getElementById('theme-menu');
+    if (!wrap || !trigger || !menu) return;
+
+    var modeButtons = menu.querySelectorAll('[data-theme-mode]');
+    var swatches = menu.querySelectorAll('[data-accent]');
+    var media = window.matchMedia('(prefers-color-scheme: dark)');
+
+    function storedMode() {
+        return root.getAttribute('data-theme-mode') || 'system';
+    }
+
+    function paint() {
+        var mode = storedMode();
+        var accent = root.getAttribute('data-accent') || 'claude';
+        modeButtons.forEach(function (btn) {
+            btn.classList.toggle('is-active', btn.getAttribute('data-theme-mode') === mode);
+        });
+        swatches.forEach(function (btn) {
+            btn.classList.toggle('is-active', btn.getAttribute('data-accent') === accent);
+        });
+    }
+
+    function applyMode(mode) {
+        var dark = mode === 'dark' || (mode === 'system' && media.matches);
+        root.setAttribute('data-theme', dark ? 'dark' : 'light');
+        root.setAttribute('data-theme-mode', mode);
+        try { localStorage.setItem('ui-theme', mode); } catch (e) {}
+        paint();
+    }
+
+    function applyAccent(accent) {
+        root.setAttribute('data-accent', accent);
+        try { localStorage.setItem('ui-accent', accent); } catch (e) {}
+        paint();
+    }
+
+    function openMenu() {
+        menu.classList.add('is-open');
+        trigger.setAttribute('aria-expanded', 'true');
+    }
+
+    function closeMenu() {
+        menu.classList.remove('is-open');
+        trigger.setAttribute('aria-expanded', 'false');
+    }
+
+    trigger.addEventListener('click', function (event) {
+        event.stopPropagation();
+        if (menu.classList.contains('is-open')) { closeMenu(); } else { openMenu(); }
+    });
+
+    modeButtons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            applyMode(btn.getAttribute('data-theme-mode'));
+        });
+    });
+
+    swatches.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            applyAccent(btn.getAttribute('data-accent'));
+        });
+    });
+
+    document.addEventListener('click', function (event) {
+        if (!wrap.contains(event.target)) closeMenu();
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') closeMenu();
+    });
+
+    var onSystemChange = function () {
+        if (storedMode() === 'system') applyMode('system');
+    };
+    if (typeof media.addEventListener === 'function') {
+        media.addEventListener('change', onSystemChange);
+    } else if (typeof media.addListener === 'function') {
+        media.addListener(onSystemChange);
+    }
+
+    paint();
+})();
+</script>
 </body>
 </html>

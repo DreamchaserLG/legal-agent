@@ -219,7 +219,8 @@ def _load_sentence_transformer_model():
             from sentence_transformers import SentenceTransformer
         except Exception as exc:
             raise EmbeddingServiceError(
-                "sentence_transformers embedding provider requires sentence-transformers and huggingface-hub."
+                "sentence_transformers embedding provider requires sentence-transformers and huggingface-hub: "
+                f"{type(exc).__name__}: {exc}"
             ) from exc
         source = _sentence_model_source()
         try:

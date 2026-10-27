@@ -1,0 +1,488 @@
+{% extends "base.html" %}
+
+{% block title %}{{ app_name }} | {{ tr('review.page_title') }}{% endblock %}
+
+{% block content %}
+<section class="band agent-run-start">
+    <div class="shell agent-start-layout">
+        <div class="agent-start-copy">
+            <p class="eyebrow">{{ tr('review.kicker') }}</p>
+            <h1>{{ tr('review.title') }}</h1>
+            <p class="hero-text">{{ tr('review.intro') }}</p>
+            <div class="agent-boundary-list" aria-label="{{ tr('review.boundary_label') }}">
+                <span>{{ tr('review.boundary.facts') }}</span>
+                <span>{{ tr('review.boundary.sources') }}</span>
+                <span>{{ tr('review.boundary.audit') }}</span>
+            </div>
+        </div>
+        <form id="agent-create-form" class="tool-panel agent-create-form">
+            <label for="agent-query">{{ tr('review.form.query') }}</label>
+            <textarea id="agent-query" name="query" rows="7" required placeholder="{{ tr('review.form.query_placeholder') }}"></textarea>
+
+            <fieldset class="agent-side-picker">
+                <legend>{{ tr('review.form.human_side') }}</legend>
+                <label><input type="radio" name="human_side" value="claimant" checked /><span>{{ tr('review.side.claimant') }}</span></label>
+                <label><input type="radio" name="human_side" value="respondent" /><span>{{ tr('review.side.respondent') }}</span></label>
+            </fieldset>
+
+            <div class="form-grid two-columns">
+                <div>
+                    <label for="agent-rounds">{{ tr('review.form.rounds') }}</label>
+                    <select id="agent-rounds" name="max_rounds">
+                        <option value="1">1 {{ tr('review.form.round_unit') }}</option>
+                        <option value="2" selected>2 {{ tr('review.form.round_unit') }}</option>
+                        <option value="3">3 {{ tr('review.form.round_unit') }}</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="agent-module">{{ tr('review.form.jurisdiction') }}</label>
+                    <select id="agent-module" name="module">
+                        <option value="canada" selected>{{ tr('review.form.canada') }}</option>
+                    </select>
+                </div>
+            </div>
+
+            <label for="agent-initial-statement">{{ tr('review.form.initial') }}</label>
+            <textarea id="agent-initial-statement" name="initial_statement" rows="5" required placeholder="{{ tr('review.form.initial_placeholder') }}"></textarea>
+
+            <label class="preference-history-choice">
+                <input id="agent-preference-history" name="preference_history_enabled" type="checkbox" />
+                <span>{{ tr('review.form.preference') }}</span>
+            </label>
+
+            <div class="action-row">
+                <button type="submit">{{ tr('review.form.start') }}</button>
+            </div>
+            <p id="agent-create-status" class="notice-text" hidden></p>
+        </form>
+    </div>
+</section>
+
+<section class="band band-alt agent-run-workbench" id="agent-run-workbench" hidden>
+    <div class="shell">
+        <header class="agent-run-header">
+            <div>
+                <p class="eyebrow" id="agent-run-label">{{ tr('review.run.label') }}</p>
+                <h2 id="agent-current-stage">{{ tr('review.stage.case_intake') }}</h2>
+            </div>
+            <div class="agent-run-controls">
+                <span id="agent-run-status" class="task-status">{{ tr('review.status.queued') }}</span>
+                <span id="agent-run-budget" class="meta-inline">{{ tr('review.round', current=1, maximum=2) }}</span>
+                <button id="agent-cancel-button" type="button" class="secondary compact-action">{{ tr('review.run.stop') }}</button>
+            </div>
+        </header>
+
+        <div id="agent-stage-rail" class="agent-stage-rail" aria-label="{{ tr('review.boundary_label') }}"></div>
+
+        <div class="agent-audit-layout">
+            <section class="agent-lanes" aria-live="polite">
+                <div class="agent-lane" data-lane="human">
+                    <header><span class="lane-marker human"></span><div><strong id="human-lane-title">{{ tr('review.lane.human', side='') }}</strong><small>{{ tr('review.lane.human_note') }}</small></div></header>
+                    <div id="human-lane-events" class="agent-lane-events"></div>
+                </div>
+                <div class="agent-lane" data-lane="agent">
+                    <header><span class="lane-marker agent"></span><div><strong id="agent-lane-title">{{ tr('review.lane.agent', side='') }}</strong><small>{{ tr('review.lane.agent_note') }}</small></div></header>
+                    <div id="agent-lane-events" class="agent-lane-events"></div>
+                </div>
+                <div class="agent-lane" data-lane="judge">
+                    <header><span class="lane-marker judge"></span><div><strong>{{ tr('review.lane.judge') }}</strong><small>{{ tr('review.lane.judge_note') }}</small></div></header>
+                    <div id="judge-lane-events" class="agent-lane-events"></div>
+                </div>
+            </section>
+
+            <aside class="agent-run-inspector">
+                <section>
+                    <div class="agent-inspector-head"><p class="panel-kicker">{{ tr('review.facts.title') }}</p><span id="case-packet-revision">v0</span></div>
+                    <div id="case-fact-list" class="agent-reference-list"></div>
+                </section>
+                <section>
+                    <div class="agent-inspector-head"><p class="panel-kicker">{{ tr('review.evidence.title') }}</p><span id="evidence-count">{{ tr('review.count', count=0) }}</span></div>
+                    <div id="agent-evidence-list" class="agent-reference-list"></div>
+                </section>
+            </aside>
+        </div>
+
+        <form id="agent-human-turn-form" class="agent-human-turn" hidden>
+            <div>
+                <p class="panel-kicker">{{ tr('review.turn.kicker') }}</p>
+                <h3 id="agent-human-turn-title">{{ tr('review.turn.title') }}</h3>
+                <p class="muted">{{ tr('review.turn.help') }}</p>
+            </div>
+            <label for="agent-human-statement">{{ tr('review.turn.statement') }}</label>
+            <textarea id="agent-human-statement" rows="6" required placeholder="{{ tr('review.turn.placeholder') }}"></textarea>
+            <fieldset class="agent-evidence-bindings">
+                <legend>{{ tr('review.turn.bind') }}</legend>
+                <div id="agent-evidence-options" class="agent-evidence-options"></div>
+            </fieldset>
+            <div class="action-row">
+                <button type="submit">{{ tr('review.turn.submit') }}</button>
+            </div>
+            <p id="agent-human-turn-status" class="notice-text" hidden></p>
+        </form>
+
+        <section id="agent-final-result" class="agent-final-result" hidden></section>
+        <p id="agent-run-disclaimer" class="notice-text agent-run-disclaimer"></p>
+    </div>
+</section>
+
+<script>
+(() => {
+    const createForm = document.getElementById('agent-create-form');
+    const createStatus = document.getElementById('agent-create-status');
+    const workbench = document.getElementById('agent-run-workbench');
+    const runLabel = document.getElementById('agent-run-label');
+    const currentStage = document.getElementById('agent-current-stage');
+    const runStatus = document.getElementById('agent-run-status');
+    const runBudget = document.getElementById('agent-run-budget');
+    const cancelButton = document.getElementById('agent-cancel-button');
+    const stageRail = document.getElementById('agent-stage-rail');
+    const turnForm = document.getElementById('agent-human-turn-form');
+    const turnTitle = document.getElementById('agent-human-turn-title');
+    const turnStatement = document.getElementById('agent-human-statement');
+    const turnStatus = document.getElementById('agent-human-turn-status');
+    const evidenceOptions = document.getElementById('agent-evidence-options');
+    const factList = document.getElementById('case-fact-list');
+    const evidenceList = document.getElementById('agent-evidence-list');
+    const packetRevision = document.getElementById('case-packet-revision');
+    const evidenceCount = document.getElementById('evidence-count');
+    const finalResult = document.getElementById('agent-final-result');
+    const disclaimer = document.getElementById('agent-run-disclaimer');
+    const laneEls = {
+        human: document.getElementById('human-lane-events'),
+        agent: document.getElementById('agent-lane-events'),
+        judge: document.getElementById('judge-lane-events'),
+    };
+
+    const locale = {{ ('zh-CN' if lang == 'zh' else 'en-CA') | tojson }};
+    const copy = {
+        sideClaimant: {{ tr('review.side.claimant') | tojson }},
+        sideRespondent: {{ tr('review.side.respondent') | tojson }},
+        humanLane: {{ tr('review.lane.human') | tojson }},
+        agentLane: {{ tr('review.lane.agent') | tojson }},
+        runLabel: {{ tr('review.run.label') | tojson }},
+        round: {{ tr('review.round') | tojson }},
+        count: {{ tr('review.count') | tojson }},
+        requestFailed: {{ tr('review.message.request_failed') | tojson }},
+        creating: {{ tr('review.message.creating') | tojson }},
+        created: {{ tr('review.message.created') | tojson }},
+        submitting: {{ tr('review.message.submitting') | tojson }},
+        submitted: {{ tr('review.message.submitted') | tojson }},
+        turnTitle: {{ tr('review.turn.title') | tojson }},
+        disclaimer: {{ tr('review.disclaimer') | tojson }},
+        eventEmpty: {{ tr('review.event.empty') | tojson }},
+        detailResults: {{ tr('review.detail.results') | tojson }},
+        detailGraphPaths: {{ tr('review.detail.graph_paths') | tojson }},
+        detailEntries: {{ tr('review.detail.entries') | tojson }},
+        detailChunks: {{ tr('review.detail.chunks') | tojson }},
+        factBuilding: {{ tr('review.fact.building') | tojson }},
+        evidenceUnnamed: {{ tr('review.evidence.unnamed') | tojson }},
+        evidencePending: {{ tr('review.evidence.pending') | tojson }},
+        evidenceOpen: {{ tr('review.evidence.open') | tojson }},
+        evidenceEmpty: {{ tr('review.evidence.empty') | tojson }},
+        evidenceNoneBindable: {{ tr('review.evidence.none_bindable') | tojson }},
+        none: {{ tr('review.none') | tojson }},
+        resultKicker: {{ tr('review.result.kicker') | tojson }},
+        resultInsufficient: {{ tr('review.result.insufficient') | tojson }},
+        resultReview: {{ tr('review.result.review') | tojson }},
+        gatePassed: {{ tr('review.result.gate_passed') | tojson }},
+        gateBlocked: {{ tr('review.result.gate_blocked') | tojson }},
+        noFindings: {{ tr('review.result.no_findings') | tojson }},
+        facts: {{ tr('review.result.facts') | tojson }},
+        evidence: {{ tr('review.result.evidence') | tojson }},
+        uncertainties: {{ tr('review.result.uncertainties') | tojson }},
+        humanReview: {{ tr('review.result.human_review') | tojson }},
+        noNew: {{ tr('review.result.no_new') | tojson }},
+        counsel: {{ tr('review.result.counsel') | tojson }},
+    };
+
+    const statusLabels = {
+        queued: {{ tr('review.status.queued') | tojson }},
+        running: {{ tr('review.status.running') | tojson }},
+        waiting_for_human: {{ tr('review.status.waiting_for_human') | tojson }},
+        completed: {{ tr('review.status.completed') | tojson }},
+        failed: {{ tr('review.status.failed') | tojson }},
+        cancelled: {{ tr('review.status.cancelled') | tojson }},
+    };
+    const stageLabels = {
+        case_intake: {{ tr('review.stage.case_intake') | tojson }},
+        awaiting_human: {{ tr('review.stage.awaiting_human') | tojson }},
+        human_submission_received: {{ tr('review.stage.human_submission_received') | tojson }},
+        agent_research: {{ tr('review.stage.agent_research') | tojson }},
+        agent_response: {{ tr('review.stage.agent_response') | tojson }},
+        waiting_for_human: {{ tr('review.stage.waiting_for_human') | tojson }},
+        verification: {{ tr('review.stage.verification') | tojson }},
+        judicial_review: {{ tr('review.stage.judicial_review') | tojson }},
+        rule_gate: {{ tr('review.stage.rule_gate') | tojson }},
+        completed: {{ tr('review.stage.completed') | tojson }},
+        failed: {{ tr('review.stage.failed') | tojson }},
+        cancelled: {{ tr('review.stage.cancelled') | tojson }},
+    };
+    const shortStageLabels = [
+        {{ tr('review.stage.short.facts') | tojson }},
+        {{ tr('review.stage.short.human') | tojson }},
+        {{ tr('review.stage.short.research') | tojson }},
+        {{ tr('review.stage.short.verify') | tojson }},
+        {{ tr('review.stage.short.complete') | tojson }},
+    ];
+    const eventTypeLabels = {
+        run_created: {{ tr('review.event.run_created') | tojson }},
+        stage_started: {{ tr('review.event.stage_started') | tojson }},
+        agent_started: {{ tr('review.event.agent_started') | tojson }},
+        research_plan_created: {{ tr('review.event.research_plan_created') | tojson }},
+        tool_called: {{ tr('review.event.tool_called') | tojson }},
+        tool_completed: {{ tr('review.event.tool_completed') | tojson }},
+        evidence_added: {{ tr('review.event.evidence_added') | tojson }},
+        human_action_required: {{ tr('review.event.human_action_required') | tojson }},
+        human_submission_received: {{ tr('review.event.human_submission_received') | tojson }},
+        agent_completed: {{ tr('review.event.agent_completed') | tojson }},
+        verification_failed: {{ tr('review.event.verification_failed') | tojson }},
+        gate_blocked: {{ tr('review.event.gate_blocked') | tojson }},
+        run_completed: {{ tr('review.event.run_completed') | tojson }},
+        run_cancelled: {{ tr('review.event.run_cancelled') | tojson }},
+        run_failed: {{ tr('review.event.run_failed') | tojson }},
+    };
+    const eventSummaryLabels = {
+        run_created: {{ tr('review.event.summary.run_created') | tojson }},
+        stage_started: {{ tr('review.event.summary.stage_started') | tojson }},
+        agent_started: {{ tr('review.event.summary.agent_started') | tojson }},
+        research_plan_created: {{ tr('review.event.summary.research_plan_created') | tojson }},
+        tool_called: {{ tr('review.event.summary.tool_called') | tojson }},
+        tool_completed: {{ tr('review.event.summary.tool_completed') | tojson }},
+        evidence_added: {{ tr('review.event.summary.evidence_added') | tojson }},
+        human_action_required: {{ tr('review.event.summary.human_action_required') | tojson }},
+        human_submission_received: {{ tr('review.event.summary.human_submission_received') | tojson }},
+        agent_completed: {{ tr('review.event.summary.agent_completed') | tojson }},
+        verification_failed: {{ tr('review.event.summary.verification_failed') | tojson }},
+        gate_blocked: {{ tr('review.event.summary.gate_blocked') | tojson }},
+        run_completed: {{ tr('review.event.summary.run_completed') | tojson }},
+        run_cancelled: {{ tr('review.event.summary.run_cancelled') | tojson }},
+        run_failed: {{ tr('review.event.summary.run_failed') | tojson }},
+    };
+
+    let activeRun = null;
+    let events = [];
+    let lastSeq = 0;
+    let pollTimer = null;
+
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+    const format = (template, values = {}) => String(template || '').replace(/\{(\w+)\}/g, (_, key) => values[key] ?? '');
+    const sideLabel = (side) => side === 'claimant' ? copy.sideClaimant : copy.sideRespondent;
+    const statusLabel = (status) => statusLabels[status] || status || '-';
+    const stageLabel = (stage) => stageLabels[stage] || stage || {{ tr('review.stage.preparing') | tojson }};
+    const eventTypeLabel = (type) => eventTypeLabels[type] || type;
+    const eventSummary = (event) => eventSummaryLabels[event.event_type] || event.summary || eventTypeLabel(event.event_type);
+
+    function laneFor(event) {
+        if (event.actor_type === 'human' || event.event_type.startsWith('human_')) return 'human';
+        if (event.actor_name === 'neutral_judge_agent' || ['verification_failed', 'gate_blocked', 'run_completed'].includes(event.event_type)) return 'judge';
+        return 'agent';
+    }
+
+    function eventDetail(event) {
+        const payload = event.payload || {};
+        if (event.event_type === 'tool_called') return `${payload.query || ''}${payload.purpose ? ` · ${payload.purpose}` : ''}`;
+        if (event.event_type === 'tool_completed') {
+            const graph = payload.graph_path_count ? ` · ${format(copy.detailGraphPaths, {count: payload.graph_path_count})}` : '';
+            const entries = (payload.graph_entry_entities || []).filter(Boolean);
+            return `${format(copy.detailResults, {count: payload.returned ?? 0})}${graph}${payload.duration_ms ? ` · ${payload.duration_ms}ms` : ''}${entries.length ? ` · ${format(copy.detailEntries, {items: entries.join(', ')})}` : ''}`;
+        }
+        if (event.event_type === 'research_plan_created') return (payload.actions || []).map((item) => `${item.tool}: ${item.query}`).join('; ');
+        if (event.event_type === 'evidence_added') {
+            const context = payload.context_chunk_count > 1 ? format(copy.detailChunks, {count: payload.context_chunk_count}) : '';
+            const channels = (payload.retrieval_channels || []).join('+');
+            return [payload.citation, channels, context, payload.verification_status].filter(Boolean).join(' · ');
+        }
+        if (event.event_type === 'gate_blocked') return ((payload.gate || {}).blocked_reasons || []).join('; ');
+        return '';
+    }
+
+    function renderEvents() {
+        Object.values(laneEls).forEach((element) => { element.innerHTML = ''; });
+        events.forEach((event) => {
+            const detail = eventDetail(event);
+            const article = document.createElement('article');
+            article.className = `agent-event event-${escapeHtml(event.event_type)}`;
+            const eventTime = event.created_at ? new Date(event.created_at).toLocaleTimeString(locale, {hour12: false}) : '';
+            article.innerHTML = `<div class="agent-event-meta"><span title="${escapeHtml(event.event_type)}">${escapeHtml(eventTypeLabel(event.event_type))}</span><time>${escapeHtml(eventTime)}</time></div><strong>${escapeHtml(eventSummary(event))}</strong>${detail ? `<p>${escapeHtml(detail)}</p>` : ''}`;
+            laneEls[laneFor(event)].appendChild(article);
+        });
+        Object.values(laneEls).forEach((element) => {
+            if (!element.children.length) element.innerHTML = `<p class="muted agent-lane-empty">${escapeHtml(copy.eventEmpty)}</p>`;
+        });
+    }
+
+    function renderStages(run) {
+        const order = ['case_intake', 'human_turn', 'agent_research', 'verification', 'completed'];
+        const names = shortStageLabels;
+        const currentMap = {awaiting_human:'human_turn',human_submission_received:'human_turn',waiting_for_human:'human_turn',agent_response:'agent_research',judicial_review:'verification',rule_gate:'verification',failed:'completed',cancelled:'completed'};
+        const normalized = currentMap[run.current_stage] || run.current_stage;
+        const currentIndex = Math.max(0, order.indexOf(normalized));
+        stageRail.innerHTML = order.map((stage, index) => `<div class="agent-stage ${index < currentIndex ? 'done' : ''} ${index === currentIndex ? 'active' : ''}"><span>${index + 1}</span><strong>${names[index]}</strong></div>`).join('');
+    }
+
+    function renderReferences(run) {
+        const packet = run.case_packet || {};
+        const facts = [...(packet.asserted_facts || []), ...(packet.supported_facts || [])];
+        packetRevision.textContent = `v${packet.revision || 0}`;
+        factList.innerHTML = facts.map((fact) => `<article id="ref-${escapeHtml(fact.fact_id)}"><span>${escapeHtml(fact.fact_id)}</span><strong>${escapeHtml(fact.content)}</strong><small>${escapeHtml(fact.status)} · ${escapeHtml(fact.source_type)}</small></article>`).join('') || `<p class="muted">${escapeHtml(copy.factBuilding)}</p>`;
+        const evidence = run.evidence_pool || [];
+        evidenceCount.textContent = format(copy.count, {count: evidence.length});
+        evidenceList.innerHTML = evidence.map((item) => `<article id="ref-${escapeHtml(item.evidence_id)}"><span>${escapeHtml(item.evidence_id)}</span><strong>${escapeHtml(item.title || copy.evidenceUnnamed)}</strong><small>${escapeHtml(item.citation || item.verification_status || copy.evidencePending)}</small>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(copy.evidenceOpen)}</a>` : ''}</article>`).join('') || `<p class="muted">${escapeHtml(copy.evidenceEmpty)}</p>`;
+        evidenceOptions.innerHTML = evidence.map((item) => `<label><input type="checkbox" value="${escapeHtml(item.evidence_id)}" /><span><strong>${escapeHtml(item.title || item.evidence_id)}</strong><small>${escapeHtml(item.citation || item.verification_status || copy.evidencePending)}</small></span></label>`).join('') || `<p class="muted">${escapeHtml(copy.evidenceNoneBindable)}</p>`;
+    }
+
+    function refLinks(refs) {
+        return (refs || []).map((value) => `<a href="#ref-${escapeHtml(value)}">${escapeHtml(value)}</a>`).join(', ') || escapeHtml(copy.none);
+    }
+
+    function renderResult(run) {
+        const result = run.result || {};
+        const judge = result.judge;
+        finalResult.hidden = !judge;
+        if (!judge) return;
+        const gate = result.gate || {};
+        finalResult.innerHTML = `<header><div><p class="eyebrow">${escapeHtml(copy.resultKicker)}</p><h2>${escapeHtml(gate.decision_status === 'insufficient_evidence' ? copy.resultInsufficient : copy.resultReview)}</h2></div><span class="task-status ${gate.passed ? 'completed' : 'blocked'}">${escapeHtml(gate.passed ? copy.gatePassed : copy.gateBlocked)}</span></header>
+            <p class="agent-judge-conclusion">${escapeHtml(judge.conclusion || '')}</p>
+            <div class="agent-findings">${(judge.findings || []).map((finding) => `<article><div><span>${escapeHtml(finding.status)}</span><h3>${escapeHtml(finding.issue)}</h3></div><p>${escapeHtml(finding.analysis)}</p><small>${escapeHtml(copy.facts)}: ${refLinks(finding.fact_refs)}</small><small>${escapeHtml(copy.evidence)}: ${refLinks(finding.evidence_refs)}</small></article>`).join('') || `<p class="muted">${escapeHtml(copy.noFindings)}</p>`}</div>
+            <div class="agent-result-notes"><section><h3>${escapeHtml(copy.uncertainties)}</h3><ul>${(judge.uncertainties || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('') || `<li>${escapeHtml(copy.noNew)}</li>`}</ul></section><section><h3>${escapeHtml(copy.humanReview)}</h3><ul>${(judge.further_review || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('') || `<li>${escapeHtml(copy.counsel)}</li>`}</ul></section></div>`;
+    }
+
+    function renderRun(run) {
+        activeRun = run;
+        workbench.hidden = false;
+        runLabel.textContent = `${copy.runLabel} #${run.id}`;
+        currentStage.textContent = stageLabel(run.current_stage);
+        runStatus.textContent = statusLabel(run.status);
+        runStatus.className = `task-status ${escapeHtml(run.status)}`;
+        runBudget.textContent = format(copy.round, {current: run.current_round, maximum: run.max_rounds});
+        document.getElementById('human-lane-title').textContent = format(copy.humanLane, {side: sideLabel(run.human_side)});
+        document.getElementById('agent-lane-title').textContent = format(copy.agentLane, {side: sideLabel(run.agent_side)});
+        disclaimer.textContent = copy.disclaimer;
+        cancelButton.hidden = ['completed', 'failed', 'cancelled'].includes(run.status);
+        turnForm.hidden = run.status !== 'waiting_for_human';
+        turnTitle.textContent = `${copy.turnTitle} · ${format(copy.round, {current: run.current_round, maximum: run.max_rounds})}`;
+        renderStages(run);
+        renderReferences(run);
+        renderResult(run);
+    }
+
+    async function api(url, options = {}) {
+        const response = await fetch(url, {headers: {'Content-Type': 'application/json'}, ...options});
+        const payload = await response.json();
+        if (!response.ok) throw new Error((locale === 'zh-CN' && payload.detail) || copy.requestFailed);
+        return payload;
+    }
+
+    async function poll() {
+        if (!activeRun) return;
+        try {
+            const [run, eventPayload] = await Promise.all([
+                api(`/api/multi-agent/runs/${activeRun.id}`),
+                api(`/api/multi-agent/runs/${activeRun.id}/events?after_seq=${lastSeq}`),
+            ]);
+            renderRun(run);
+            if (eventPayload.events.length) {
+                events.push(...eventPayload.events);
+                lastSeq = eventPayload.last_seq;
+                renderEvents();
+            }
+            if (!['completed', 'failed', 'cancelled'].includes(run.status)) {
+                pollTimer = window.setTimeout(poll, 800);
+            }
+        } catch (error) {
+            createStatus.hidden = false;
+            createStatus.textContent = error.message;
+            pollTimer = window.setTimeout(poll, 2000);
+        }
+    }
+
+    createForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        createStatus.hidden = false;
+        createStatus.textContent = copy.creating;
+        const form = new FormData(createForm);
+        try {
+            const run = await api('/api/multi-agent/runs', {
+                method: 'POST',
+                body: JSON.stringify({
+                    query: form.get('query'),
+                    initial_statement: form.get('initial_statement'),
+                    human_side: form.get('human_side'),
+                    module: form.get('module'),
+                    intent: 'complex_research',
+                    max_rounds: Number(form.get('max_rounds')),
+                    preference_history_enabled: form.get('preference_history_enabled') === 'on',
+                }),
+            });
+            activeRun = run;
+            events = [];
+            lastSeq = 0;
+            window.history.replaceState({}, '', `/agent-hearing?run_id=${run.id}`);
+            renderRun(run);
+            renderEvents();
+            createStatus.textContent = copy.created;
+            workbench.scrollIntoView({behavior: 'smooth', block: 'start'});
+            window.clearTimeout(pollTimer);
+            poll();
+        } catch (error) {
+            createStatus.textContent = error.message;
+        }
+    });
+
+    turnForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        turnStatus.hidden = false;
+        turnStatus.textContent = copy.submitting;
+        const evidenceRefs = [...evidenceOptions.querySelectorAll('input:checked')].map((input) => input.value);
+        try {
+            const run = await api(`/api/multi-agent/runs/${activeRun.id}/submissions`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    submission_id: `ui-${activeRun.id}-${activeRun.current_round}-${Date.now()}`,
+                    statement: turnStatement.value,
+                    evidence_refs: evidenceRefs,
+                    round_no: activeRun.current_round,
+                }),
+            });
+            turnStatement.value = '';
+            turnStatus.textContent = copy.submitted;
+            renderRun(run);
+            window.clearTimeout(pollTimer);
+            poll();
+        } catch (error) {
+            turnStatus.textContent = error.message;
+        }
+    });
+
+    cancelButton.addEventListener('click', async () => {
+        if (!activeRun) return;
+        try {
+            const run = await api(`/api/multi-agent/runs/${activeRun.id}/cancel`, {method: 'POST', body: '{}'});
+            renderRun(run);
+        } catch (error) {
+            createStatus.hidden = false;
+            createStatus.textContent = error.message;
+        }
+    });
+
+    const restoredRunId = Number(new URLSearchParams(window.location.search).get('run_id') || 0);
+    if (restoredRunId > 0) {
+        Promise.all([
+            api(`/api/multi-agent/runs/${restoredRunId}`),
+            api(`/api/multi-agent/runs/${restoredRunId}/events?after_seq=0`),
+        ]).then(([run, eventPayload]) => {
+            activeRun = run;
+            events = eventPayload.events || [];
+            lastSeq = eventPayload.last_seq || 0;
+            renderRun(run);
+            renderEvents();
+            workbench.scrollIntoView({block: 'start'});
+            if (!['completed', 'failed', 'cancelled'].includes(run.status)) poll();
+        }).catch((error) => {
+            createStatus.hidden = false;
+            createStatus.textContent = error.message;
+        });
+    }
+})();
+</script>
+{% endblock %}

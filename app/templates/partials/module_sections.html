@@ -25,71 +25,110 @@
             </div>
         </div>
         {% if module_packet.relevant_laws %}
-        <div class="law-shell">
-            <div class="law-list-grid">
+        {% set law_filter_types = (module_packet.relevant_laws | map(attribute='legal_type') | list + module_packet.relevant_laws | map(attribute='rule_level') | list) | select | unique | sort %}
+        {% set law_filter_countries = module_packet.relevant_laws | map(attribute='country') | select | unique | sort %}
+        <div class="source-filter-bar" data-law-filterbar>
+            {% if law_filter_types %}
+            <div class="source-filter-group" data-filter-group="type">
+                <span class="source-filter-label">法规类型</span>
+                <button type="button" class="source-filter-chip is-active" data-filter-value="">全部</button>
+                {% for t in law_filter_types %}
+                <button type="button" class="source-filter-chip" data-filter-value="{{ t }}">{{ t }}</button>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if law_filter_countries %}
+            <div class="source-filter-group" data-filter-group="country">
+                <span class="source-filter-label">法域</span>
+                <button type="button" class="source-filter-chip is-active" data-filter-value="">全部</button>
+                {% for c in law_filter_countries %}
+                <button type="button" class="source-filter-chip" data-filter-value="{{ c }}">{{ c }}</button>
+                {% endfor %}
+            </div>
+            {% endif %}
+            <div class="source-filter-group source-lang-switch" data-filter-group-lang>
+                <span class="source-filter-label">法规语言</span>
+                <button type="button" class="source-filter-chip {% if lang != 'zh' %}is-active{% endif %}" data-law-lang="en">English（原文）</button>
+                <button type="button" class="source-filter-chip {% if lang == 'zh' %}is-active{% endif %}" data-law-lang="zh">中文</button>
+            </div>
+            <label class="source-filter-search">
+                <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                <input type="search" placeholder="检索法规名称 / 条文 / 关键词" data-filter-search />
+            </label>
+        </div>
+        <div class="law-shell law-register">
+            <div class="law-list-grid" data-law-grid data-page-size="6" role="list">
                 {% for law in module_packet.relevant_laws %}
-                <article class="law-mini-card {% if law.linked_case_count and law.linked_case_count >= 3 %}law-key-card{% endif %}">
-                    <div class="result-head">
-                        <span class="source-tag">{{ law.rule_level or law.legal_type or "法规" }}</span>
-                        {% if law.linked_case_count is defined %}
-                        <span class="meta-inline law-case-count">
-                            <span class="law-case-count-icon">{% if law.linked_case_count >= 5 %}★★★{% elif law.linked_case_count >= 3 %}★★{% elif law.linked_case_count >= 1 %}★{% endif %}</span>
-                            关联案例 {{ law.linked_case_count }}
-                        </span>
-                        {% endif %}
-                    </div>
-                    <h3>
-                        {% if law.detail_url %}
-                        <a class="law-anchor-link" href="{{ law.detail_url }}">{{ law.title }}</a>
-                        {% else %}
-                        {{ law.title }}
-                        {% endif %}
-                    </h3>
-                    <div class="chip-row">
-                        {% if law.article_no %}
-                        <span class="chip">条文 {{ law.article_no }}</span>
-                        {% endif %}
-                        <span class="chip">{{ law.country or "加拿大" }}</span>
-                        <span class="chip">{{ law.legal_type or law.rule_level or "法规" }}</span>
-                    </div>
-                    {% if law.article_summary or law.reason %}
-                    <p class="result-copy">{{ law.article_summary or law.reason }}</p>
-                    {% endif %}
-
-                    {% if law.case_columns %}
-                    <div class="law-related-mini">
-                        <p class="panel-kicker">对应案例</p>
-                        <div class="law-related-columns">
-                            {% for column in law.case_columns %}
-                            {% if column["items"] %}
-                            <section class="law-related-column">
-                                <h4>{{ column.label }}</h4>
-                                <div class="law-related-mini-list">
-                                    {% for case in column["items"] %}
-                                    <a class="law-related-mini-item" href="{{ case.source_url or law.detail_url or '#' }}" {% if case.source_url %}target="_blank"{% endif %}>
-                                        <strong>{{ case.title }}</strong>
-                                        <span>{{ case.court_level or case.case_type or "案例" }}</span>
-                                    </a>
-                                    {% endfor %}
-                                </div>
-                            </section>
-                            {% endif %}
-                            {% endfor %}
+                <article class="law-mini-card law-list-row {% if law.linked_case_count and law.linked_case_count >= 3 %}law-key-card{% endif %}"
+                         role="listitem"
+                         tabindex="0"
+                         aria-expanded="false"
+                         data-filter-type="{{ law.legal_type or law.rule_level or '' }}"
+                         data-filter-country="{{ law.country or '' }}"
+                         data-search="{{ (law.title ~ ' ' ~ (law.article_no or '') ~ ' ' ~ (law.article_summary or law.reason or '')) | e }}">
+                    <div class="law-row-summary">
+                        <span class="law-row-index" aria-hidden="true">{{ '%02d'|format(loop.index) }}</span>
+                        <div class="law-row-primary">
+                            <div class="law-row-title-line">
+                                <h3>
+                                    {% if law.detail_url %}
+                                    <a class="law-anchor-link" href="{{ law.detail_url }}"><span data-lang-text data-lang-show="zh">{{ law.title }}</span><span data-lang-text data-lang-show="en" hidden>{{ law.title_en or law.title }}</span></a>
+                                    {% else %}
+                                    <span data-lang-text data-lang-show="zh">{{ law.title }}</span><span data-lang-text data-lang-show="en" hidden>{{ law.title_en or law.title }}</span>
+                                    {% endif %}
+                                </h3>
+                                {% if law.article_no %}<span class="chip">{{ law.article_no }}</span>{% endif %}
+                                <span class="source-tag">{{ law.rule_level or law.legal_type or "法规" }}</span>
+                            </div>
+                            <p>悬停或点击查看条文内容与按法院归类的关联案例</p>
                         </div>
+                        <span class="law-case-count">{{ law.linked_case_count or 0 }} 个关联案例</span>
+                        <button class="law-row-toggle" type="button" aria-label="展开 {{ law.title }} 的法规与案例详情" aria-expanded="false">
+                            <span aria-hidden="true">⌄</span>
+                        </button>
                     </div>
-                    {% endif %}
 
-                    <div class="card-actions">
-                        {% if law.detail_url %}
-                        <a class="text-link" href="{{ law.detail_url }}">查看法规详情</a>
-                        {% endif %}
-                        {% if law.source_url %}
-                        <a class="text-link" href="{{ law.source_url }}" target="_blank">来源链接</a>
-                        {% endif %}
+                    <div class="law-row-detail">
+                        <section class="law-detail-copy">
+                            <p class="panel-kicker">法规内容</p>
+                            <p class="result-copy"><span data-lang-text data-lang-show="zh">{{ law.summary_zh or law.article_summary or law.reason or "当前记录未提供摘要，请打开法规原文核验。" }}</span><span data-lang-text data-lang-show="en" hidden>{{ law.summary_en or law.article_summary or law.reason or "No summary is stored; open the original instrument to verify." }}</span></p>
+                            <div class="chip-row">
+                                <span class="chip">{{ law.country or "加拿大" }}</span>
+                                <span class="chip">{{ law.legal_type or law.rule_level or "法规" }}</span>
+                            </div>
+                            <div class="card-actions">
+                                {% if law.detail_url %}<a class="text-link" href="{{ law.detail_url }}">查看法规详情</a>{% endif %}
+                                {% if law.source_url %}<a class="text-link" href="{{ law.source_url }}" target="_blank" rel="noopener noreferrer">核验来源</a>{% endif %}
+                            </div>
+                        </section>
+                        <section class="law-court-case-panel">
+                            <p class="panel-kicker">对应案例 · 按法院</p>
+                            {% if law.court_groups %}
+                            <div class="law-court-groups">
+                                {% for group in law.court_groups %}
+                                <section class="law-court-group">
+                                    <h4><span>{{ group.label }}</span><em>{{ group["items"]|length }}</em></h4>
+                                    <div class="law-court-case-list">
+                                        {% for case in group["items"] %}
+                                        <a href="{{ case.source_url or law.detail_url or '#' }}" {% if case.source_url %}target="_blank" rel="noopener noreferrer"{% endif %}>
+                                            <strong>{{ case.title }}</strong>
+                                            <span>{{ case.case_type or case.judgment_date or "案例记录" }}</span>
+                                        </a>
+                                        {% endfor %}
+                                    </div>
+                                </section>
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <p class="law-no-related-case">暂无已核验的关联案例。</p>
+                            {% endif %}
+                        </section>
                     </div>
                 </article>
                 {% endfor %}
             </div>
+            <div class="source-pager" data-law-pager hidden></div>
+            <p class="source-filter-empty" data-law-empty hidden>当前筛选条件下没有匹配的法规，请调整分类或关键词。</p>
         </div>
         {% else %}
         <div class="empty-state">
@@ -123,9 +162,35 @@
                     <h3>国家 / 联邦案例</h3>
                 </div>
             </div>
+            {% set national_courts = national_cases_with_rules | map(attribute='court_level') | select | unique | sort %}
+            {% set national_types = national_cases_with_rules | map(attribute='case_type') | select | unique | sort %}
+            <div class="source-filter-bar" data-case-filterbar>
+                {% if national_courts %}
+                <div class="source-filter-group" data-filter-group="court">
+                    <span class="source-filter-label">法院级别</span>
+                    <button type="button" class="source-filter-chip is-active" data-filter-value="">全部</button>
+                    {% for c in national_courts %}
+                    <button type="button" class="source-filter-chip" data-filter-value="{{ c }}">{{ c }}</button>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% if national_types %}
+                <div class="source-filter-group" data-filter-group="casetype">
+                    <span class="source-filter-label">案件类型</span>
+                    <button type="button" class="source-filter-chip is-active" data-filter-value="">全部</button>
+                    {% for t in national_types %}
+                    <button type="button" class="source-filter-chip" data-filter-value="{{ t }}">{{ t }}</button>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                <label class="source-filter-search">
+                    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="search" placeholder="检索案例名称 / 摘要 / 关键词" data-filter-search />
+                </label>
+            </div>
             <div class="case-slider" data-case-slider>
                 <div class="case-slider-toolbar">
-                    <span class="case-slider-count">共 {{ national_cases_with_rules|length }} 条</span>
+                    <span class="case-slider-count">共 {{ national_cases_with_rules|length }} 条<span class="case-slider-filter-note" data-filter-note hidden></span></span>
                     <div class="case-slider-actions">
                         <button type="button" class="case-slider-btn" data-slider-prev aria-label="上一条国家或联邦案例">‹</button>
                         <span class="case-slider-status" data-slider-status>1 / {{ national_cases_with_rules|length }}</span>
@@ -134,7 +199,10 @@
                 </div>
                 <div class="case-law-combo-stack case-slider-track" data-slider-track tabindex="0" aria-label="国家或联邦案例滑动列表">
                 {% for case in national_cases_with_rules %}
-                <article class="case-law-combo">
+                <article class="case-law-combo"
+                         data-filter-court="{{ case.court_level or '' }}"
+                         data-filter-casetype="{{ case.case_type or '' }}"
+                         data-search="{{ (case.title ~ ' ' ~ (case.summary or '') ~ ' ' ~ (case.judgment_result or '') ~ ' ' ~ (case.match_reason or '')) | e }}">
                     <section class="case-card-panel">
                         <div class="result-head">
                             <span class="source-tag">{{ case.court_level or "案例" }}</span>
@@ -212,9 +280,9 @@
                             <article class="law-link-card">
                                 <h4>
                                     {% if law.detail_url %}
-                                    <a class="law-anchor-link" href="{{ law.detail_url }}">{{ law.title }}</a>
+                                    <a class="law-anchor-link" href="{{ law.detail_url }}"><span data-lang-text data-lang-show="zh">{{ law.title }}</span><span data-lang-text data-lang-show="en" hidden>{{ law.title_en or law.title }}</span></a>
                                     {% else %}
-                                    {{ law.title }}
+                                    <span data-lang-text data-lang-show="zh">{{ law.title }}</span><span data-lang-text data-lang-show="en" hidden>{{ law.title_en or law.title }}</span>
                                     {% endif %}
                                 </h4>
                                 <div class="chip-row">
@@ -223,7 +291,7 @@
                                     <span class="chip">{{ law.legal_type or law.rule_level or "法规" }}</span>
                                 </div>
                                 {% if law.article_summary %}
-                                <p class="result-copy">{{ law.article_summary }}</p>
+                                <p class="result-copy"><span data-lang-text data-lang-show="zh">{{ law.summary_zh or law.article_summary }}</span><span data-lang-text data-lang-show="en" hidden>{{ law.summary_en or law.article_summary }}</span></p>
                                 {% endif %}
                                 {% if law.match_reason %}
                                 <p class="muted">关联理由：{{ law.match_reason }}</p>
@@ -255,9 +323,35 @@
                     <h3>地区 / 地方案例</h3>
                 </div>
             </div>
+            {% set local_courts = local_cases_with_rules | map(attribute='court_level') | select | unique | sort %}
+            {% set local_types = local_cases_with_rules | map(attribute='case_type') | select | unique | sort %}
+            <div class="source-filter-bar" data-case-filterbar>
+                {% if local_courts %}
+                <div class="source-filter-group" data-filter-group="court">
+                    <span class="source-filter-label">法院级别</span>
+                    <button type="button" class="source-filter-chip is-active" data-filter-value="">全部</button>
+                    {% for c in local_courts %}
+                    <button type="button" class="source-filter-chip" data-filter-value="{{ c }}">{{ c }}</button>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% if local_types %}
+                <div class="source-filter-group" data-filter-group="casetype">
+                    <span class="source-filter-label">案件类型</span>
+                    <button type="button" class="source-filter-chip is-active" data-filter-value="">全部</button>
+                    {% for t in local_types %}
+                    <button type="button" class="source-filter-chip" data-filter-value="{{ t }}">{{ t }}</button>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                <label class="source-filter-search">
+                    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="search" placeholder="检索案例名称 / 摘要 / 关键词" data-filter-search />
+                </label>
+            </div>
             <div class="case-slider" data-case-slider>
                 <div class="case-slider-toolbar">
-                    <span class="case-slider-count">共 {{ local_cases_with_rules|length }} 条</span>
+                    <span class="case-slider-count">共 {{ local_cases_with_rules|length }} 条<span class="case-slider-filter-note" data-filter-note hidden></span></span>
                     <div class="case-slider-actions">
                         <button type="button" class="case-slider-btn" data-slider-prev aria-label="上一条地区或地方案例">‹</button>
                         <span class="case-slider-status" data-slider-status>1 / {{ local_cases_with_rules|length }}</span>
@@ -266,7 +360,10 @@
                 </div>
                 <div class="case-law-combo-stack case-slider-track" data-slider-track tabindex="0" aria-label="地区或地方案例滑动列表">
                 {% for case in local_cases_with_rules %}
-                <article class="case-law-combo">
+                <article class="case-law-combo"
+                         data-filter-court="{{ case.court_level or '' }}"
+                         data-filter-casetype="{{ case.case_type or '' }}"
+                         data-search="{{ (case.title ~ ' ' ~ (case.summary or '') ~ ' ' ~ (case.judgment_result or '') ~ ' ' ~ (case.match_reason or '')) | e }}">
                     <section class="case-card-panel">
                         <div class="result-head">
                             <span class="source-tag">{{ case.court_level or "案例" }}</span>
@@ -344,9 +441,9 @@
                             <article class="law-link-card">
                                 <h4>
                                     {% if law.detail_url %}
-                                    <a class="law-anchor-link" href="{{ law.detail_url }}">{{ law.title }}</a>
+                                    <a class="law-anchor-link" href="{{ law.detail_url }}"><span data-lang-text data-lang-show="zh">{{ law.title }}</span><span data-lang-text data-lang-show="en" hidden>{{ law.title_en or law.title }}</span></a>
                                     {% else %}
-                                    {{ law.title }}
+                                    <span data-lang-text data-lang-show="zh">{{ law.title }}</span><span data-lang-text data-lang-show="en" hidden>{{ law.title_en or law.title }}</span>
                                     {% endif %}
                                 </h4>
                                 <div class="chip-row">
@@ -355,7 +452,7 @@
                                     <span class="chip">{{ law.legal_type or law.rule_level or "法规" }}</span>
                                 </div>
                                 {% if law.article_summary %}
-                                <p class="result-copy">{{ law.article_summary }}</p>
+                                <p class="result-copy"><span data-lang-text data-lang-show="zh">{{ law.summary_zh or law.article_summary }}</span><span data-lang-text data-lang-show="en" hidden>{{ law.summary_en or law.article_summary }}</span></p>
                                 {% endif %}
                                 {% if law.match_reason %}
                                 <p class="muted">关联理由：{{ law.match_reason }}</p>
@@ -468,3 +565,151 @@
 {% endif %}
 {% endif %}
 {% endif %}
+
+<script>
+(() => {
+    /* 匹配案例与法规：分类检索 + 紧凑法规列表分页 */
+    function norm(value) { return String(value || '').trim().toLowerCase(); }
+
+    function bindChipGroups(bar, state, onChange) {
+        bar.querySelectorAll('[data-filter-group]').forEach((group) => {
+            const key = group.dataset.filterGroup;
+            group.querySelectorAll('.source-filter-chip').forEach((chip) => {
+                chip.addEventListener('click', () => {
+                    group.querySelectorAll('.source-filter-chip').forEach((c) => c.classList.toggle('is-active', c === chip));
+                    state[key] = chip.dataset.filterValue || '';
+                    onChange();
+                });
+            });
+        });
+        const search = bar.querySelector('[data-filter-search]');
+        if (search) {
+            search.addEventListener('input', () => { state.query = norm(search.value); onChange(); });
+        }
+    }
+
+    function matchCard(card, state, attrMap) {
+        for (const [key, attr] of Object.entries(attrMap)) {
+            const want = norm(state[key]);
+            if (want && norm(card.dataset[attr]) !== want) return false;
+        }
+        if (state.query && !norm(card.dataset.search).includes(state.query)) return false;
+        return true;
+    }
+
+    /* ---- 法规独立中英切换：与界面语言解耦，始终可看原文 ---- */
+    (() => {
+        const buttons = Array.from(document.querySelectorAll('[data-law-lang]'));
+        if (!buttons.length) return;
+        const stored = (() => {
+            try { return localStorage.getItem('ui-law-lang'); } catch (e) { return null; }
+        })();
+        let mode = stored || (window.APP_LANG === 'zh' ? 'zh' : 'en');
+        const apply = (next) => {
+            mode = next;
+            document.documentElement.setAttribute('data-law-lang', mode);
+            buttons.forEach((btn) => btn.classList.toggle('is-active', btn.dataset.lawLang === mode));
+            try { localStorage.setItem('ui-law-lang', mode); } catch (e) {}
+        };
+        buttons.forEach((btn) => btn.addEventListener('click', () => apply(btn.dataset.lawLang)));
+        apply(mode);
+    })();
+
+    /* ---- 法规区：分类检索 + 客户端分页 ---- */
+    document.querySelectorAll('[data-law-grid]').forEach((grid) => {
+        const shell = grid.closest('.band') || grid.parentElement;
+        const bar = shell.querySelector('[data-law-filterbar]');
+        const pager = shell.querySelector('[data-law-pager]');
+        const empty = shell.querySelector('[data-law-empty]');
+        const cards = Array.from(grid.querySelectorAll('.law-mini-card'));
+        const pageSize = Number(grid.dataset.pageSize || 4);
+        const state = { type: '', country: '', query: '', page: 1 };
+
+        cards.forEach((card) => {
+            const toggle = card.querySelector('.law-row-toggle');
+            const setExpanded = (expanded) => {
+                card.classList.toggle('is-expanded', expanded);
+                card.setAttribute('aria-expanded', String(expanded));
+                if (toggle) toggle.setAttribute('aria-expanded', String(expanded));
+            };
+            if (toggle) {
+                toggle.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    setExpanded(!card.classList.contains('is-expanded'));
+                });
+            }
+            card.addEventListener('keydown', (event) => {
+                if ((event.key === 'Enter' || event.key === ' ') && event.target === card) {
+                    event.preventDefault();
+                    setExpanded(!card.classList.contains('is-expanded'));
+                }
+            });
+        });
+
+        function visible() { return cards.filter((card) => matchCard(card, state, { type: 'filterType', country: 'filterCountry' })); }
+
+        function render() {
+            const items = visible();
+            const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+            state.page = Math.min(Math.max(1, state.page), totalPages);
+            const start = (state.page - 1) * pageSize;
+            const pageItems = new Set(items.slice(start, start + pageSize));
+            cards.forEach((card) => { card.style.display = pageItems.has(card) ? '' : 'none'; });
+            if (empty) empty.hidden = items.length > 0;
+            if (!pager) return;
+            pager.hidden = items.length <= pageSize;
+            if (pager.hidden) return;
+            const nums = [];
+            for (let i = 1; i <= totalPages; i += 1) {
+                if (i === 1 || i === totalPages || Math.abs(i - state.page) <= 2) nums.push(i);
+            }
+            let html = `<span class="source-pager-info">共 ${items.length} 条 · 第 ${state.page} / ${totalPages} 页</span>`;
+            html += `<button type="button" class="source-pager-btn" data-page="${state.page - 1}" ${state.page === 1 ? 'disabled' : ''}>‹</button>`;
+            let prev = 0;
+            nums.forEach((n) => {
+                if (prev && n - prev > 1) html += '<span class="source-pager-info">…</span>';
+                html += `<button type="button" class="source-pager-btn ${n === state.page ? 'is-active' : ''}" data-page="${n}">${n}</button>`;
+                prev = n;
+            });
+            html += `<button type="button" class="source-pager-btn" data-page="${state.page + 1}" ${state.page === totalPages ? 'disabled' : ''}>›</button>`;
+            pager.innerHTML = html;
+            pager.querySelectorAll('[data-page]').forEach((btn) => {
+                btn.addEventListener('click', () => { state.page = Number(btn.dataset.page); render(); });
+            });
+        }
+
+        if (bar) bindChipGroups(bar, state, () => { state.page = 1; render(); });
+        render();
+    });
+
+    /* ---- 案例区：分类检索（保留滑动展示），过滤后同步滑块状态 ---- */
+    document.querySelectorAll('[data-case-filterbar]').forEach((bar) => {
+        const group = bar.closest('.case-group-section');
+        if (!group) return;
+        const slider = group.querySelector('[data-case-slider] [data-slider-track]');
+        const note = group.querySelector('[data-filter-note]');
+        const cards = Array.from(group.querySelectorAll('.case-law-combo'));
+        const state = { court: '', casetype: '', query: '' };
+
+        function render() {
+            let shown = 0;
+            cards.forEach((card) => {
+                const ok = matchCard(card, state, { court: 'filterCourt', casetype: 'filterCasetype' });
+                card.classList.toggle('is-filtered-out', !ok);
+                if (ok) shown += 1;
+            });
+            const active = state.court || state.casetype || state.query;
+            if (note) {
+                note.hidden = !active;
+                note.textContent = active ? `（筛选后 ${shown} 条）` : '';
+            }
+            if (slider) {
+                slider.scrollLeft = 0;
+                window.dispatchEvent(new Event('resize'));
+            }
+        }
+
+        bindChipGroups(bar, state, render);
+    });
+})();
+</script>

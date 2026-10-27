@@ -37,6 +37,17 @@ AGENT_TOOL_ALLOWLIST = {
     "evidence_agent": {"evidence_verification", "authority_links"},
     "evaluation_agent": {"risk_annotation", "citation_verification"},
     "report_agent": {"rule_arbitration", "citation_verification"},
+    # 交互式人机审理：workflow 控制轮次，角色 Agent 自主选择受控研究工具。
+    "case_clerk_agent": {"issue_fact_extraction", "read_case_packet"},
+    "advocate_agent": {
+        "read_case_packet", "search_case_law", "search_statute",
+        "search_legal_graph", "search_approved_web", "fetch_source_snapshot",
+    },
+    "neutral_judge_agent": {
+        "read_case_packet", "search_case_law", "search_statute",
+        "search_legal_graph", "search_approved_web", "citation_verification", "rule_arbitration",
+    },
+    "review_agent": {"review_summary"},
 }
 
 

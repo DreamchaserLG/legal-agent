@@ -1,28 +1,31 @@
 {% extends "base.html" %}
 
-{% block title %}{{ app_name }} | 庭审模拟{% endblock %}
+{% block title %}{{ app_name }} | Canadian Hearing Simulation{% endblock %}
 
 {% block content %}
 <section class="hearing-intro">
     <div class="shell hearing-intro-grid">
         <div>
-            <p class="eyebrow">受控庭审工作流</p>
-            <h1>庭审模拟与证据核验</h1>
-            <p class="hero-text">按固定程序推进庭前准备、开庭陈述、举证质证、辩论、评议与最终报告。模拟发言只基于本地可追溯资料，概率仅在全部阶段完成后由规则聚合器生成。</p>
+            <p class="eyebrow">Controlled Canadian civil-hearing workflow</p>
+            <h1>Hearing Simulation and Source Verification</h1>
+            <p class="hero-text">Proceed through preparation, openings, evidence, legal argument, judicial questions, record review, and a final training report. Simulated speech is constrained to traceable Canadian sources.</p>
+            <ul class="hearing-feature-list">
+                <li><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Stage-gated workflow with explicit readiness checks before each advance</li>
+                <li><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Every authority cited is retrieved from verified local Canadian sources</li>
+                <li><svg viewBox="0 0 24 24"><path d="M12 3v18M8 21h8M12 6l-6 2 6-2 6 2M6 8l-2.6 5.2a2.9 2.9 0 0 0 5.2 0L6 8zm12 0l-2.6 5.2a2.9 2.9 0 0 0 5.2 0L18 8z"/></svg>Rule-based risk flags and a post-hearing training report, never legal advice</li>
+            </ul>
         </div>
         <form id="hearing-create-form" class="hearing-create-form">
-            <label for="hearing-module">研究法域</label>
+            <label for="hearing-module">Research module</label>
             <select id="hearing-module" name="module">
-                {% for option in module_options %}
-                <option value="{{ option.value }}" {% if option.value == 'canada' %}selected{% endif %}>{{ option.picker_label or option.label }}</option>
-                {% endfor %}
+                <option value="canada" selected>Canadian law</option>
             </select>
-            <label for="hearing-jurisdiction">程序或地区</label>
-            <input id="hearing-jurisdiction" name="jurisdiction" type="text" placeholder="例如：Ontario" />
-            <label for="hearing-summary">案情与我方初步立场</label>
-            <textarea id="hearing-summary" name="case_summary" rows="6" placeholder="说明请求事项、关键事实、已掌握证据、程序节点和对方可能争议。" required></textarea>
+            <label for="hearing-jurisdiction">Province, territory, or federal jurisdiction</label>
+            <input id="hearing-jurisdiction" name="jurisdiction" type="text" placeholder="e.g., Ontario" />
+            <label for="hearing-summary">Case summary and initial position</label>
+            <textarea id="hearing-summary" name="case_summary" rows="6" placeholder="State the relief sought, material facts, available evidence, procedural dates, and likely disputes." required></textarea>
             <div class="action-row">
-                <button type="submit">建立庭审模拟</button>
+                <button type="submit">Create Hearing Simulation</button>
             </div>
             <p id="hearing-create-status" class="notice-text" hidden></p>
         </form>
@@ -33,60 +36,60 @@
     <div class="shell">
         <div class="hearing-run-head">
             <div>
-                <p class="eyebrow" id="hearing-run-label">庭审记录</p>
-                <h2 id="hearing-stage-title">庭前准备</h2>
+                <p class="eyebrow" id="hearing-run-label">Hearing Record</p>
+                <h2 id="hearing-stage-title">Pre-Hearing Preparation</h2>
             </div>
             <div class="status-cluster">
-                <span id="hearing-run-status" class="task-status">进行中</span>
-                <span id="hearing-stage-readiness" class="meta-inline">阶段准备度 0%</span>
+                <span id="hearing-run-status" class="task-status">Active</span>
+                <span id="hearing-stage-readiness" class="meta-inline">Stage readiness 0%</span>
             </div>
         </div>
 
-        <div class="hearing-graph" id="hearing-graph" aria-label="庭审阶段流程图"></div>
+        <div class="hearing-graph" id="hearing-graph" aria-label="Hearing stage workflow"></div>
 
         <div class="hearing-layout">
             <section class="hearing-dialogue-panel" aria-live="polite">
                 <div class="hearing-panel-head">
                     <div>
-                        <p class="panel-kicker">模拟庭审记录</p>
-                        <h3>我方陈述、模拟抗辩与法官问话</h3>
+                        <p class="panel-kicker">Simulation record</p>
+                        <h3>User submissions, opposing responses, and judicial questions</h3>
                     </div>
-                    <span class="meta-inline">仅展示当前记录</span>
+                    <span class="meta-inline">Current record only</span>
                 </div>
                 <div class="hearing-dialogue-scroll" id="hearing-dialogue"></div>
                 <form id="hearing-turn-form" class="hearing-turn-form">
-                    <label for="hearing-turn-content">我方提交</label>
-                    <textarea id="hearing-turn-content" rows="5" placeholder="围绕当前阶段补充事实、证据来源、法律依据或回应对方抗辩。" required></textarea>
+                    <label for="hearing-turn-content">User counsel submission</label>
+                    <textarea id="hearing-turn-content" rows="5" placeholder="Address the current stage with record facts, evidence IDs, verified Canadian authorities, or a response to opposing counsel." required></textarea>
                     <fieldset class="hearing-evidence-picker">
-                        <legend>绑定本地证据与法律依据</legend>
+                        <legend>Attach local record evidence and verified authorities</legend>
                         <div id="hearing-evidence-options" class="hearing-option-list"></div>
                     </fieldset>
                     <div class="action-row">
-                        <button type="submit" data-action="continue">提交并继续质询</button>
-                        <button type="submit" class="secondary" data-action="complete_stage">保存检查点并进入下一阶段</button>
-                        <button type="submit" class="secondary" data-action="procedure_omission">记录程序省略</button>
+                        <button type="submit" data-action="continue">Submit and Continue</button>
+                        <button type="submit" class="secondary" data-action="complete_stage">Save Checkpoint and Advance</button>
+                        <button type="submit" class="secondary" data-action="procedure_omission">Record Procedural Omission</button>
                     </div>
                     <p id="hearing-turn-status" class="notice-text" hidden></p>
                 </form>
             </section>
 
-            <aside class="hearing-insights" aria-label="流程风险与证据情况">
-                <div class="hearing-mobile-tabs" role="tablist" aria-label="庭审信息面板">
-                    <button type="button" class="active" data-insight-tab="state">状态</button>
-                    <button type="button" data-insight-tab="risk">风险</button>
-                    <button type="button" data-insight-tab="evidence">资料</button>
+            <aside class="hearing-insights" aria-label="Workflow risks and record evidence">
+                <div class="hearing-mobile-tabs" role="tablist" aria-label="Hearing information panels">
+                    <button type="button" class="active" data-insight-tab="state">Status</button>
+                    <button type="button" data-insight-tab="risk">Risks</button>
+                    <button type="button" data-insight-tab="evidence">Sources</button>
                 </div>
                 <section class="hearing-insight-section mobile-active" data-insight-panel="state">
-                    <p class="panel-kicker">当前阶段检查</p>
+                    <p class="panel-kicker">Current stage checks</p>
                     <div id="hearing-stage-detail" class="hearing-detail-list"></div>
-                    <div id="hearing-radar" class="hearing-radar" aria-label="状态评估雷达图"></div>
+                    <div id="hearing-radar" class="hearing-radar" aria-label="Record-quality radar chart"></div>
                 </section>
                 <section class="hearing-insight-section" data-insight-panel="risk">
-                    <p class="panel-kicker">流程不足与改善建议</p>
+                    <p class="panel-kicker">Gaps and recommended actions</p>
                     <div id="hearing-risk-list" class="hearing-risk-list"></div>
                 </section>
                 <section class="hearing-insight-section" data-insight-panel="evidence">
-                    <p class="panel-kicker">关联法律资料</p>
+                    <p class="panel-kicker">Linked Canadian legal sources</p>
                     <div id="hearing-evidence-list" class="hearing-evidence-list"></div>
                 </section>
             </aside>
@@ -123,8 +126,8 @@
     const escapeHtml = (value) => String(value || '').replace(/[&<>'"]/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
     const percent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
     const scorePercent = (value) => `${Math.round(Number(value || 0))}%`;
-    const statusLabel = (status) => ({active:'进行中', pending:'等待前序阶段', completed:'已完成', blocked:'待补充', procedure_omitted:'程序省略', invalidated:'需重新确认'}[status] || status);
-    const roleLabel = (speaker) => ({'我方代理人':'我方代理人', '对方代理人':'对方代理人', '审判长':'审判长', '系统':'系统'}[speaker] || speaker);
+    const statusLabel = (status) => ({active:'Active', pending:'Awaiting prior stage', completed:'Completed', blocked:'More information required', procedure_omitted:'Procedure omitted', invalidated:'Reconfirmation required'}[status] || status);
+    const roleLabel = (speaker) => ({'User Counsel':'User Counsel', 'Opposing Counsel':'Opposing Counsel', 'Presiding Judge':'Presiding Judge', 'System':'System'}[speaker] || speaker);
 
     function selectedIds() {
         return [...evidenceOptions.querySelectorAll('input:checked')].map((input) => input.value);
@@ -132,12 +135,12 @@
 
     function renderGraph(data) {
         graph.innerHTML = data.stage_nodes.map((node) => {
-            const rollback = node.status === 'completed' ? `<button type="button" class="hearing-rollback" data-stage-index="${node.index}">回滚</button>` : '';
+            const rollback = node.status === 'completed' ? `<button type="button" class="hearing-rollback" data-stage-index="${node.index}">Roll Back</button>` : '';
             return `<article class="hearing-node ${escapeHtml(node.status)} ${node.stage === data.active_stage ? 'current' : ''}">
                 <span class="hearing-node-index">${node.index + 1}</span>
                 <strong>${escapeHtml(node.stage)}</strong>
                 <small>${statusLabel(node.status)} · ${percent(node.readiness)}</small>
-                <small>待核验 ${node.pending_count}</small>${rollback}
+                <small>${node.pending_count} pending verification</small>${rollback}
             </article>`;
         }).join('');
         graph.querySelectorAll('.hearing-rollback').forEach((button) => {
@@ -149,14 +152,14 @@
 
     function renderDialogue(data) {
         dialogue.innerHTML = data.messages.map((message) => {
-            const type = message.kind === 'risk' ? 'risk-card' : (message.speaker === '我方代理人' ? 'ours' : message.speaker === '审判长' ? 'judge' : message.speaker === '对方代理人' ? 'opposing' : 'system');
+            const type = message.kind === 'risk' ? 'risk-card' : (message.speaker === 'User Counsel' ? 'ours' : message.speaker === 'Presiding Judge' ? 'judge' : message.speaker === 'Opposing Counsel' ? 'opposing' : 'system');
             const risk = message.risk || {};
             const references = [...(message.evidence_ids || []), ...(message.legal_basis_ids || [])];
             return `<article class="hearing-message ${type}">
-                <div class="hearing-message-meta"><strong>${escapeHtml(roleLabel(message.speaker))}</strong><span>${escapeHtml(message.stage)}</span>${message.simulated ? '<span>模拟</span>' : ''}</div>
+                <div class="hearing-message-meta"><strong>${escapeHtml(roleLabel(message.speaker))}</strong><span>${escapeHtml(message.stage)}</span>${message.simulated ? '<span>Simulated</span>' : ''}</div>
                 <p>${escapeHtml(message.content)}</p>
-                ${message.kind === 'risk' ? `<div class="hearing-risk-inline"><strong>${escapeHtml(risk.category || '风险')} · ${escapeHtml(risk.node || message.stage)} · ${escapeHtml(risk.level || '待核验')}</strong><span>${escapeHtml(risk.suggestion || '')}</span><small>规则置信度：${risk.confidence === undefined ? '未计算' : percent(risk.confidence)}</small>${(risk.references || []).map((item) => `<small>${escapeHtml(item.citation || item.doc_id || '未检索到直接依据')}</small>`).join('')}</div>` : ''}
-                ${references.length ? `<div class="hearing-message-refs">引用资料：${references.map(escapeHtml).join('、')}</div>` : ''}
+                ${message.kind === 'risk' ? `<div class="hearing-risk-inline"><strong>${escapeHtml(risk.category || 'Risk')} · ${escapeHtml(risk.node || message.stage)} · ${escapeHtml(risk.level || 'Unverified')}</strong><span>${escapeHtml(risk.suggestion || '')}</span><small>Rule confidence: ${risk.confidence === undefined ? 'not calculated' : percent(risk.confidence)}</small>${(risk.references || []).map((item) => `<small>${escapeHtml(item.citation || item.doc_id || 'No verified direct authority')}</small>`).join('')}</div>` : ''}
+                ${references.length ? `<div class="hearing-message-refs">Source IDs: ${references.map(escapeHtml).join(', ')}</div>` : ''}
             </article>`;
         }).join('');
         dialogue.scrollTop = dialogue.scrollHeight;
@@ -168,14 +171,14 @@
         evidenceOptions.innerHTML = data.evidence_catalog.map((item) => `<label class="hearing-option">
             <input type="checkbox" value="${escapeHtml(item.doc_id)}" ${selected.has(item.doc_id) ? 'checked' : ''} />
             <span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.citation || item.source_kind)} · ${percent(item.score)}</small></span>
-        </label>`).join('') || '<p class="muted">当前没有可绑定的本地证据。</p>';
-        evidenceList.innerHTML = data.evidence_catalog.map((item) => `<article class="hearing-evidence-item"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.citation || item.source_kind)}</span><small>${escapeHtml(item.court || '法院未标注')} · ${escapeHtml(item.decision_date || '日期未标注')}</small></article>`).join('') || '<p class="muted">请先补充案情以检索本地资料。</p>';
+        </label>`).join('') || '<p class="muted">No local source is available to attach.</p>';
+        evidenceList.innerHTML = data.evidence_catalog.map((item) => `<article class="hearing-evidence-item"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.citation || item.source_kind)}</span><small>${escapeHtml(item.court || 'Court not identified')} · ${escapeHtml(item.decision_date || 'Date not identified')}</small></article>`).join('') || '<p class="muted">Add a case summary to retrieve local Canadian sources.</p>';
     }
 
     function renderRadar(metrics) {
         const items = [
-            ['证据', metrics.evidence_sufficiency], ['法律', metrics.legal_relevance], ['事实', metrics.fact_consistency],
-            ['程序', metrics.procedure_compliance], ['类案', metrics.case_support], ['抗辩', 100 - Number(metrics.opposing_strength || 0)],
+            ['Evidence', metrics.evidence_sufficiency], ['Law', metrics.legal_relevance], ['Facts', metrics.fact_consistency],
+            ['Procedure', metrics.procedure_compliance], ['Cases', metrics.case_support], ['Response', 100 - Number(metrics.opposing_strength || 0)],
         ];
         const points = (factor) => items.map(([, value], index) => {
             const angle = -Math.PI / 2 + index * (Math.PI * 2 / items.length);
@@ -186,7 +189,7 @@
             const angle = -Math.PI / 2 + index * (Math.PI * 2 / items.length);
             return `<text x="${100 + Math.cos(angle) * 84}" y="${96 + Math.sin(angle) * 84}" text-anchor="middle">${label}</text>`;
         }).join('');
-        radar.innerHTML = `<svg viewBox="0 0 200 184" role="img" aria-label="六项状态评估雷达图"><polygon class="hearing-radar-grid" points="100,24 158,58 158,126 100,160 42,126 42,58" /><polygon class="hearing-radar-grid inner" points="100,58 129,75 129,109 100,126 71,109 71,75" /><polygon class="hearing-radar-value" points="${points(1)}"></polygon>${labels}</svg>`;
+        radar.innerHTML = `<svg viewBox="0 0 200 184" role="img" aria-label="Six-dimension record-quality chart"><polygon class="hearing-radar-grid" points="100,24 158,58 158,126 100,160 42,126 42,58" /><polygon class="hearing-radar-grid inner" points="100,58 129,75 129,109 100,126 71,109 71,75" /><polygon class="hearing-radar-value" points="${points(1)}"></polygon>${labels}</svg>`;
     }
 
     function renderInsights(data) {
@@ -198,20 +201,20 @@
             fact_consistency: 0, procedure_compliance: 0, opposing_strength: 0, case_support: 0,
         };
         stageDetail.innerHTML = [
-            ['参与角色', (active.participants || []).join('、')],
-            ['争议焦点', (active.disputed_issues || []).join('；') || '待我方明确'],
-            ['事实输入', `${(active.facts || []).length} 项`],
-            ['证据充分性', scorePercent(metrics.evidence_sufficiency)],
-            ['法律相关性', scorePercent(metrics.legal_relevance)],
-            ['事实一致性', scorePercent(metrics.fact_consistency)],
-            ['程序合规性', scorePercent(metrics.procedure_compliance)],
-            ['对方抗辩强度', scorePercent(metrics.opposing_strength)],
-            ['阶段准备度', percent(confidence.stage_readiness)],
-            ['待验证项', (active.pending_verifications || []).join('；') || '无'],
+            ['Participants', (active.participants || []).join(', ')],
+            ['Disputed issues', (active.disputed_issues || []).join('; ') || 'To be identified by user counsel'],
+            ['Record submissions', `${(active.facts || []).length}`],
+            ['Evidence sufficiency', scorePercent(metrics.evidence_sufficiency)],
+            ['Authority relevance', scorePercent(metrics.legal_relevance)],
+            ['Factual consistency', scorePercent(metrics.fact_consistency)],
+            ['Procedural compliance', scorePercent(metrics.procedure_compliance)],
+            ['Opposing-case strength', scorePercent(metrics.opposing_strength)],
+            ['Stage readiness', percent(confidence.stage_readiness)],
+            ['Pending verification', (active.pending_verifications || []).join('; ') || 'None'],
         ].map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
         renderRadar(metrics);
-        const risks = active.risks || (data.final_report || {}).risks || (active.pending_verifications || []).map((item) => ({node: data.active_stage, level: '待核验', reason: item, suggestion: '补充来源或在下一次提交中说明核验结果。'}));
-        riskList.innerHTML = risks.map((risk) => `<article><strong>${escapeHtml(risk.category || risk.level || risk.type || '待核验')} · ${escapeHtml(risk.node || data.active_stage)}</strong><p>${escapeHtml(risk.reason)}</p><small>优化动作：${escapeHtml(risk.suggestion || risk.action || '补充来源并由律师核验。')}</small><small>规则置信度：${risk.confidence === undefined ? '未计算' : percent(risk.confidence)}</small>${(risk.references || []).map((item) => `<small class="hearing-reference">${escapeHtml(item.citation || item.doc_id || '未检索到直接依据')}</small>`).join('') || '<small class="hearing-reference">未检索到直接依据</small>'}</article>`).join('') || '<p class="muted">当前没有新增的流程风险提示。</p>';
+        const risks = active.risks || (data.final_report || {}).risks || (active.pending_verifications || []).map((item) => ({node: data.active_stage, level: 'unverified', reason: item, suggestion: 'Add a source or explain the verification result in the next submission.'}));
+        riskList.innerHTML = risks.map((risk) => `<article><strong>${escapeHtml(risk.category || risk.level || risk.type || 'Unverified')} · ${escapeHtml(risk.node || data.active_stage)}</strong><p>${escapeHtml(risk.reason)}</p><small>Recommended action: ${escapeHtml(risk.suggestion || risk.action || 'Add a source and obtain Canadian counsel review.')}</small><small>Rule confidence: ${risk.confidence === undefined ? 'not calculated' : percent(risk.confidence)}</small>${(risk.references || []).map((item) => `<small class="hearing-reference">${escapeHtml(item.citation || item.doc_id || 'No verified direct authority')}</small>`).join('') || '<small class="hearing-reference">No verified direct authority</small>'}</article>`).join('') || '<p class="muted">No new workflow risk has been identified.</p>';
     }
 
     function renderFinalReport(data) {
@@ -220,27 +223,27 @@
         if (!report) return;
         const metrics = report.state_metrics || {};
         const risks = report.risks || [];
-        const probability = report.display_probability ? `${Number(report.probability).toFixed(1)}%` : '未展示';
-        const interval = report.confidence_interval ? `${report.confidence_interval[0]}% - ${report.confidence_interval[1]}%` : '未生成';
-        finalReport.innerHTML = `<div class="hearing-report-heading"><div><p class="eyebrow">规则聚合报告</p><h2>完成庭审模拟后的辅助评估</h2><p>${escapeHtml(report.calibration_status || report.reason || '')}</p></div><div class="hearing-probability-gauge"><span>当前模拟概率</span><strong>${probability}</strong><small>区间 ${escapeHtml(interval)}</small></div></div>
-            <p class="hearing-report-warning">该百分比不是经真实结果标签校准的预测，也不是法律意见；它仅用于提示本次模拟的材料缺口和复核优先级。</p>
+        const probability = report.display_probability ? `${Number(report.probability).toFixed(1)}%` : 'Not displayed';
+        const interval = report.confidence_interval ? `${report.confidence_interval[0]}% - ${report.confidence_interval[1]}%` : 'Not generated';
+        finalReport.innerHTML = `<div class="hearing-report-heading"><div><p class="eyebrow">Rule-based training report</p><h2>Post-hearing record assessment</h2><p>${escapeHtml(report.calibration_status || report.reason || '')}</p></div><div class="hearing-probability-gauge"><span>Outcome probability</span><strong>${probability}</strong><small>Interval ${escapeHtml(interval)}</small></div></div>
+            <p class="hearing-report-warning">No percentage is a calibrated legal outcome prediction or legal advice. Use this report only to identify record gaps and review priorities.</p>
             <div class="hearing-metric-grid">${[
-                ['证据充分性', metrics.evidence_sufficiency], ['法律相关性', metrics.legal_relevance], ['事实一致性', metrics.fact_consistency],
-                ['程序合规性', metrics.procedure_compliance], ['类案支持度', metrics.case_support], ['对方抗辩强度', metrics.opposing_strength],
+                ['Evidence sufficiency', metrics.evidence_sufficiency], ['Authority relevance', metrics.legal_relevance], ['Factual consistency', metrics.fact_consistency],
+                ['Procedural compliance', metrics.procedure_compliance], ['Case-law support', metrics.case_support], ['Opposing-case strength', metrics.opposing_strength],
             ].map(([label, value]) => `<article><span>${label}</span><strong>${scorePercent(value)}</strong></article>`).join('')}</div>
-            <section class="hearing-report-section"><h3>关键驱动因素与改进模拟</h3><p>规则评分：${escapeHtml(report.score_formula || '未生成')}</p><p>优化后模拟概率：<strong>${report.display_probability ? `${Number(report.optimized_probability).toFixed(1)}%` : '未展示'}</strong>。该变化仅代表按风险建议补充材料后的规则情景，不能替代外部验证。</p></section>
-            <section class="hearing-report-section"><h3>风险矩阵</h3><div class="hearing-risk-matrix">${risks.map((risk) => `<article><strong>${escapeHtml(risk.category || '风险')} · ${escapeHtml(risk.level || '待核验')} · ${escapeHtml(risk.node || '未标注节点')}</strong><p>${escapeHtml(risk.reason)}</p><small>建议：${escapeHtml(risk.suggestion || '补充证据并由律师复核。')}</small><small>规则置信度：${risk.confidence === undefined ? '未计算' : percent(risk.confidence)}</small></article>`).join('') || '<p class="muted">未生成新增风险。</p>'}</div></section>
-            <section class="hearing-report-section"><h3>证据链与可追溯引用</h3><div class="hearing-evidence-chain">${(report.citations || []).map((item) => `<article><span>${escapeHtml(item.source_kind === 'law' ? '法规' : '案例')}</span><strong>${escapeHtml(item.title || item.doc_id)}</strong><small>${escapeHtml(item.citation || '未检索到直接依据')}</small>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">查看来源</a>` : '<small>未检索到直接依据</small>'}</article>`).join('') || '<p class="muted">未检索到可追溯资料。</p>'}</div></section>
+            <section class="hearing-report-section"><h3>Key drivers and improvement scenario</h3><p>Training score: ${escapeHtml(report.score_formula || 'Not generated')}</p><p>Adjusted scenario output: <strong>${report.display_probability ? `${Number(report.optimized_probability).toFixed(1)}%` : 'Not displayed'}</strong>. Any adjustment is a rule-based scenario only and cannot replace external validation.</p></section>
+            <section class="hearing-report-section"><h3>Risk matrix</h3><div class="hearing-risk-matrix">${risks.map((risk) => `<article><strong>${escapeHtml(risk.category || 'Risk')} · ${escapeHtml(risk.level || 'Unverified')} · ${escapeHtml(risk.node || 'Unassigned stage')}</strong><p>${escapeHtml(risk.reason)}</p><small>Recommendation: ${escapeHtml(risk.suggestion || 'Add record evidence and obtain Canadian counsel review.')}</small><small>Rule confidence: ${risk.confidence === undefined ? 'not calculated' : percent(risk.confidence)}</small></article>`).join('') || '<p class="muted">No new risk was generated.</p>'}</div></section>
+            <section class="hearing-report-section"><h3>Evidence chain and traceable authorities</h3><div class="hearing-evidence-chain">${(report.citations || []).map((item) => `<article><span>${escapeHtml(item.source_kind === 'law' ? 'Legislation' : 'Case')}</span><strong>${escapeHtml(item.title || item.doc_id)}</strong><small>${escapeHtml(item.citation || 'No verified direct authority')}</small>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">Open source</a>` : '<small>No verified direct authority</small>'}</article>`).join('') || '<p class="muted">No traceable source was retrieved.</p>'}</div></section>
             <p class="hearing-report-disclaimer">${escapeHtml(report.disclaimer || data.disclaimer || '')}</p>`;
     }
 
     function render(data) {
         currentRun = data;
         workbench.hidden = false;
-        runLabel.textContent = `庭审记录 ${data.id}`;
+        runLabel.textContent = `Hearing Record ${data.id}`;
         stageTitle.textContent = data.active_stage;
-        runStatus.textContent = data.status === 'completed' ? '已完成' : '进行中';
-        stageReadiness.textContent = `阶段准备度 ${percent(data.stages[data.active_stage].confidence.stage_readiness)}`;
+        runStatus.textContent = data.status === 'completed' ? 'Completed' : 'Active';
+        stageReadiness.textContent = `Stage readiness ${percent(data.stages[data.active_stage].confidence.stage_readiness)}`;
         disclaimer.textContent = data.disclaimer;
         renderGraph(data); renderDialogue(data); renderEvidence(data); renderInsights(data); renderFinalReport(data);
         turnForm.hidden = data.status !== 'active';
@@ -249,7 +252,7 @@
     async function request(url, options = {}) {
         const response = await fetch(url, {headers: {'Content-Type': 'application/json'}, ...options});
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.detail || '请求失败。');
+        if (!response.ok) throw new Error(payload.detail || 'The request failed.');
         render(payload); return payload;
     }
 

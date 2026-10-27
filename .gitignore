@@ -22,6 +22,9 @@ htmlcov/
 # IDE settings
 .idea/
 .vscode/
+.agents/
+.codex/
+.workbuddy/
 
 # Runtime logs
 *.log
@@ -40,6 +43,7 @@ tmp/
 tmp-*.pdf
 *.tmp
 *.bak
+*.backup.*
 data_archive/
 data/backups/
 data/imports/
@@ -47,6 +51,40 @@ data/raw/
 data/model_cache/
 *.parquet
 _cleanup_quarantine_*/
+
+# Private working notes and generated review material
+*.md
+!README.md
+!app/skills/**/*.md
+docs/
+tests/
+data/eval/
+sql/
+*.doc
+*.docx
+
+# Test, evaluation, and local presentation scripts
+scripts/
+
+# Local maintenance and alternate packaging entry points
+/*.py
+/deploy.sh
+/server_deploy.sh
+/environment-*.yml
+/requirements-local-*.txt
+/schema.sql
+
+# Credential files and private keys
+credentials*.json
+service-account*.json
+secrets*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Refactor quarantine
+.trash/
 
 # Local browser drivers
 drivers/
