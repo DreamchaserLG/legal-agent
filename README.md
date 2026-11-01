@@ -11,6 +11,8 @@ A bilingual Canadian legal-intelligence workbench for source-linked research, ca
 - Human–agent review with an auditable event trail
 - Chinese and English interface switching
 
+Architecture details: [Agentic legal research, contextual indexing, and corpus governance](docs/AGENTIC_LEGAL_RESEARCH.md).
+
 This project provides decision support only. Every authority and generated conclusion must be reviewed by qualified Canadian counsel before reliance.
 
 ## Requirements

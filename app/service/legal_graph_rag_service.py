@@ -17,10 +17,16 @@ from app.service.rag_service import ensure_rag_tables
 
 GRAPH_SCHEMA_VERSION = "legal-graph-rag-1.0"
 _LEGAL_GRAPH_TABLES_READY = False
-_ENTITY_TYPES = {"Case", "Statute", "Section", "LegalIssue", "LegalConcept", "Holding"}
+_ENTITY_TYPES = {
+    "Case", "Court", "Statute", "Regulation", "JudicialInterpretation", "Section", "LegalVersion",
+    "LegalIssue", "LegalConcept", "Holding", "Claim", "Charge", "Element", "Defense", "Exception",
+    "Fact", "Evidence", "SentencingFactor", "Remedy",
+}
 _RELATION_TYPES = {
     "CITES", "MENTIONS", "APPLIES", "INTERPRETS", "DISTINGUISHES",
-    "OVERRULES", "HAS_SECTION", "RELATED_ISSUE",
+    "FOLLOWS", "OVERRULES", "AMENDS", "REPEALS", "SUPERSEDES", "HAS_VERSION",
+    "HAS_SECTION", "HAS_ELEMENT", "HAS_SENTENCING_FACTOR", "AGGRAVATES", "MITIGATES",
+    "SATISFIES", "DISPUTES", "SUPPORTS", "CONTRADICTS", "RELATED_ISSUE",
 }
 _LEGAL_CONCEPT_HINTS = (
     (r"租客|承租|房东|出租|\b(?:tenant|landlord|lease|tenancy)\b", "residential tenancy"),
@@ -852,7 +858,7 @@ def search_legal_graph(
             "entry_entities": [], "items": [], "total": 0, "paths": 0,
         }
 
-    max_hops = max(0, min(int(max_hops if max_hops is not None else getattr(settings, "rag_graph_max_hops", 2)), 2))
+    max_hops = max(0, min(int(max_hops if max_hops is not None else getattr(settings, "rag_graph_max_hops", 3)), 4))
     min_confidence = max(0.0, min(float(getattr(settings, "rag_graph_edge_min_confidence", 0.65)), 1.0))
     paths = _traverse(entries, max_hops, min_confidence)
     entity_ids = sorted(paths)

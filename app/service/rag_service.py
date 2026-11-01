@@ -128,6 +128,13 @@ def ensure_rag_tables() -> None:
                 published_at TIMESTAMP NULL,
                 chunk_index INTEGER NOT NULL DEFAULT 0,
                 text_content TEXT NOT NULL,
+                context_prefix TEXT NOT NULL DEFAULT '',
+                contextual_text TEXT NOT NULL DEFAULT '',
+                document_hash VARCHAR(64) NOT NULL DEFAULT '',
+                index_version VARCHAR(40) NOT NULL DEFAULT 'context-v1',
+                authority_status VARCHAR(40) NOT NULL DEFAULT 'unknown',
+                effective_from TEXT NOT NULL DEFAULT '',
+                effective_to TEXT NOT NULL DEFAULT '',
                 content_hash VARCHAR(64) NOT NULL,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -171,6 +178,13 @@ def ensure_rag_tables() -> None:
                 published_at TIMESTAMP NULL,
                 chunk_index INTEGER NOT NULL DEFAULT 0,
                 text_content TEXT NOT NULL,
+                context_prefix TEXT NOT NULL DEFAULT '',
+                contextual_text TEXT NOT NULL DEFAULT '',
+                document_hash VARCHAR(64) NOT NULL DEFAULT '',
+                index_version VARCHAR(40) NOT NULL DEFAULT 'context-v1',
+                authority_status VARCHAR(40) NOT NULL DEFAULT 'unknown',
+                effective_from TEXT NOT NULL DEFAULT '',
+                effective_to TEXT NOT NULL DEFAULT '',
                 content_hash VARCHAR(64) NOT NULL,
                 metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
                 search_vector TSVECTOR,
@@ -210,6 +224,13 @@ def ensure_rag_tables() -> None:
                 "court_level": "TEXT NOT NULL DEFAULT ''",
                 "language": "TEXT NOT NULL DEFAULT ''",
                 "citation": "TEXT NOT NULL DEFAULT ''",
+                "context_prefix": "TEXT NOT NULL DEFAULT ''",
+                "contextual_text": "TEXT NOT NULL DEFAULT ''",
+                "document_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
+                "index_version": "VARCHAR(40) NOT NULL DEFAULT 'context-v1'",
+                "authority_status": "VARCHAR(40) NOT NULL DEFAULT 'unknown'",
+                "effective_from": "TEXT NOT NULL DEFAULT ''",
+                "effective_to": "TEXT NOT NULL DEFAULT ''",
             }
             for column, definition in sqlite_columns.items():
                 if column not in existing_columns:
@@ -241,6 +262,13 @@ def ensure_rag_tables() -> None:
                 "language": "VARCHAR(20) NOT NULL DEFAULT ''",
                 "citation": "TEXT NOT NULL DEFAULT ''",
                 "search_vector": "TSVECTOR",
+                "context_prefix": "TEXT NOT NULL DEFAULT ''",
+                "contextual_text": "TEXT NOT NULL DEFAULT ''",
+                "document_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
+                "index_version": "VARCHAR(40) NOT NULL DEFAULT 'context-v1'",
+                "authority_status": "VARCHAR(40) NOT NULL DEFAULT 'unknown'",
+                "effective_from": "TEXT NOT NULL DEFAULT ''",
+                "effective_to": "TEXT NOT NULL DEFAULT ''",
             }
             for column, definition in pg_columns.items():
                 if column not in existing_columns:
@@ -687,10 +715,27 @@ def iter_rag_documents(source_filter: str = "all", limit: int | None = None) -> 
             yield doc
 
 
+def build_contextual_prefix(doc: dict, chunk_index: int) -> str:
+    metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+    fields = [
+        ("Document", doc.get("title")),
+        ("Citation", metadata.get("citation") or metadata.get("article_no")),
+        ("Jurisdiction", metadata.get("jurisdiction") or metadata.get("country") or metadata.get("province")),
+        ("Document type", metadata.get("document_type") or metadata.get("legal_type") or metadata.get("case_type")),
+        ("Court", metadata.get("court_level") or metadata.get("court_name")),
+        ("Section", metadata.get("section_title") or metadata.get("heading")),
+        ("Chunk position", str(int(chunk_index) + 1)),
+    ]
+    return " | ".join(f"{label}: {repair_text(value)}" for label, value in fields if repair_text(value))[:1200]
+
+
 def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
     from app.core.database import is_sqlite
     source_kind = _source_kind(doc.get("source_code", ""), doc.get("source_table", ""))
     structured_fields = _doc_structured_fields(doc, source_kind)
+    metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+    context_prefix = build_contextual_prefix(doc, chunk_index)
+    contextual_text = f"{context_prefix}\n\n{repair_text(chunk_text)}".strip()
 
     if is_sqlite():
         # SQLite: 不支持 search_vector 和 ON CONFLICT DO UPDATE
@@ -701,12 +746,16 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                     source_kind, source_table, source_id, source_code, source_uid,
                     title, source_url, jurisdiction, document_type, court_level,
                     language, citation, published_at, chunk_index, text_content,
+                    context_prefix, contextual_text, document_hash, index_version,
+                    authority_status, effective_from, effective_to,
                     content_hash, metadata_json, created_at, updated_at
                 )
                 VALUES (
                     :source_kind, :source_table, :source_id, :source_code, :source_uid,
                     :title, :source_url, :jurisdiction, :document_type, :court_level,
                     :language, :citation, :published_at, :chunk_index, :text_content,
+                    :context_prefix, :contextual_text, :document_hash, 'context-v1',
+                    :authority_status, :effective_from, :effective_to,
                     :content_hash, :metadata_json,
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
@@ -728,7 +777,13 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                 "published_at": doc.get("published_at"),
                 "chunk_index": int(chunk_index),
                 "text_content": repair_text(chunk_text),
-                "content_hash": sha256_text(chunk_text),
+                "context_prefix": context_prefix,
+                "contextual_text": contextual_text,
+                "document_hash": sha256_text(repair_text(doc.get("text")) or repair_text(doc.get("title"))),
+                "authority_status": repair_text(metadata.get("authority_status") or metadata.get("in_force_status") or "unknown"),
+                "effective_from": repair_text(metadata.get("effective_from") or metadata.get("in_force_date")),
+                "effective_to": repair_text(metadata.get("effective_to") or metadata.get("repealed_at")),
+                "content_hash": sha256_text(contextual_text),
                 "metadata_json": _json_text(doc.get("metadata") or {}),
             },
         )
@@ -740,12 +795,16 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                     source_kind, source_table, source_id, source_code, source_uid,
                     title, source_url, jurisdiction, document_type, court_level,
                     language, citation, published_at, chunk_index, text_content,
+                    context_prefix, contextual_text, document_hash, index_version,
+                    authority_status, effective_from, effective_to,
                     content_hash, metadata_json, search_vector, created_at, updated_at
                 )
                 VALUES (
                     :source_kind, :source_table, :source_id, :source_code, :source_uid,
                     :title, :source_url, :jurisdiction, :document_type, :court_level,
                     :language, :citation, :published_at, :chunk_index, :text_content,
+                    :context_prefix, :contextual_text, :document_hash, 'context-v1',
+                    :authority_status, :effective_from, :effective_to,
                     :content_hash, CAST(:metadata_json AS jsonb),
                     to_tsvector('english', :search_text),
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
@@ -764,6 +823,13 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                     citation = EXCLUDED.citation,
                     published_at = EXCLUDED.published_at,
                     text_content = EXCLUDED.text_content,
+                    context_prefix = EXCLUDED.context_prefix,
+                    contextual_text = EXCLUDED.contextual_text,
+                    document_hash = EXCLUDED.document_hash,
+                    index_version = EXCLUDED.index_version,
+                    authority_status = EXCLUDED.authority_status,
+                    effective_from = EXCLUDED.effective_from,
+                    effective_to = EXCLUDED.effective_to,
                     content_hash = EXCLUDED.content_hash,
                     metadata_json = EXCLUDED.metadata_json,
                     search_vector = EXCLUDED.search_vector,
@@ -786,9 +852,15 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                 "published_at": doc.get("published_at"),
                 "chunk_index": int(chunk_index),
                 "text_content": repair_text(chunk_text),
-                "content_hash": sha256_text(chunk_text),
+                "context_prefix": context_prefix,
+                "contextual_text": contextual_text,
+                "document_hash": sha256_text(repair_text(doc.get("text")) or repair_text(doc.get("title"))),
+                "authority_status": repair_text(metadata.get("authority_status") or metadata.get("in_force_status") or "unknown"),
+                "effective_from": repair_text(metadata.get("effective_from") or metadata.get("in_force_date")),
+                "effective_to": repair_text(metadata.get("effective_to") or metadata.get("repealed_at")),
+                "content_hash": sha256_text(contextual_text),
                 "metadata_json": _json_text(doc.get("metadata") or {}),
-                "search_text": " ".join([repair_text(doc.get("title")), repair_text(chunk_text)]),
+                "search_text": contextual_text,
             },
         )
 

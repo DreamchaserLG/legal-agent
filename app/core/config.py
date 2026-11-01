@@ -57,11 +57,20 @@ class Settings:
             in {"1", "true", "yes", "on"}
         )
         self.deep_analysis_enabled = (
-            os.getenv("DEEP_ANALYSIS_ENABLED", "false").strip().lower()
+            os.getenv("DEEP_ANALYSIS_ENABLED", "true").strip().lower()
             in {"1", "true", "yes", "on"}
         )
         self.deep_analysis_timeout_seconds = int(os.getenv("DEEP_ANALYSIS_TIMEOUT_SECONDS", "120"))
         self.deep_analysis_max_llm_calls = int(os.getenv("DEEP_ANALYSIS_MAX_LLM_CALLS", "5"))
+        self.agentic_legal_research_enabled = (
+            os.getenv("AGENTIC_LEGAL_RESEARCH_ENABLED", "true").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.legal_research_max_rounds = int(os.getenv("LEGAL_RESEARCH_MAX_ROUNDS", "3"))
+        self.legal_research_queries_per_round = int(os.getenv("LEGAL_RESEARCH_QUERIES_PER_ROUND", "6"))
+        self.legal_research_max_evidence = int(os.getenv("LEGAL_RESEARCH_MAX_EVIDENCE", "40"))
+        self.legal_research_min_new_evidence = int(os.getenv("LEGAL_RESEARCH_MIN_NEW_EVIDENCE", "2"))
+        self.legal_research_timeout_seconds = int(os.getenv("LEGAL_RESEARCH_TIMEOUT_SECONDS", "90"))
         self.quality_gate_citation_traceability_min = float(
             os.getenv("QUALITY_GATE_CITATION_TRACEABILITY_MIN", "0.7")
         )
@@ -218,7 +227,7 @@ class Settings:
         )
         self.rag_graph_weight = float(os.getenv("RAG_GRAPH_WEIGHT", "0.25"))
         self.rag_graph_candidate_limit = int(os.getenv("RAG_GRAPH_CANDIDATE_LIMIT", "20"))
-        self.rag_graph_max_hops = int(os.getenv("RAG_GRAPH_MAX_HOPS", "2"))
+        self.rag_graph_max_hops = int(os.getenv("RAG_GRAPH_MAX_HOPS", "3"))
         self.rag_graph_edge_min_confidence = float(os.getenv("RAG_GRAPH_EDGE_MIN_CONFIDENCE", "0.65"))
         self.rag_vector_index_type = os.getenv("RAG_VECTOR_INDEX_TYPE", "hnsw").strip().lower()
         self.rag_hnsw_m = int(os.getenv("RAG_HNSW_M", "16"))

@@ -86,6 +86,10 @@
     </div>
 </section>
 
+{% if analysis_result %}
+{% include "partials/agentic_research_sections.html" %}
+{% endif %}
+
 {% set deep_analysis = analysis_result.get('deep_analysis') if analysis_result else none %}
 {% if deep_analysis %}
 {% include "partials/deep_analysis_sections.html" %}

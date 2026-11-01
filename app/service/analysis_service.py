@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import engine, fetch_all
+from app.service.agentic_legal_research_service import run_agentic_legal_research
 from app.service.bilingual_service import build_bilingual_analysis_pack
 from app.service.common_service import repair_text
 from app.service.data_quality_service import build_data_readiness
@@ -1111,11 +1112,13 @@ def enrich_with_deep_analysis(
     if not bool(getattr(settings, "deep_analysis_enabled", False)) or payload.get("deep_analysis"):
         return payload
     try:
+        research_items = (payload.get("agentic_research") or {}).get("evidence") or []
+        retrieval_items = research_items or (payload.get("rag_context") or {}).get("items") or payload.get("results") or []
         plan, deep_analysis = build_deep_analysis_payload(
             repair_text(payload.get("input_text")),
             keywords=payload.get("retrieval_keywords") or payload.get("extracted_keywords") or [],
             module_packet=payload.get("module_packet") or {},
-            retrieval_items=(payload.get("rag_context") or {}).get("items") or payload.get("results") or [],
+            retrieval_items=retrieval_items,
         )
         quality_gate = evaluate_quality_gate(
             deep_analysis,
@@ -1307,6 +1310,26 @@ def analyze_sentence_search(
             keywords=retrieval_keywords,
             module=normalized_module,
         )
+    if bool(getattr(settings, "agentic_legal_research_enabled", True)):
+        try:
+            response_payload["agentic_research"] = run_agentic_legal_research(
+                cleaned_text,
+                keywords=retrieval_keywords,
+                module=normalized_module,
+                source_filter=effective_source,
+            )
+        except Exception as exc:
+            response_payload["agentic_research"] = {
+                "status": "error",
+                "error": repair_text(str(exc))[:400],
+                "rounds": [],
+                "evidence": [],
+                "coverage": [],
+                "unresolved_gaps": ["多轮研究编排未完成，当前页面仅展示基础检索结果。"],
+                "review_required": True,
+            }
+    else:
+        response_payload["agentic_research"] = {"status": "disabled", "rounds": [], "evidence": []}
     response_payload["data_readiness"] = build_data_readiness(
         module=normalized_module,
         module_packet=response_payload["module_packet"],

@@ -200,6 +200,11 @@ def _append_fact(target: list[StructuredFact], fact_type: str, content: str, sou
 def _rule_extract_facts(case_text: str) -> list[StructuredFact]:
     facts: list[StructuredFact] = []
     patterns: list[tuple[str, re.Pattern, str, float]] = [
+        ("timeline", re.compile(r"(?:19|20)\d{2}年(?:0?[1-9]|1[0-2])月(?:0?[1-9]|[12]\d|3[01])日|(?:19|20)\d{2}[-/]\d{1,2}(?:[-/]\d{1,2})?", re.I), "案情明确提及时间节点：{}", 0.94),
+        ("amount", re.compile(r"(?:人民币|加元|美元|CAD|CNY|USD|\$|￥)\s?[\d,]+(?:\.\d{1,2})?(?:元|万元)?", re.I), "案情明确提及金额：{}", 0.94),
+        ("party", re.compile(r"原告|被告|申请人|答辩人|房东|出租人|租客|承租人|雇主|雇员|被害人|行为人|landlord|tenant|plaintiff|defendant|applicant|respondent", re.I), "识别到当事人角色：{}", 0.88),
+        ("document", re.compile(r"合同|协议|通知书|判决书|发票|收据|邮件|聊天记录|照片|鉴定意见|报告|lease|agreement|notice|invoice|receipt|email|report", re.I), "案情提及可能承担证明作用的材料：{}", 0.86),
+        ("relationship", re.compile(r"租赁关系|劳动关系|买卖关系|借贷关系|雇佣关系|侵权关系|landlord.{0,12}tenant|employment relationship", re.I), "识别到法律关系线索：{}", 0.86),
         ("timeline", re.compile(r"(?:19|20)\d{2}(?:年(?:0?[1-9]|1[0-2])月?(?:(?:0?[1-9]|[12]\d|3[01])日?)?|[-/](?:0?[1-9]|1[0-2])(?:[-/](?:0?[1-9]|[12]\d|3[01]))?)|\d{1,2}月\d{1,2}日", re.I), "案情明确提及时间节点：{}", 0.94),
         ("amount", re.compile(r"(?:人民币|加元|美元|CAD|CNY|USD|\$|￥)\s?[\d,]+(?:\.\d{1,2})?(?:元|万元)?|[\d,]+(?:\.\d{1,2})?\s?(?:元|万元|加元|美元)", re.I), "案情明确提及金额：{}", 0.94),
         ("party", re.compile(r"原告|被告|申请人|答辩人|房东|出租人|租客|承租人|雇主|雇员|员工|landlord|tenant|plaintiff|defendant|applicant|respondent", re.I), "识别到当事人角色：{}", 0.88),
@@ -259,6 +264,14 @@ def _llm_extract_facts(case_text: str) -> list[StructuredFact]:
 
 
 _ISSUE_RULES = [
+    (r"醉酒|酒后|intoxicated|drunk", "醉酒状态对责任能力、主观过错及量刑的影响", "criminal responsibility and sentencing"),
+    (r"过失致人重伤|过失伤害|negligent.*(?:injury|bodily harm)", "过失致人重伤的构成要件、因果关系与法定刑", "criminal negligence"),
+    (r"前科|累犯|再犯|prior conviction|recidiv", "前科是否构成累犯及其量刑评价边界", "criminal history and recidivism"),
+    (r"盗窃|theft", "盗窃前罪的性质、执行时间及与本案的法律关联", "theft and prior conviction"),
+    (r"量刑|自首|坦白|认罪认罚|赔偿|谅解|sentenc", "法定刑范围及法定、酌定量刑情节如何综合评价", "sentencing factors"),
+    (r"租客|承租|房东|出租|tenant|landlord|lease", "租赁合同义务及出租人法定义务是否履行", "residential tenancy"),
+    (r"劳动|雇主|雇员|解雇|employment|employee|dismissal", "劳动关系终止的正当性及补偿范围", "employment"),
+    (r"受伤|损害|过失|事故|injury|damage|negligence|accident", "注意义务、违反、因果关系及损害是否成立", "tort and negligence"),
     (r"租客|承租|房东|出租|tenant|landlord|lease", "租赁合同义务及法定出租人义务是否履行", "residential tenancy"),
     (r"欠租|租金|付款|支付|arrears|rent|payment", "付款义务、欠款范围及抵扣抗辩能否成立", "contract and payment"),
     (r"维修|漏水|霉菌|供暖|适居|repair|mould|heat|habitability", "维修与适居义务违反是否达到法定救济条件", "housing standards and remedies"),
@@ -270,6 +283,21 @@ _ISSUE_RULES = [
 
 
 def _issue_positions(issue_name: str) -> tuple[str, str]:
+    if "累犯" in issue_name or "前科" in issue_name:
+        return (
+            "应分别核验前罪性质、刑罚执行完毕时间、本罪主观罪过及法定累犯条件，不能仅因存在前科直接认定累犯。",
+            "控方可能主张既往定罪反映再犯风险；即使不构成法定累犯，也可能请求在裁量范围内评价其相关性。",
+        )
+    if "醉酒" in issue_name:
+        return (
+            "应区分醉酒对责任能力的一般规则、对具体行为过错和因果关系的证明作用，以及是否属于独立量刑因素。",
+            "对方可能主张醉酒不当然减轻责任，并结合行为方式、危险程度及事后表现评价责任。",
+        )
+    if "过失致人重伤" in issue_name:
+        return (
+            "需要逐项证明注意义务、违反义务、重伤结果及事实与法律因果关系，并排除其他定性路径。",
+            "对方可能争议主观罪过、伤情等级、介入因素、可预见性或主张应适用其他罪名。",
+        )
     if "维修" in issue_name or "适居" in issue_name:
         return (
             "若维修通知、房屋缺陷及未处理经过得到材料确认，可主张出租人未履行维修和适居义务并请求相应减租或损失救济。",
@@ -311,6 +339,8 @@ def _infer_dispute_issues(case_text: str, facts: list[StructuredFact]) -> list[D
     fact_contents = [fact.content for fact in facts]
     for pattern, issue_name, domain in _ISSUE_RULES:
         if not re.search(pattern, case_text, re.I):
+            continue
+        if domain == "tort and negligence" and re.search(r"刑事|犯罪|量刑|盗窃|累犯|过失致人重伤", case_text):
             continue
         support = [fact.content for fact in facts if re.search(pattern, f"{fact.content} {fact.source_span}", re.I)][:4]
         if not support:
