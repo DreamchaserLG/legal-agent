@@ -132,6 +132,7 @@ from app.service.user_service import (
     get_last_query,
     list_all_histories,
     list_all_users,
+    list_recent_history_shortcuts,
     list_user_histories,
     record_search_history,
     register_user,
@@ -865,6 +866,11 @@ def _base_context(request: Request, page_id: str) -> dict:
         {"value": "us_sanctions", **_presentation_module_profile("us_sanctions")},
     ]
     current_user = get_current_user(request)
+    recent_histories = (
+        list_recent_history_shortcuts(user_id=int(current_user["id"]), limit=10)
+        if current_user
+        else []
+    )
     lang = normalize_lang(request.cookies.get(LANG_COOKIE))
     return {
         "request": request,
@@ -881,6 +887,7 @@ def _base_context(request: Request, page_id: str) -> dict:
         "module_source_map": {item["value"]: item.get("source_options", []) for item in module_options},
         "current_user": current_user,
         "last_query": get_last_query(request),
+        "recent_histories": recent_histories,
         "page_notice": str(request.query_params.get("message") or "").strip(),
     }
 
@@ -899,8 +906,8 @@ def _normalize_search_page_size(value: int) -> int:
     try:
         page_size = int(value)
     except (TypeError, ValueError):
-        page_size = 10
-    return page_size if page_size in SEARCH_PAGE_SIZES else 10
+        page_size = 5
+    return page_size if page_size in SEARCH_PAGE_SIZES else 5
 
 
 def _safe_float(value) -> float:
@@ -1739,7 +1746,7 @@ def results_page(
     request: Request,
     keywords: str = Query(""),
     sync_first: str | None = Query(None),
-    limit: int = Query(settings.default_search_limit),
+    limit: int = Query(5),
     offset: int = Query(0),
     source: str = Query("all"),
     sort: str = Query("relevance"),
@@ -1773,7 +1780,7 @@ def results_page(
     effective_source = resolve_source_for_module(module_code, source)
     result = search_and_optionally_sync(
         keywords_input=keywords,
-        sync_first=_to_bool(sync_first),
+        sync_first=False,
         limit=limit,
         offset=offset,
         source=effective_source,
@@ -1789,11 +1796,49 @@ def results_page(
     from app.service.query_intent_service import analyze_intent, needs_guidance
 
     intent = analyze_intent(keywords)
-    if needs_guidance(intent):
+    show_guidance = needs_guidance(intent)
+    if show_guidance:
         # Vague input would only produce an empty result list; show guidance instead.
         result["intent_hint"] = intent
         result["total"] = 0
         result["items"] = []
+
+    saved_history_id = 0
+    if keywords.strip() and not show_guidance:
+        search_url = f"/results?{_build_query_string(keywords=keywords, limit=limit, offset=offset, source=effective_source, sort=sort, module=module_code)}"
+        try:
+            snapshot = build_history_snapshot(
+                page_id="search",
+                restore_url=search_url,
+                module_code=module_code,
+                query_text=keywords,
+                query_params={
+                    "limit": limit,
+                    "offset": offset,
+                    "source": effective_source,
+                    "sort": sort,
+                    "module": module_code,
+                    "court": court.strip(),
+                    "year": year.strip(),
+                },
+                result_payload=result,
+            )
+            saved_history_id = record_search_history(
+                user_id=int(page_user["id"]),
+                query_text=keywords,
+                query_type="search",
+                country="Canada" if module_code == "canada" else "United States",
+                court_level=court.strip(),
+                legal_type="Local legal research",
+                result_snapshot=snapshot,
+            )
+        except Exception:
+            saved_history_id = 0
+        _remember_query(
+            request,
+            query_text=keywords,
+            restore_url=f"/histories/{saved_history_id}" if saved_history_id else search_url,
+        )
 
     context = _base_context(request, "search")
     context.update(result)
@@ -1806,6 +1851,7 @@ def results_page(
         "current_page": (offset // limit) + 1,
         "active_court": court.strip(),
         "active_year": year.strip(),
+        "saved_history_id": saved_history_id,
     })
     context.update(
         _task_context(
@@ -1813,12 +1859,6 @@ def results_page(
             refresh_url=f"/results?{_build_query_string(keywords=keywords, limit=limit, offset=offset, source=effective_source, sort=sort, module=module_code, refresh='1')}",
         )
     )
-    if keywords.strip():
-        _remember_query(
-            request,
-            query_text=keywords,
-            restore_url=f"/results?{_build_query_string(keywords=keywords, limit=limit, offset=offset, source=effective_source, sort=sort, module=module_code)}",
-        )
     return _cache_safe_template("results.html", context)
 
 
@@ -1937,7 +1977,7 @@ def _render_prediction_page(
                 module=module_code,
                 refresh=refresh,
                 origin_page="analysis",
-                local_only=False,
+                local_only=True,
                 tenant_id=repair_text(page_user.get("tenant_id")),
                 user_id=int(page_user["id"]),
             )
@@ -2220,7 +2260,7 @@ def api_search(
     request: Request,
     keywords: str = Query(...),
     sync_first: bool = Query(False),
-    limit: int = Query(settings.default_search_limit),
+    limit: int = Query(5),
     offset: int = Query(0),
     source: str = Query("all"),
     sort: str = Query("relevance"),
@@ -2230,7 +2270,7 @@ def api_search(
     require_user(request)
     return search_and_optionally_sync(
         keywords_input=keywords,
-        sync_first=sync_first,
+        sync_first=False,
         limit=limit,
         offset=offset,
         source=resolve_source_for_module(normalize_module(module), source),
@@ -3514,7 +3554,7 @@ def api_analyze(request: Request, payload: AnalyzePayload):
         module=module_code,
         refresh=payload.refresh,
         origin_page="analyze",
-        local_only=False,
+        local_only=True,
         tenant_id=repair_text(user.get("tenant_id")),
         user_id=int(user["id"]),
     )

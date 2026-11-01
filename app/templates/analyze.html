@@ -216,7 +216,8 @@
 {% set supporting_case_groups = analysis_result.get('supporting_case_groups', []) if analysis_result else [] %}
 {% set linked_laws = analysis_result.get('linked_laws', []) if analysis_result else [] %}
 
-{% if linked_laws or supporting_case_groups %}
+{# Replaced by the shared React legal-relations explorer below. #}
+{% if false %}
 <section class="band">
     <div class="shell">
         <div class="band-head">

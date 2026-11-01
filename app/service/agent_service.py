@@ -109,6 +109,7 @@ ARGUMENTS_SCHEMA = {
 
 RETRYABLE_ERROR_CATEGORIES = {"timeout", "network", "invalid_json", "provider_busy"}
 _PREDICTION_CACHE: dict[tuple, tuple[float, dict]] = {}
+_DASHBOARD_METRICS_CACHE: tuple[float, dict] | None = None
 
 
 def _retry_count() -> int:
@@ -303,6 +304,11 @@ def _invoke_model_with_retry(
 
 
 def get_dashboard_metrics() -> dict:
+    global _DASHBOARD_METRICS_CACHE
+    now = time.time()
+    if _DASHBOARD_METRICS_CACHE and _DASHBOARD_METRICS_CACHE[0] > now:
+        return copy.deepcopy(_DASHBOARD_METRICS_CACHE[1])
+
     try:
         rows = fetch_all(
             """
@@ -345,7 +351,7 @@ def get_dashboard_metrics() -> dict:
     analyzed_case_count = int(case_stats.get("unique_cases") or 0)
     analysis_run_count = int(case_stats.get("total_runs") or 0)
 
-    return {
+    payload = {
         "counts": counts,
         "total_items": external_total_items,
         "external_total_items": external_total_items,
@@ -356,6 +362,11 @@ def get_dashboard_metrics() -> dict:
         "llm_provider": get_llm_provider(),
         "llm_model": get_llm_model_name(),
     }
+    # These counters are informational header data, not transactional state.
+    # Reusing them briefly avoids two aggregate queries on every page click.
+    ttl = max(5, min(int(getattr(settings, "cache_ttl_seconds", 300)), 60))
+    _DASHBOARD_METRICS_CACHE = (now + ttl, copy.deepcopy(payload))
+    return payload
 
 
 def _build_precedent_packets(rows: list[dict], limit: int = 5) -> list[dict]:

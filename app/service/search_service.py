@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from sqlalchemy import text
@@ -15,7 +17,6 @@ from app.service.bilingual_service import (
     enrich_result_rows_bilingual,
 )
 from app.service.common_service import plain_text_preview, repair_text, split_keywords
-from app.service.crawler_service import sync_all_sources
 from app.service.ingestion_task_service import (
     enqueue_or_reuse_hydration_task,
     get_recent_terminal_hydration_task,
@@ -30,6 +31,7 @@ from app.service.ofac_service import OFAC_DISCOVERY_PAGE, OFAC_SEARCH_PORTAL
 VALID_SOURCES = {"all", "ofac", "canlii", "canada"}
 VALID_SORTS = {"relevance", "recent"}
 _SEARCH_CACHE: dict[tuple, tuple[float, dict]] = {}
+_FAST_RAG_WINDOW_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MAX_SCORE_PER_KEYWORD = 13.0
 
 
@@ -157,6 +159,12 @@ def _set_cached_result(cache: dict, key: tuple, value: dict):
 
 def clear_search_cache():
     _SEARCH_CACHE.clear()
+    _FAST_RAG_WINDOW_CACHE.clear()
+
+
+def _filters_cache_key(filters: dict | None) -> str:
+    """Return a stable key so filtered searches never share cached results."""
+    return json.dumps(filters or {}, ensure_ascii=True, sort_keys=True, default=str)
 
 
 
@@ -1234,11 +1242,12 @@ def _search_items_fast_rag(
     keyword_bundle: dict,
     skill_profile: dict,
     filters: dict | None = None,
+    refresh: bool = False,
 ) -> dict | None:
     if not _can_use_fast_rag_search(module, source):
         return None
     try:
-        from app.service.rag_service import rag_search
+        from app.service.rag_service import ensure_rag_tables, rag_search
         from app.service.query_translation_service import translate_query
 
         search_keywords = _fast_rag_keywords(keywords_input, keywords, skill_profile)
@@ -1253,54 +1262,87 @@ def _search_items_fast_rag(
         # (Recall@10 0.06 vs 0.21, see scripts/evaluate_recall.py) because the extra
         # terms dilute ranking. Kept in the codebase for a future "low-recall
         # fallback" pass, but deliberately not applied to the primary query.
-        fetch_limit = max(limit, min(offset + limit + 1, 30))
-        if source == "canlii":
-            case_target = fetch_limit
-            law_target = 0
-        else:
-            case_target = max(4, min(12, fetch_limit // 2))
-            law_target = max(4, min(12, fetch_limit - case_target))
-
-        law_items = []
-        if law_target:
-            law_result = rag_search(
-                retrieval_query,
-                keywords=search_keywords,
-                module=module,
-                source_filter="law",
-                limit=law_target,
-                filters=filters,
-            )
-            law_items = law_result.get("items") or []
-        case_result = rag_search(
-            retrieval_query,
-            keywords=search_keywords,
-            module=module,
-            source_filter="case",
-            limit=case_target,
-            filters=filters,
+        window_cache_key = (
+            "fast-rag-window",
+            module,
+            retrieval_query.lower(),
+            tuple(search_keywords),
+            source,
+            sort,
+            query_language,
+            _filters_cache_key(filters),
         )
-        case_items = case_result.get("items") or []
+        cached_window = None if refresh else _get_cached_result(_FAST_RAG_WINDOW_CACHE, window_cache_key)
+        if cached_window is not None:
+            all_rows = cached_window.get("all_rows") or []
+            module_packet = cached_window.get("module_packet") or _fast_module_packet(
+                all_rows[:12], module, query_language
+            )
+            retrieval_cache_status = "hit"
+        else:
+            # Build one reusable retrieval window for all UI pages. Previously the
+            # offset was part of the only cache key, so every Next/Previous click
+            # repeated both full-text queries.
+            ensure_rag_tables()
+            fetch_limit = 30
+            if source == "canlii":
+                case_target = fetch_limit
+                law_target = 0
+            else:
+                case_target = 12
+                law_target = 12
+
+            def fetch_kind(kind: str, target: int) -> list[dict]:
+                if target <= 0:
+                    return []
+                result = rag_search(
+                    retrieval_query,
+                    keywords=search_keywords,
+                    module=module,
+                    source_filter=kind,
+                    limit=target,
+                    filters=filters,
+                )
+                return result.get("items") or []
+
+            if law_target and case_target:
+                # The two queries use independent database connections and have no
+                # dependency, so their latency should overlap rather than add up.
+                with ThreadPoolExecutor(max_workers=2, thread_name_prefix="legal-rag") as executor:
+                    law_future = executor.submit(fetch_kind, "law", law_target)
+                    case_future = executor.submit(fetch_kind, "case", case_target)
+                    law_items = law_future.result()
+                    case_items = case_future.result()
+            else:
+                law_items = fetch_kind("law", law_target)
+                case_items = fetch_kind("case", case_target)
+
+            law_rows = _dedupe_fast_rows([_fast_row_from_rag_item(item, query_language) for item in law_items])
+            case_rows = _dedupe_fast_rows([_fast_row_from_rag_item(item, query_language) for item in case_items])
+            all_rows = _apply_fast_similarity_scores(law_rows + case_rows)
+            if sort == "recent":
+                all_rows.sort(key=lambda row: str(row.get("published_at") or ""), reverse=True)
+            else:
+                law_rows = sorted(
+                    [row for row in all_rows if row.get("source_kind") == "law"],
+                    key=lambda row: float(row.get("similarity_score") or 0),
+                    reverse=True,
+                )
+                case_rows = sorted(
+                    [row for row in all_rows if row.get("source_kind") == "case"],
+                    key=lambda row: float(row.get("similarity_score") or 0),
+                    reverse=True,
+                )
+                all_rows = law_rows + case_rows
+            module_packet = _fast_module_packet(all_rows[:12], module, query_language)
+            _set_cached_result(
+                _FAST_RAG_WINDOW_CACHE,
+                window_cache_key,
+                {"all_rows": all_rows, "module_packet": module_packet},
+            )
+            retrieval_cache_status = "miss"
     except Exception:
         return None
-
-    law_rows = _dedupe_fast_rows([_fast_row_from_rag_item(item, query_language) for item in law_items])
-    case_rows = _dedupe_fast_rows([_fast_row_from_rag_item(item, query_language) for item in case_items])
-    all_rows = _apply_fast_similarity_scores(law_rows + case_rows)
-    if sort == "recent":
-        all_rows.sort(key=lambda row: str(row.get("published_at") or ""), reverse=True)
-    else:
-        law_rows = sorted(
-            [row for row in all_rows if row.get("source_kind") == "law"],
-            key=lambda row: float(row.get("similarity_score") or 0),
-            reverse=True,
-        )
-        case_rows = sorted(
-            [row for row in all_rows if row.get("source_kind") == "case"],
-            key=lambda row: float(row.get("similarity_score") or 0),
-            reverse=True,
-        )
-        all_rows = law_rows + case_rows
     rows = all_rows[offset : offset + limit]
     grouped_results = _prepare_cards(rows, query_language)
     source_counts = {"legislation": 0, "canlii": 0, "ofac": 0, "other": 0}
@@ -1346,8 +1388,9 @@ def _search_items_fast_rag(
         "search_backend": "rag_chunks_tsvector",
         "rag_status": "ok",
         "fast_retrieval_keywords": search_keywords,
+        "retrieval_cache_status": retrieval_cache_status,
     }
-    payload["module_packet"] = _fast_module_packet(all_rows[: max(limit, 12)], module, query_language)
+    payload["module_packet"] = module_packet
     return payload
 
 
@@ -1380,7 +1423,17 @@ def search_items(
     source = resolve_source_for_module(module, source)
     sort = _normalize_sort(sort)
     query_language = str(display_language or keyword_bundle.get("query_language") or "zh")
-    cache_key = ("search", module, tuple(keywords), limit, offset, source, sort, query_language)
+    cache_key = (
+        "search",
+        module,
+        tuple(keywords),
+        limit,
+        offset,
+        source,
+        sort,
+        query_language,
+        _filters_cache_key(filters),
+    )
 
     if not keywords:
         return {
@@ -1406,18 +1459,7 @@ def search_items(
             "legal_skill_profile": skill_profile,
             "retrieval_entities": skill_profile.get("entities", {}),
             "legal_skills": skill_profile.get("skills", []),
-            "module_packet": build_module_packet(
-                module,
-                {
-                    "input_text": _normalize_keywords_input(keywords_input),
-                    "module_code": module,
-                    "query_language": query_language,
-                    "results": [],
-                    "analysis": {},
-                    "intake_outline": {},
-                },
-                refresh=refresh,
-            ),
+            "module_packet": _fast_module_packet([], module, query_language),
         }
 
     if not refresh:
@@ -1438,6 +1480,7 @@ def search_items(
         keyword_bundle=keyword_bundle,
         skill_profile=skill_profile,
         filters=filters,
+        refresh=refresh,
     )
     if fast_payload is not None:
         _set_cached_result(_SEARCH_CACHE, cache_key, fast_payload)
@@ -1913,47 +1956,33 @@ def search_and_optionally_sync(
     filters: dict | None = None,
 ):
     sync_info = None
-    keyword_weights = None
     normalized_limit = _normalize_limit(limit)
     normalized_offset = _normalize_offset(offset)
     normalized_sort = _normalize_sort(sort)
     normalized_module = normalize_module(module)
     normalized_source = resolve_source_for_module(normalized_module, source)
 
+    # Runtime retrieval is intentionally local-only. Administrative ingestion is
+    # still available through its dedicated endpoint, but search never starts it.
     if sync_first:
-        sync_info = sync_all_sources()
-        clear_search_cache()
-        result = search_items(
-            keywords_input,
-            limit=normalized_limit,
-            offset=normalized_offset,
-            source=normalized_source,
-            sort=normalized_sort,
-            module=normalized_module,
-            refresh=True,
-            display_language=display_language,
-            keyword_weights=keyword_weights,
-        )
-        result["remote_fetch"] = {
-            "status": "manual_sync",
-            "processed": 0,
-            "sources": sync_info.get("sources", {}),
-            "message": "已执行手动同步，当前结果来自同步后的本地库。",
+        sync_info = {
+            "status": "disabled",
+            "message": "Runtime search is local-only; external synchronization was not started.",
+            "sources": {},
         }
-        result["search_strategy"] = "manual_sync_then_local"
-    else:
-        result = search_with_remote_hydration(
-            keywords_input,
-            limit=normalized_limit,
-            offset=normalized_offset,
-            source=normalized_source,
-            sort=normalized_sort,
-            module=normalized_module,
-            refresh=refresh,
-            origin_page=origin_page,
-            display_language=display_language,
-            filters=filters,
-        )
+    result = search_with_remote_hydration(
+        keywords_input,
+        limit=normalized_limit,
+        offset=normalized_offset,
+        source=normalized_source,
+        sort=normalized_sort,
+        module=normalized_module,
+        refresh=refresh,
+        origin_page=origin_page,
+        display_language=display_language,
+        local_only=True,
+        filters=filters,
+    )
 
     return {
         "keywords_input": _normalize_keywords_input(keywords_input),

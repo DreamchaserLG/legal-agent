@@ -18,7 +18,7 @@
     })();
     </script>
     <title>{% block title %}{{ app_name }}{% endblock %}</title>
-    <link rel="stylesheet" href="/static/style.css?v=20261027k" />
+    <link rel="stylesheet" href="/static/style.css?v=20261029h" />
     <script>
         window.APP_LANG = "{{ 'zh' if lang == 'zh' else 'en' }}";
     </script>
@@ -108,8 +108,37 @@
                 {{ tr('shell.status.local') }}
                 {% endif %}
             </div>
-            {% if current_user and last_query.url %}
-            <a class="header-resume" href="{{ last_query.url }}">{{ tr('nav.resume') }}</a>
+            {% set direct_last_query = last_query.url if last_query.url and last_query.url.startswith('/histories/') else '' %}
+            {% if current_user and (recent_histories or direct_last_query) %}
+            <details class="history-quick-menu">
+                <summary class="header-resume">{{ tr('nav.resume') }}</summary>
+                <div class="history-quick-panel">
+                    <div class="history-quick-head">
+                        <strong>{% if lang == 'zh' %}最近检索案例{% else %}Recent legal searches{% endif %}</strong>
+                        <span>{% if lang == 'zh' %}保留近 10 条{% else %}Latest 10{% endif %}</span>
+                    </div>
+                    {% if recent_histories %}
+                    <div class="history-quick-list">
+                        {% for item in recent_histories %}
+                        <a href="{{ item.url }}" class="history-quick-item">
+                            <span class="history-quick-index">{{ '%02d'|format(loop.index) }}</span>
+                            <span class="history-quick-copy">
+                                <strong>{{ item.label }}</strong>
+                                <small>{{ item.query_type }}{% if item.country %} · {{ item.country }}{% endif %}</small>
+                            </span>
+                            <span class="history-quick-arrow" aria-hidden="true">→</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% elif direct_last_query %}
+                    <a href="{{ direct_last_query }}" class="history-quick-item">
+                        <span class="history-quick-copy"><strong>{{ last_query.label or tr('nav.resume') }}</strong></span>
+                        <span class="history-quick-arrow" aria-hidden="true">→</span>
+                    </a>
+                    {% endif %}
+                    <a class="history-quick-all" href="/histories">{% if lang == 'zh' %}查看全部历史{% else %}View all history{% endif %}</a>
+                </div>
+            </details>
             {% endif %}
             {% if current_user %}
             <button type="button" class="avatar-button" id="profile-trigger" aria-haspopup="dialog" aria-controls="profile-modal">

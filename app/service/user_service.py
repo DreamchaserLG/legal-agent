@@ -2823,6 +2823,46 @@ def list_user_histories(
     return [dict(row) for row in rows]
 
 
+def list_recent_history_shortcuts(*, user_id: int, limit: int = 10) -> list[dict]:
+    """Return only the fields needed by the header's instant history menu."""
+    normalized_limit = max(1, min(int(limit or 10), 10))
+    sql = """
+    SELECT
+        sh.id,
+        sh.query_text,
+        sh.query_type,
+        sh.case_title,
+        sh.country,
+        COALESCE(sh.last_viewed_at, sh.updated_at, sh.created_at) AS activity_at
+    FROM search_histories sh
+    WHERE sh.status = 'active'
+      AND sh.user_id = :user_id
+    ORDER BY COALESCE(sh.last_viewed_at, sh.updated_at, sh.created_at) DESC
+    LIMIT :limit
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(sql),
+            {"user_id": int(user_id), "limit": normalized_limit},
+        ).mappings().all()
+    shortcuts = []
+    for row in rows:
+        item = dict(row)
+        label = repair_text(item.get("case_title") or item.get("query_text"))
+        shortcuts.append(
+            {
+                "id": int(item.get("id") or 0),
+                "label": label[:88] or "Untitled legal search",
+                "query_text": repair_text(item.get("query_text"))[:160],
+                "query_type": repair_text(item.get("query_type") or "search"),
+                "country": repair_text(item.get("country")),
+                "activity_at": item.get("activity_at"),
+                "url": f"/histories/{int(item.get('id') or 0)}",
+            }
+        )
+    return shortcuts
+
+
 def count_user_histories(
     *,
     user_id: int,

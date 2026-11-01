@@ -963,7 +963,17 @@ def _tsquery_or_terms(query: str, keywords: list[str] | None = None) -> str:
             candidates.append(token)
     selective_terms = [token for token in candidates if token not in _LOW_SELECTIVITY_TS_TERMS]
     terms = selective_terms or candidates
-    return " | ".join(f"{token}:*" for token in terms[:10])
+    terms = terms[:8]
+    if not terms:
+        return ""
+    if len(terms) == 1:
+        return terms[0]
+    # A flat OR over every prefix can match a very large part of the Canadian
+    # corpus and force PostgreSQL to rank it all before applying LIMIT. Keep the
+    # leading legal concept mandatory while allowing the remaining concepts to
+    # broaden the fallback. The exact websearch query still runs first.
+    alternatives = " | ".join(terms[1:])
+    return f"{terms[0]} & ({alternatives})"
 
 
 def rag_search(

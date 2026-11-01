@@ -145,9 +145,13 @@ def _pgvector_column_available() -> bool:
         return False
 
 
-def _pgvector_column_dimension() -> int:
-    if not _pgvector_column_available():
-        return 0
+def _pgvector_column_type() -> tuple[str, int]:
+    """返回 (类型名, 维度)。类型名是 'vector' 或 'halfvec'，无法识别时返回 ('', 0)。
+
+    必须用 fullmatch 精确匹配：宽松的 re.search(r"vector\\((\\d+)\\)") 会把
+    `halfvec(1024)` 里的子串 `vector(1024)` 也匹配上，导致 halfvec 列被误判为
+    同维度的 vector 列——这会让下面的维度校验静默放行或误触发整列重写。
+    """
     try:
         with engine.connect() as conn:
             type_name = conn.execute(
@@ -162,30 +166,30 @@ def _pgvector_column_dimension() -> int:
                     """
                 )
             ).scalar()
-        match = re.search(r"vector\((\d+)\)", str(type_name or ""))
-        return int(match.group(1)) if match else 0
+        match = re.fullmatch(r"(half)?vector\((\d+)\)", str(type_name or "").strip())
+        if not match:
+            return "", 0
+        return ("halfvec" if match.group(1) else "vector"), int(match.group(2))
     except Exception:
-        return 0
+        return "", 0
+
+
+def _pgvector_column_dimension() -> int:
+    return _pgvector_column_type()[1]
 
 
 def _ensure_pgvector_dimension(conn, dimension: int) -> None:
+    """校验向量列维度。
+
+    维度不一致时**只告警，不自动 ALTER**。旧实现用
+    `ALTER COLUMN ... TYPE VECTOR(n) USING NULL::VECTOR(n)` 会把整列向量全部置 NULL，
+    不报错、不备份，属于数据毁灭级缺陷。维度不一致应由人工确认后显式迁移。
+    """
     if not _pgvector_available():
         return
-    current_dimension = _pgvector_column_dimension()
-    if current_dimension == dimension:
-        return
-    conn.execute(text("DROP INDEX IF EXISTS idx_rag_chunk_embeddings_vector"))
-    if current_dimension:
-        conn.execute(
-            text(
-                f"""
-                ALTER TABLE rag_chunk_embeddings
-                ALTER COLUMN embedding_vector TYPE VECTOR({dimension})
-                USING NULL::VECTOR({dimension})
-                """
-            )
-        )
-    else:
+    column_type, current_dimension = _pgvector_column_type()
+    if not current_dimension:
+        # 列不存在，正常新增
         conn.execute(
             text(
                 f"""
@@ -194,6 +198,23 @@ def _ensure_pgvector_dimension(conn, dimension: int) -> None:
                 """
             )
         )
+        return
+    if current_dimension == dimension:
+        return
+
+    row_count = 0
+    try:
+        row_count = int(
+            conn.execute(text("SELECT count(*) FROM rag_chunk_embeddings")).scalar() or 0
+        )
+    except Exception:
+        pass
+    print(
+        f"[vector_store_service] 严重：embedding_vector 列是 {column_type}({current_dimension})，"
+        f"但配置 EMBEDDING_DIMENSION={dimension}。已跳过自动 ALTER——"
+        f"旧逻辑会用 USING NULL 清空 {row_count:,} 行向量。"
+        f"请人工确认后用 ALTER COLUMN ... TYPE ... USING embedding_vector::... 显式迁移。"
+    )
 
 
 def _try_enable_pgvector() -> bool:
@@ -249,12 +270,15 @@ def _ensure_pgvector_index(conn) -> None:
     if existing and f"using {index_type}" not in existing:
         conn.execute(text("DROP INDEX IF EXISTS idx_rag_chunk_embeddings_vector"))
         existing = ""
+    # opclass 必须跟随实际列类型，halfvec 列用 vector_cosine_ops 会报错
+    column_type, _ = _pgvector_column_type()
+    opclass = "halfvec_cosine_ops" if column_type == "halfvec" else "vector_cosine_ops"
     if index_type == "hnsw":
         conn.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_vector "
                 "ON rag_chunk_embeddings USING hnsw "
-                "(embedding_vector vector_cosine_ops) "
+                f"(embedding_vector {opclass}) "
                 f"WITH (m = {_hnsw_m()}, ef_construction = {_hnsw_ef_construction()})"
             )
         )
@@ -262,7 +286,8 @@ def _ensure_pgvector_index(conn) -> None:
         conn.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_vector "
-                "ON rag_chunk_embeddings USING ivfflat (embedding_vector vector_cosine_ops)"
+                "ON rag_chunk_embeddings USING ivfflat "
+                f"(embedding_vector {opclass})"
             )
         )
 
@@ -272,7 +297,13 @@ def _active_hnsw_index_name() -> str:
 
 
 def _ensure_active_hnsw_index() -> None:
-    """Create an ANN index scoped to the embedding model used by live queries."""
+    """Create an ANN index scoped to the embedding model used by live queries.
+
+    两道保护，避免应用启动时意外触发超大规模建索引：
+    1) 行数超过 AUTO_INDEX_MAX_ROWS 时直接跳过（百万级表上建 27GB 索引会把启动挂死）；
+    2) opclass 按实际列类型选择（halfvec 列必须用 halfvec_cosine_ops，
+       否则 CREATE INDEX 会报错并被外层 except 静默吞掉，表现为"没有索引也没有日志"）。
+    """
     if is_sqlite() or not _pgvector_column_available() or _vector_index_type() != "hnsw":
         return
     meta = embedding_metadata()
@@ -280,7 +311,42 @@ def _ensure_active_hnsw_index() -> None:
     model = repair_text(meta.get("model"))
     if not provider or not model:
         return
+
+    # 保护 1：大表不自动建索引
+    auto_index_max_rows = int(os.getenv("RAG_AUTO_INDEX_MAX_ROWS", "1000000").strip() or 1000000)
+    try:
+        with engine.connect() as conn:
+            est_rows = int(
+                conn.execute(
+                    text(
+                        "SELECT greatest(reltuples, 0)::bigint FROM pg_class "
+                        "WHERE relname = 'rag_chunk_embeddings'"
+                    )
+                ).scalar()
+                or 0
+            )
+        if est_rows > auto_index_max_rows:
+            print(
+                f"[vector_store_service] 跳过自动建 HNSW：rag_chunk_embeddings 约 {est_rows:,} 行，"
+                f"超过阈值 {auto_index_max_rows:,}。请人工建索引后再启动应用"
+                f"（或调大 RAG_AUTO_INDEX_MAX_ROWS / 设 RAG_VECTOR_DEFER_INDEXES=true）。"
+            )
+            return
+        if est_rows <= 0:
+            # reltuples 不可信（建库后从未 ANALYZE）。此时宁可跳过，
+            # 也不要在未知规模的表上启动一次可能持续数十小时的建索引。
+            print(
+                "[vector_store_service] 跳过自动建 HNSW：rag_chunk_embeddings 行数未知"
+                "（reltuples<=0），保守起见请人工建索引。"
+            )
+            return
+    except Exception:
+        pass
+
     index_name = _active_hnsw_index_name()
+    # 保护 2：按列类型选 opclass
+    column_type, _ = _pgvector_column_type()
+    opclass = "halfvec_cosine_ops" if column_type == "halfvec" else "vector_cosine_ops"
     try:
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             exists = conn.execute(text("SELECT to_regclass(:index_name)"), {"index_name": index_name}).scalar()
@@ -292,15 +358,17 @@ def _ensure_active_hnsw_index() -> None:
                 text(
                     f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} "
                     "ON rag_chunk_embeddings USING hnsw "
-                    "(embedding_vector vector_cosine_ops) "
+                    f"(embedding_vector {opclass}) "
                     f"WITH (m = {_hnsw_m()}, ef_construction = {_hnsw_ef_construction()}) "
                     "WHERE embedding_vector IS NOT NULL "
                     f"AND embedding_provider = '{provider_literal}' "
                     f"AND embedding_model = '{model_literal}'"
                 )
             )
-    except Exception:
-        # The general HNSW index remains available when the database user cannot build indexes.
+    except Exception as exc:
+        # 不静默：opclass 不匹配、磁盘不足、锁冲突都必须留在日志里，
+        # 否则表现为"没有索引也没有任何线索"。
+        print(f"[vector_store_service] 自动建 HNSW 失败（已跳过）：{type(exc).__name__}: {exc}")
         return
 
 
@@ -859,6 +927,7 @@ def vector_search(
     raw_limit = max_items * 4
     params = {
         "limit": raw_limit,
+        "candidate_limit": max(500, min(raw_limit * 20, 5000)),
         "embedding_model": meta["model"],
         "embedding_provider": meta["provider"],
     }
@@ -868,23 +937,49 @@ def vector_search(
 
     if _pgvector_column_available():
         params["query_vector"] = _vector_text(query_vector)
-        sql = f"""
-        SELECT
-            rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
-            rc.source_uid, rc.title, rc.source_url, rc.published_at, rc.chunk_index,
-            rc.jurisdiction, rc.document_type, rc.court_level, rc.language, rc.citation,
-            rc.text_content, rc.metadata_json,
-            1 - (rce.embedding_vector <=> CAST(:query_vector AS vector)) AS score
-        FROM rag_chunks rc
-        JOIN rag_chunk_embeddings rce ON rce.chunk_id = rc.id
-        WHERE {where_clause}
-          AND rce.embedding_model = :embedding_model
-          AND rce.embedding_provider = :embedding_provider
-          AND rce.embedding_vector IS NOT NULL
-          {structured_clause}
-        ORDER BY rce.embedding_vector <=> CAST(:query_vector AS vector)
-        LIMIT :limit
-        """
+        if _vector_index_type() == "ivfflat":
+            sql = f"""
+            WITH vector_candidates AS MATERIALIZED (
+                SELECT rce.chunk_id, rce.embedding_vector
+                FROM rag_chunk_embeddings rce
+                WHERE rce.embedding_model = :embedding_model
+                  AND rce.embedding_provider = :embedding_provider
+                  AND rce.embedding_vector IS NOT NULL
+                ORDER BY (binary_quantize(rce.embedding_vector)::bit(1024))
+                         <~> binary_quantize(CAST(:query_vector AS vector))
+                LIMIT :candidate_limit
+            )
+            SELECT
+                rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
+                rc.source_uid, rc.title, rc.source_url, rc.published_at, rc.chunk_index,
+                rc.jurisdiction, rc.document_type, rc.court_level, rc.language, rc.citation,
+                rc.text_content, rc.metadata_json,
+                1 - (vc.embedding_vector <=> CAST(:query_vector AS vector)) AS score
+            FROM vector_candidates vc
+            JOIN rag_chunks rc ON rc.id = vc.chunk_id
+            WHERE {where_clause}
+              {structured_clause}
+            ORDER BY vc.embedding_vector <=> CAST(:query_vector AS vector)
+            LIMIT :limit
+            """
+        else:
+            sql = f"""
+            SELECT
+                rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
+                rc.source_uid, rc.title, rc.source_url, rc.published_at, rc.chunk_index,
+                rc.jurisdiction, rc.document_type, rc.court_level, rc.language, rc.citation,
+                rc.text_content, rc.metadata_json,
+                1 - (rce.embedding_vector <=> CAST(:query_vector AS vector)) AS score
+            FROM rag_chunks rc
+            JOIN rag_chunk_embeddings rce ON rce.chunk_id = rc.id
+            WHERE {where_clause}
+              AND rce.embedding_model = :embedding_model
+              AND rce.embedding_provider = :embedding_provider
+              AND rce.embedding_vector IS NOT NULL
+              {structured_clause}
+            ORDER BY rce.embedding_vector <=> CAST(:query_vector AS vector)
+            LIMIT :limit
+            """
         with engine.connect() as conn:
             if _vector_index_type() == "hnsw":
                 try:

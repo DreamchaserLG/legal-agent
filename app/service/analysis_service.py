@@ -1185,8 +1185,6 @@ def analyze_sentence_search(
 
     if local_only and bool(getattr(settings, "analysis_local_fast_mode", True)):
         keyword_weights = analysis.get("keyword_weights") or {}
-        from app.service.search_service import search_with_remote_hydration
-
         result = search_with_remote_hydration(
             cleaned_text,
             limit=limit,

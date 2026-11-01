@@ -234,17 +234,17 @@ class Settings:
         self.embedding_device = os.getenv("EMBEDDING_DEVICE", "auto").strip().lower()
         self.embedding_max_length = int(os.getenv("EMBEDDING_MAX_LENGTH", "8192"))
         self.remote_search_enabled = (
-            os.getenv("REMOTE_SEARCH_ENABLED", "true").strip().lower()
+            os.getenv("REMOTE_SEARCH_ENABLED", "false").strip().lower()
             in {"1", "true", "yes", "on"}
         )
         self.async_hydration_enabled = (
-            os.getenv("ASYNC_HYDRATION_ENABLED", "true").strip().lower()
+            os.getenv("ASYNC_HYDRATION_ENABLED", "false").strip().lower()
             in {"1", "true", "yes", "on"}
         )
         self.remote_search_trigger_count = int(os.getenv("REMOTE_SEARCH_TRIGGER_COUNT", "1"))
         self.remote_search_max_items_per_source = int(os.getenv("REMOTE_SEARCH_MAX_ITEMS_PER_SOURCE", "12"))
         self.analysis_new_case_hydration_enabled = (
-            os.getenv("ANALYSIS_NEW_CASE_HYDRATION_ENABLED", "true").strip().lower()
+            os.getenv("ANALYSIS_NEW_CASE_HYDRATION_ENABLED", "false").strip().lower()
             in {"1", "true", "yes", "on"}
         )
         self.analysis_new_case_target_count = int(os.getenv("ANALYSIS_NEW_CASE_TARGET_COUNT", "0"))
@@ -349,7 +349,7 @@ class Settings:
             in {"1", "true", "yes", "on"}
         )
         self.canlii_realtime_search_enabled = (
-            os.getenv("CANLII_REALTIME_SEARCH_ENABLED", "true").strip().lower()
+            os.getenv("CANLII_REALTIME_SEARCH_ENABLED", "false").strip().lower()
             in {"1", "true", "yes", "on"}
         )
         self.canlii_realtime_search_max_items = int(
