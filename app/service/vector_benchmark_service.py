@@ -23,6 +23,7 @@ def _sample_table_name(sample_size: int) -> str:
 
 def prepare_local_vector_sample(
     *, confirmation_token: str, sample_size: int = 50_000, lists: int | None = None,
+    build_pg_index: bool = True,
 ) -> dict:
     """Create an isolated deterministic sample and IVFFlat index, never touching source rows."""
     if confirmation_token != LOCAL_SAMPLE_CONFIRM_TOKEN:
@@ -47,17 +48,19 @@ def prepare_local_vector_sample(
             text("SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname=:name)"),
             {"name": f"{table_name}_pkey"},
         ).scalar() else None
-        conn.execute(text(f"""
-            CREATE INDEX IF NOT EXISTS {index_name}
-            ON {table_name} USING ivfflat (embedding_vector vector_cosine_ops)
-            WITH (lists = {list_count})
-        """))
+        if build_pg_index:
+            conn.execute(text(f"""
+                CREATE INDEX IF NOT EXISTS {index_name}
+                ON {table_name} USING ivfflat (embedding_vector vector_cosine_ops)
+                WITH (lists = {list_count})
+            """))
         conn.execute(text(f"ANALYZE {table_name}"))
         count = int(conn.execute(text(f"SELECT count(*) FROM {table_name}")).scalar() or 0)
         size_bytes = int(conn.execute(text("SELECT pg_total_relation_size(CAST(:name AS regclass))"), {"name": table_name}).scalar() or 0)
     return {
         "status": "completed", "migration_started": False, "isolated_sample": True,
-        "table": table_name, "rows": count, "lists": list_count,
+        "table": table_name, "rows": count, "lists": list_count if build_pg_index else None,
+        "pg_index_built": bool(build_pg_index),
         "size_bytes": size_bytes, "duration_seconds": round(perf_counter() - started, 3),
     }
 

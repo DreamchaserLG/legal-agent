@@ -60,6 +60,7 @@ _cleanup_quarantine_*/
 docs/
 tests/
 data/eval/
+artifacts/vector_eval/
 sql/
 *.doc
 *.docx

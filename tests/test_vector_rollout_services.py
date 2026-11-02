@@ -11,6 +11,7 @@ from app.service.vector_benchmark_service import (
     run_local_vector_benchmark,
 )
 from app.service import vector_index_management_service as index_service
+from app.service.faiss_benchmark_service import load_canada_queries
 
 
 class VectorRolloutServiceTests(unittest.TestCase):
@@ -55,6 +56,11 @@ class VectorRolloutServiceTests(unittest.TestCase):
         self.assertIn("Case", types)
         self.assertIn("Court", types)
         self.assertTrue(result["source_text_preserved"])
+
+    def test_formal_canada_eval_set_is_cross_domain(self):
+        cases = load_canada_queries("data/eval/canada_retrieval_eval.json")
+        self.assertGreaterEqual(len(cases), 30)
+        self.assertGreaterEqual(len({item["domain"] for item in cases}), 8)
 
 
 if __name__ == "__main__":

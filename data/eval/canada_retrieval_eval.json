@@ -1,0 +1,276 @@
+{
+  "name": "canada_cross_domain_retrieval_v2",
+  "description": "Canadian cross-domain retrieval set covering Ontario tenancy plus federal and provincial criminal, constitutional, immigration, employment, tort, contract, privacy, family, insolvency, corporate, intellectual-property, and Indigenous-law questions.",
+  "module": "canada",
+  "default_limit": 10,
+  "cases": [
+    {
+      "id": "tenant_eviction_repair_001",
+      "query": "Ontario tenant eviction repair issue",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Ottawa Community Housing Corporation", "Morrison"]},
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "pest_clutter_access_002",
+      "query": "tenant eviction pest infestation excessive clutter barred access Ontario LTB",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Ottawa Community Housing Corporation", "Morrison"]}
+      ]
+    },
+    {
+      "id": "vital_services_hydro_003",
+      "query": "tenant hydro disconnected vital services landlord Ontario residential tenancy",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Mckenzie", "McLean"]},
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "rent_arrears_n4_004",
+      "query": "Ontario tenant rent arrears N4 notice eviction section 69",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Abai", "Cisse"]},
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "serious_impairment_safety_005",
+      "query": "tenant conduct laundry room mobility scooter serious impairment safety eviction",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Housing York", "Hayton"]}
+      ]
+    },
+    {
+      "id": "coop_nonpayment_n4c_006",
+      "query": "co-operative housing nonpayment N4C notice occupancy arrears eviction",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Willow Park", "Chambers"]}
+      ]
+    },
+    {
+      "id": "n12_good_faith_007",
+      "query": "N12 landlord own use good faith possession another unit Ontario tenancy",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Birks", "Cornakovic"]}
+      ]
+    },
+    {
+      "id": "automatic_stay_ltb_008",
+      "query": "Divisional Court certificate stay interlocutory LTB order proceeding",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Interrent", "El-Guindy"]}
+      ]
+    },
+    {
+      "id": "smoke_detector_clutter_009",
+      "query": "missing smoke detector excessive clutter residential tenancy termination",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Ottawa Community Housing Corporation", "Morrison"]}
+      ]
+    },
+    {
+      "id": "section_83_relief_010",
+      "query": "Ontario LTB relief from eviction section 83 rent arrears tenant in possession",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Abai", "Cisse"]},
+        {"source_kind": "case", "title_contains": ["Willow Park", "Chambers"]}
+      ]
+    },
+    {
+      "id": "rta_unauthorized_subletting_011",
+      "query": "Ontario residential tenancy termination possession unauthorized subletting statute",
+      "expected": [
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "residential_evictions_reg_012",
+      "query": "Ontario residential evictions regulation",
+      "expected": [
+        {"source_kind": "law", "title_contains": ["RESIDENTIAL EVICTIONS"]}
+      ]
+    },
+    {
+      "id": "commercial_tenancies_013",
+      "query": "Ontario commercial tenancies landlord and tenant act statute",
+      "expected": [
+        {"source_kind": "law", "title_contains": ["Commercial Tenancies Act"]},
+        {"source_kind": "law", "title_contains": ["Landlord and Tenant Act"]}
+      ]
+    },
+    {
+      "id": "uninhabitable_unit_014",
+      "query": "rental unit uninhabitable repairs maintenance Ontario tenant",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Ottawa Community Housing Corporation", "Morrison"]},
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "illegal_act_safety_015",
+      "query": "guest assault illegal act serious impairment safety residential tenancy eviction",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Khachapuridze"]},
+        {"source_kind": "case", "title_contains": ["Housing York", "Hayton"]}
+      ]
+    },
+    {
+      "id": "tenant_absent_hearing_016",
+      "query": "tenant did not attend LTB hearing eviction relief denied social housing",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Housing York", "Hayton"]}
+      ]
+    },
+    {
+      "id": "monthly_housing_charges_017",
+      "query": "monthly housing charges arrears order terminate unless voided by payment",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Willow Park", "Chambers"]}
+      ]
+    },
+    {
+      "id": "good_faith_other_unit_018",
+      "query": "good faith occupation possession another unit undermining intent application dismissed",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Birks", "Cornakovic"]}
+      ]
+    },
+    {
+      "id": "access_refused_pest_019",
+      "query": "termination ongoing pest infestation access refused tenant clutter",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Ottawa Community Housing Corporation", "Morrison"]}
+      ]
+    },
+    {
+      "id": "rta_s31_vital_services_020",
+      "query": "Residential Tenancies Act section 31 vital services hydro disconnected",
+      "expected": [
+        {"source_kind": "case", "title_contains": ["Mckenzie", "McLean"]},
+        {"source_kind": "law", "title_contains": ["Residential Tenancies Act"]}
+      ]
+    },
+    {
+      "id": "criminal_intoxication_negligence_021",
+      "domain": "criminal",
+      "query": "加拿大醉酒状态下刑事过失导致他人重伤，有盗窃前科时量刑如何考虑？",
+      "expected": [{"source_kind": "law", "title_contains": ["Criminal Code"]}]
+    },
+    {
+      "id": "criminal_self_defence_022",
+      "domain": "criminal",
+      "query": "Criminal Code section 34 reasonable self-defence proportionality Canada",
+      "expected": [{"source_kind": "case", "title_contains": ["R v Khill"]}]
+    },
+    {
+      "id": "charter_search_phone_023",
+      "domain": "constitutional",
+      "query": "Charter section 8 police search of cell phone incident to arrest Canada",
+      "expected": [{"source_kind": "case", "title_contains": ["R v Fearon"]}]
+    },
+    {
+      "id": "charter_delay_024",
+      "domain": "constitutional",
+      "query": "unreasonable trial delay ceiling Charter section 11(b) Canada",
+      "expected": [{"source_kind": "case", "title_contains": ["R v Jordan"]}]
+    },
+    {
+      "id": "immigration_reasonableness_025",
+      "domain": "immigration",
+      "query": "judicial review administrative decision reasonableness immigration Canada Vavilov",
+      "expected": [{"source_kind": "case", "title_contains": ["Canada (Minister of Citizenship and Immigration) v Vavilov"]}]
+    },
+    {
+      "id": "refugee_nonrefoulement_026",
+      "domain": "immigration",
+      "query": "refugee protection non-refoulement danger torture Immigration and Refugee Protection Act",
+      "expected": [{"source_kind": "law", "title_contains": ["Immigration and Refugee Protection Act"]}]
+    },
+    {
+      "id": "employment_termination_027",
+      "domain": "employment",
+      "query": "Ontario wrongful dismissal reasonable notice employment contract termination clause",
+      "expected": [{"source_kind": "law", "title_contains": ["Employment Standards Act"]}]
+    },
+    {
+      "id": "employment_constructive_028",
+      "domain": "employment",
+      "query": "constructive dismissal unilateral change employment Canada Potter test",
+      "expected": [{"source_kind": "case", "title_contains": ["Potter v New Brunswick Legal Aid Services Commission"]}]
+    },
+    {
+      "id": "tort_negligence_029",
+      "domain": "tort",
+      "query": "Canadian negligence standard of care causation remoteness duty of care",
+      "expected": [{"source_kind": "case", "title_contains": ["Mustapha v Culligan of Canada Ltd"]}]
+    },
+    {
+      "id": "tort_pure_economic_loss_030",
+      "domain": "tort",
+      "query": "pure economic loss dangerous defects duty of care Supreme Court Canada",
+      "expected": [{"source_kind": "case", "title_contains": ["1688782 Ontario Inc v Maple Leaf Foods Inc"]}]
+    },
+    {
+      "id": "contract_good_faith_031",
+      "domain": "contract",
+      "query": "organizing principle good faith honest contractual performance Canada",
+      "expected": [{"source_kind": "case", "title_contains": ["Bhasin v Hrynew"]}]
+    },
+    {
+      "id": "contract_penalty_032",
+      "domain": "contract",
+      "query": "unconscionable contract inequality bargaining power improvident bargain Canada",
+      "expected": [{"source_kind": "case", "title_contains": ["Uber Technologies Inc v Heller"]}]
+    },
+    {
+      "id": "privacy_pipeda_033",
+      "domain": "privacy",
+      "query": "PIPEDA meaningful consent collection use disclosure personal information Canada",
+      "expected": [{"source_kind": "law", "title_contains": ["Personal Information Protection and Electronic Documents Act"]}]
+    },
+    {
+      "id": "privacy_breach_034",
+      "domain": "privacy",
+      "query": "Ontario privacy breach intrusion upon seclusion tort elements",
+      "expected": [{"source_kind": "case", "title_contains": ["Jones v Tsige"]}]
+    },
+    {
+      "id": "family_best_interests_035",
+      "domain": "family",
+      "query": "Divorce Act best interests of child parenting time family violence Canada",
+      "expected": [{"source_kind": "law", "title_contains": ["Divorce Act"]}]
+    },
+    {
+      "id": "family_support_036",
+      "domain": "family",
+      "query": "retroactive child support change in income Canada DBS v SRG",
+      "expected": [{"source_kind": "case", "title_contains": ["D.B.S. v S.R.G."]}]
+    },
+    {
+      "id": "bankruptcy_discharge_037",
+      "domain": "insolvency",
+      "query": "Bankruptcy and Insolvency Act discharge student debt seven years Canada",
+      "expected": [{"source_kind": "law", "title_contains": ["Bankruptcy and Insolvency Act"]}]
+    },
+    {
+      "id": "corporate_oppression_038",
+      "domain": "corporate",
+      "query": "Canada Business Corporations Act oppression remedy reasonable expectations BCE",
+      "expected": [{"source_kind": "case", "title_contains": ["BCE Inc v 1976 Debentureholders"]}]
+    },
+    {
+      "id": "copyright_fair_dealing_039",
+      "domain": "intellectual_property",
+      "query": "Copyright Act fair dealing research private study Canada six factors",
+      "expected": [{"source_kind": "case", "title_contains": ["CCH Canadian Ltd v Law Society of Upper Canada"]}]
+    },
+    {
+      "id": "indigenous_consult_040",
+      "domain": "indigenous",
+      "query": "Crown duty to consult and accommodate asserted Aboriginal rights Canada",
+      "expected": [{"source_kind": "case", "title_contains": ["Haida Nation v British Columbia"]}]
+    }
+  ]
+}

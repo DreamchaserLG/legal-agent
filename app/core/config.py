@@ -246,7 +246,7 @@ class Settings:
         # HNSW remains an optional high-recall backend on a larger remote host.
         self.rag_vector_index_type = os.getenv("RAG_VECTOR_INDEX_TYPE", "ivfflat").strip().lower()
         self.rag_ivfflat_lists = int(os.getenv("RAG_IVFFLAT_LISTS", "2048"))
-        self.rag_ivfflat_probes = int(os.getenv("RAG_IVFFLAT_PROBES", "48"))
+        self.rag_ivfflat_probes = int(os.getenv("RAG_IVFFLAT_PROBES", "96"))
         self.rag_vector_quantization = os.getenv("RAG_VECTOR_QUANTIZATION", "none").strip().lower()
         self.vector_backend = os.getenv("VECTOR_BACKEND", "pgvector_ivfflat").strip().lower()
         self.vector_faiss_index_path = os.getenv("VECTOR_FAISS_INDEX_PATH", "").strip()
