@@ -1310,7 +1310,7 @@ def analyze_sentence_search(
             keywords=retrieval_keywords,
             module=normalized_module,
         )
-    if bool(getattr(settings, "agentic_legal_research_enabled", True)):
+    if bool(getattr(settings, "agentic_legal_research_enabled", True)) and normalized_module == "canada":
         try:
             response_payload["agentic_research"] = run_agentic_legal_research(
                 cleaned_text,
@@ -1329,7 +1329,10 @@ def analyze_sentence_search(
                 "review_required": True,
             }
     else:
-        response_payload["agentic_research"] = {"status": "disabled", "rounds": [], "evidence": []}
+        response_payload["agentic_research"] = {
+            "status": "disabled_for_module", "jurisdiction": normalized_module,
+            "rounds": [], "evidence": [], "coverage": [], "unresolved_gaps": [],
+        }
     response_payload["data_readiness"] = build_data_readiness(
         module=normalized_module,
         module_packet=response_payload["module_packet"],

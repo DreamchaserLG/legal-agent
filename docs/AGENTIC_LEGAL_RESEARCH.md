@@ -1,6 +1,6 @@
 # Agentic Legal Research Architecture
 
-The analysis page uses a bounded research loop rather than treating a complex case as one search query.
+The Canadian-law analysis page uses a bounded research loop rather than treating a complex case as one search query. The interface may accept Chinese or English, but language never changes the jurisdiction: this research pipeline only reasons over Canadian authorities.
 
 ## Runtime flow
 
@@ -20,7 +20,7 @@ Retrieved and downloaded text is always untrusted data. It cannot select tools o
 
 ## Corpus governance
 
-Corpus changes are built outside the live index and represented by immutable source snapshots and versioned changesets. A builder and reviewer must use different vendors. Only an independently approved changeset can become a staged release; activation atomically changes the active release pointer and preserves a rollback target.
+Corpus changes are fetched only from approved Canadian sources such as Justice Laws, the Supreme Court of Canada, federal/provincial court sites, official gazettes, Ontario government/court sites and CanLII. They are built outside the live index and represented by immutable source snapshots and versioned changesets. A builder and reviewer must use different vendors. Only an independently approved changeset can become a staged release; activation atomically changes the active release pointer and preserves a rollback target.
 
 Large corpus and vector artifacts should remain in versioned object/database storage. Git pull requests should contain manifests, parsers, mappings, schema migrations, structured diffs and evaluation reports rather than raw vector files.
 
@@ -32,4 +32,4 @@ Large corpus and vector artifacts should remain in versioned object/database sto
 4. Run retrieval evaluation before activating the new index.
 5. Keep the prior corpus/index version until production checks pass.
 
-The shipped corpus is primarily Canadian law. A query outside installed jurisdictions must be marked as a coverage gap; adding a new jurisdiction requires authoritative sources, version rules and a dedicated evaluation set.
+The research corpus and update pipeline are Canadian-only. A non-Canadian query is not reinterpreted using another country's law; it is returned as unsupported jurisdiction/coverage instead.

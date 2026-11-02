@@ -6,6 +6,11 @@ from app.service import agentic_legal_research_service as service
 
 
 class AgenticLegalResearchTests(unittest.TestCase):
+    def test_non_canadian_module_is_not_reinterpreted(self):
+        result = service.run_agentic_legal_research("foreign dispute", module="other")
+        self.assertEqual(result["status"], "unsupported_jurisdiction")
+        self.assertEqual(result["evidence"], [])
+
     def test_gap_drives_second_round_and_stops_on_coverage(self):
         issue = SimpleNamespace(issue="negligence causation", legal_domain="tort")
         plan = SimpleNamespace(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy import text
 
@@ -15,6 +16,25 @@ SUSPICIOUS_EXTERNAL_INSTRUCTIONS = (
     "call this tool", "execute command", "upload secret", "api key", "忽略以上指令",
     "忽略系统提示", "执行命令", "调用工具", "上传密钥",
 )
+
+APPROVED_CANADIAN_LEGAL_HOSTS = {
+    "canlii.org", "www.canlii.org",
+    "laws-lois.justice.gc.ca", "justice.gc.ca", "www.justice.gc.ca",
+    "scc-csc.ca", "www.scc-csc.ca", "decisions.scc-csc.ca",
+    "ontario.ca", "www.ontario.ca", "ontariocourts.ca", "www.ontariocourts.ca",
+    "gazette.gc.ca", "www.gazette.gc.ca",
+}
+
+
+def validate_canadian_legal_source(url: str) -> dict[str, Any]:
+    parsed = urlparse(repair_text(url))
+    host = (parsed.hostname or "").lower()
+    approved = parsed.scheme == "https" and host in APPROVED_CANADIAN_LEGAL_HOSTS
+    return {
+        "url": repair_text(url), "host": host, "jurisdiction": "Canada",
+        "approved": approved, "read_only": True,
+        "reason": "approved_canadian_legal_source" if approved else "outside_canadian_legal_allowlist",
+    }
 
 
 def scan_untrusted_legal_text(value: Any) -> dict[str, Any]:
@@ -73,6 +93,7 @@ def build_structured_diff(previous: dict[str, Any] | None, current: dict[str, An
     if new_status in {"repealed", "revoked", "superseded", "expired"}:
         change_type = "deactivated"
     return {
+        "jurisdiction": "Canada",
         "change_type": change_type,
         "old_hash": old_hash,
         "new_hash": new_hash,
@@ -91,6 +112,12 @@ def create_changeset(
     builder_vendor: str, builder_model: str,
 ) -> int:
     ensure_corpus_governance_tables()
+    if repair_text(manifest.get("jurisdiction") or "Canada").casefold() != "canada":
+        raise ValueError("Only Canadian legal corpus changesets are accepted")
+    source_urls = manifest.get("source_urls") or []
+    rejected_sources = [url for url in source_urls if not validate_canadian_legal_source(url)["approved"]]
+    if rejected_sources:
+        raise PermissionError(f"Changeset contains non-approved Canadian legal sources: {rejected_sources[:3]}")
     if any((row.get("security") or {}).get("quarantine_required") for row in diffs):
         status = "quarantined"
     else:

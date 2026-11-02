@@ -144,6 +144,14 @@ def run_agentic_legal_research(
     clean_query = repair_text(query)
     if not clean_query:
         return {"status": "empty_query", "rounds": [], "evidence": [], "coverage": [], "gaps": []}
+    if repair_text(module).lower() != "canada":
+        return {
+            "status": "unsupported_jurisdiction",
+            "jurisdiction": repair_text(module),
+            "rounds": [], "evidence": [], "coverage": [],
+            "unresolved_gaps": ["Agentic legal research is restricted to the installed Canadian legal corpus."],
+            "review_required": True,
+        }
     max_rounds = max(1, min(int(max_rounds or settings.legal_research_max_rounds), 5))
     per_round = max(1, min(int(max_queries_per_round or settings.legal_research_queries_per_round), 10))
     evidence_limit = max(5, min(int(max_evidence or settings.legal_research_max_evidence), 100))
@@ -225,6 +233,7 @@ def run_agentic_legal_research(
     evidence = sorted(evidence_by_id.values(), key=lambda item: item.score, reverse=True)
     return {
         "status": "ready" if evidence else "insufficient_evidence",
+        "jurisdiction": "Canada",
         "strategy": "bounded_gap_driven_agentic_hybrid_graph_research",
         "query_plan": plan.model_dump(mode="json"),
         "rounds": rounds,
