@@ -37,10 +37,14 @@ Large corpus and vector artifacts should remain in versioned object/database sto
 
 ## Operational sequence
 
-1. Add contextual schema fields and backfill prefixes in bounded batches.
-2. Rebuild embeddings because contextual content changes the content hash.
-3. Rebuild the legal graph.
-4. Run retrieval evaluation before activating the new index.
-5. Keep the prior corpus/index version until production checks pass.
+The current rollout is intentionally paused before bulk contextual migration. First validate the complete path locally on a representative Canadian subset.
+
+1. Build a float IVFFlat baseline locally with explicit `lists` and `probes`.
+2. Measure exact-search recall, IVFFlat recall, latency, memory and disk use.
+3. Evaluate half-precision and binary-quantized candidate generation with float-vector re-ranking. Native pgvector quantization is not product quantization; true IVF-PQ requires a separate backend such as FAISS.
+4. Extract source-grounded legal entities and typed relations on the same subset, then evaluate one-to-three-hop graph retrieval.
+5. Only after the local quality gate passes, backfill contextual prefixes and rebuild embeddings in versioned batches.
+6. Keep IVFFlat as the memory-constrained server baseline. A high-memory machine may expose HNSW as a separate vector-search backend; application retrieval must be able to fall back to local IVFFlat.
+7. Keep the prior corpus/index version until production checks pass.
 
 The research corpus and update pipeline are Canadian-only. A non-Canadian query is not reinterpreted using another country's law; it is returned as unsupported jurisdiction/coverage instead.

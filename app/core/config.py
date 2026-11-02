@@ -242,7 +242,12 @@ class Settings:
         self.rag_graph_candidate_limit = int(os.getenv("RAG_GRAPH_CANDIDATE_LIMIT", "20"))
         self.rag_graph_max_hops = int(os.getenv("RAG_GRAPH_MAX_HOPS", "3"))
         self.rag_graph_edge_min_confidence = float(os.getenv("RAG_GRAPH_EDGE_MIN_CONFIDENCE", "0.65"))
-        self.rag_vector_index_type = os.getenv("RAG_VECTOR_INDEX_TYPE", "hnsw").strip().lower()
+        # IVFFlat is the deployable baseline for memory-constrained PostgreSQL.
+        # HNSW remains an optional high-recall backend on a larger remote host.
+        self.rag_vector_index_type = os.getenv("RAG_VECTOR_INDEX_TYPE", "ivfflat").strip().lower()
+        self.rag_ivfflat_lists = int(os.getenv("RAG_IVFFLAT_LISTS", "2048"))
+        self.rag_ivfflat_probes = int(os.getenv("RAG_IVFFLAT_PROBES", "48"))
+        self.rag_vector_quantization = os.getenv("RAG_VECTOR_QUANTIZATION", "none").strip().lower()
         self.rag_hnsw_m = int(os.getenv("RAG_HNSW_M", "16"))
         self.rag_hnsw_ef_construction = int(os.getenv("RAG_HNSW_EF_CONSTRUCTION", "64"))
         self.rag_hnsw_ef_search = int(os.getenv("RAG_HNSW_EF_SEARCH", "80"))
