@@ -1149,9 +1149,15 @@ def analyze_sentence_search(
     local_only: bool = True,
     tenant_id: str = "",
     user_id: int | None = None,
+    event_callback=None,
 ):
+    def emit(event_type: str, message: str, payload: dict | None = None):
+        if event_callback:
+            event_callback(event_type, message, payload or {})
+
     normalized_module = normalize_module(module)
     cleaned_text = repair_text(text)
+    emit("analysis_started", "已接收案情，开始确认加拿大法域与输入边界。", {"module": normalized_module})
     effective_source = resolve_source_for_module(normalized_module, source)
     cache_key = ("analyze-structured", normalized_module, cleaned_text.lower())
     analysis_cache_status = "miss"
@@ -1178,6 +1184,10 @@ def analyze_sentence_search(
             or build_structured_analysis(cleaned_text, normalized_module)
         )
         _set_cached_analysis(cache_key, structured)
+    emit("case_structured", "已完成关键事实、当事人、时间线和初步争点整理。", {
+        "analysis_mode": structured.get("analysis_mode"),
+        "keywords": structured.get("retrieval_keywords") or [],
+    })
 
     analysis = structured["analysis"]
     intake_outline = structured["intake_outline"]
@@ -1187,6 +1197,7 @@ def analyze_sentence_search(
     retrieval_keywords = structured.get("retrieval_keywords") or extracted_keywords
 
     if local_only and bool(getattr(settings, "analysis_local_fast_mode", True)):
+        emit("baseline_retrieval_started", "开始检索本地加拿大法规与案例。", {})
         keyword_weights = analysis.get("keyword_weights") or {}
         result = search_with_remote_hydration(
             cleaned_text,
@@ -1248,6 +1259,9 @@ def analyze_sentence_search(
                 keyword_weights=keyword_weights,
             )
 
+    emit("baseline_retrieval_completed", "基础检索完成，正在建立法规—案例资料包。", {
+        "result_count": int(result.get("total") or 0), "strategy": result.get("search_strategy", ""),
+    })
     coverage_note = ""
     if not result["total"]:
         if local_only:
@@ -1293,6 +1307,10 @@ def analyze_sentence_search(
         response_payload,
         refresh=refresh,
     )
+    emit("evidence_packet_built", "已整理候选法规、案例和关联关系。", {
+        "law_count": len((response_payload.get("module_packet") or {}).get("relevant_laws") or []),
+        "case_count": len((response_payload.get("module_packet") or {}).get("case_law_rows") or []),
+    })
     response_payload["retrieval_summary"] = _build_retrieval_summary(
         response_payload["module_packet"],
         retrieval_keywords,
@@ -1317,6 +1335,7 @@ def analyze_sentence_search(
                 keywords=retrieval_keywords,
                 module=normalized_module,
                 source_filter=effective_source,
+                event_callback=event_callback,
             )
         except Exception as exc:
             response_payload["agentic_research"] = {
@@ -1384,6 +1403,10 @@ def analyze_sentence_search(
             ).strip()
 
     enrich_with_deep_analysis(response_payload, tenant_id=tenant_id, user_id=user_id)
+    emit("quality_gate_completed", "已完成引用、证据完整性和效力边界检查。", {
+        "deep_analysis_status": response_payload.get("deep_analysis_status", ""),
+        "quality_gate": response_payload.get("quality_gate") or {},
+    })
 
     if (
         analysis_cache_status != "hit"
@@ -1391,4 +1414,7 @@ def analyze_sentence_search(
         and structured.get("analysis_mode") != "heuristic_fallback"
     ):
         _persist_analysis_run(response_payload)
+    emit("analysis_completed", "加拿大案例分析完成。", {
+        "research_stop_reason": (response_payload.get("agentic_research") or {}).get("stop_reason", ""),
+    })
     return response_payload

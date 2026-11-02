@@ -347,6 +347,30 @@ def _structured_filter_clause(filters: dict | None, *, alias: str = "") -> tuple
         params[f"filter_{key}"] = value.lower()
         clauses.append(f"LOWER({prefix}{key}) = :filter_{key}")
 
+    jurisdiction_hint = repair_text(filters.get("jurisdiction_hint")).lower()
+    if jurisdiction_hint:
+        params["filter_jurisdiction_hint"] = f"%{jurisdiction_hint}%"
+        if jurisdiction_hint == "ontario":
+            # Older A2AJ rows often say only "Canada" in jurisdiction while
+            # retaining the province in the court/citation. Keep those rows but
+            # exclude authorities from unrelated provinces.
+            citation_match = (
+                f"(LOWER({prefix}citation) LIKE '%onca%' OR LOWER({prefix}citation) LIKE '%onsc%' "
+                f"OR LOWER({prefix}citation) LIKE '%oncj%' OR LOWER({prefix}citation) LIKE '%onltb%')"
+                if is_sqlite()
+                else f"LOWER({prefix}citation) ~ '(^|[^a-z])(onca|onsc|oncj|onltb)([^a-z]|$)'"
+            )
+            clauses.append(
+                f"(LOWER({prefix}jurisdiction) LIKE :filter_jurisdiction_hint "
+                f"OR LOWER({prefix}court_level) LIKE :filter_jurisdiction_hint "
+                f"OR {citation_match} OR {prefix}source_code IN ('on_statute', 'on_regulation'))"
+            )
+        else:
+            clauses.append(
+                f"(LOWER({prefix}jurisdiction) LIKE :filter_jurisdiction_hint "
+                f"OR LOWER({prefix}court_level) LIKE :filter_jurisdiction_hint)"
+            )
+
     # A canonical court may be stored under several raw spellings (full name and
     # abbreviation), so the caller passes every alias.
     court_levels = filters.get("court_levels")

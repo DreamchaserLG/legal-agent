@@ -139,6 +139,9 @@ def _base_plan_parts(query: str, keywords: list[str] | None = None) -> dict:
     law_expansions: list[str] = []
     case_expansions: list[str] = []
 
+    if "安大略" in clean_query or "Ontario" in clean_query:
+        jurisdictions.extend(["Ontario"])
+
     for term in all_terms:
         jurisdictions.extend(_JURISDICTION_HINTS.get(term, []))
         hints = _DOMAIN_HINTS.get(term, [])
@@ -264,6 +267,21 @@ def _llm_extract_facts(case_text: str) -> list[StructuredFact]:
 
 
 _ISSUE_RULES = [
+    (
+        r"租客|承租人|房东|出租人|租房|租赁|tenant|landlord|lease",
+        "安大略省住宅租赁关系及房东法定义务如何适用",
+        "Ontario residential tenancy",
+    ),
+    (
+        r"维修|漏水|霉菌|供暖|适居|repair|mould|leak|habitability|maintenance",
+        "房东维修与适居义务是否违反以及租客可获得何种救济",
+        "Ontario tenancy maintenance and remedies",
+    ),
+    (
+        r"N12|自用|收房|驱逐|终止|报复|eviction|termination|own use|retaliat",
+        "N12自用终止通知是否善意、有效或构成报复性驱逐",
+        "Ontario N12 eviction and bad faith",
+    ),
     (r"租客|承租|房东|出租|tenant|landlord|lease", "租赁合同义务及出租人法定义务是否履行", "residential tenancy"),
     (r"劳动|雇主|雇员|解雇|employment|employee|dismissal", "劳动关系终止的正当性及补偿范围", "employment"),
     (r"受伤|损害|过失|事故|injury|damage|negligence|accident", "注意义务、违反、因果关系及损害是否成立", "tort and negligence"),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import secrets
 import time
@@ -8,7 +9,7 @@ from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from app.i18n import (
@@ -24,6 +25,12 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.service.agent_service import get_dashboard_metrics, predict_legal_outcome
 from app.service.analysis_service import analyze_sentence_search, enrich_with_deep_analysis
+from app.service.analysis_stream_service import (
+    create_analysis_stream_run,
+    get_analysis_stream_run,
+    serialize_analysis_stream_run,
+    wait_for_analysis_events,
+)
 from app.service.archive_service import (
     export_source_items_snapshot,
     get_archive_status,
@@ -2913,6 +2920,91 @@ def login_page(request: Request, next: str = Query("/"), message: str = Query(""
         "login.html",
         _login_context(request, next_url=next, auth_error=raw_message),
     )
+
+
+@router.post("/api/analysis-stream/runs", status_code=202)
+def api_create_analysis_stream_run(request: Request, payload: AnalyzePayload):
+    user = require_user(request)
+    module_code = normalize_module(payload.module)
+    if module_code != "canada":
+        raise HTTPException(status_code=400, detail="流式案例研究当前仅支持加拿大法律模块。")
+    run = create_analysis_stream_run(
+        {
+            "text": payload.text,
+            "limit": payload.limit,
+            "offset": payload.offset,
+            "source": resolve_source_for_module(module_code, payload.source),
+            "sort": payload.sort,
+            "module": module_code,
+            "refresh": payload.refresh,
+            "origin_page": "analyze",
+            "local_only": True,
+        },
+        user_id=int(user["id"]),
+        tenant_id=repair_text(user.get("tenant_id") or user.get("organization")) or f"user:{user['id']}",
+    )
+    run_id = run["run_id"]
+    run.update({
+        "events_url": f"/api/analysis-stream/runs/{run_id}/events",
+        "status_url": f"/api/analysis-stream/runs/{run_id}",
+        "result_url": f"/api/analysis-stream/runs/{run_id}/result",
+    })
+    return run
+
+
+@router.get("/api/analysis-stream/runs/{run_id}")
+def api_get_analysis_stream_run(request: Request, run_id: str):
+    user = require_user(request)
+    try:
+        run = get_analysis_stream_run(run_id, user_id=int(user["id"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return serialize_analysis_stream_run(run, include_result=False)
+
+
+@router.get("/api/analysis-stream/runs/{run_id}/result")
+def api_get_analysis_stream_result(request: Request, run_id: str):
+    user = require_user(request)
+    try:
+        run = get_analysis_stream_run(run_id, user_id=int(user["id"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if run.status not in {"completed", "failed"}:
+        raise HTTPException(status_code=409, detail="Analysis is still running")
+    payload = serialize_analysis_stream_run(run, include_result=True)
+    if run.status == "completed" and run.result:
+        payload["history_id"] = _save_case_history_if_possible(
+            request,
+            query_text=repair_text(run.request.get("text")),
+            module_code="canada",
+            result_payload=run.result,
+        )
+    return payload
+
+
+@router.get("/api/analysis-stream/runs/{run_id}/events")
+def api_stream_analysis_events(request: Request, run_id: str, after_seq: int = Query(0, ge=0)):
+    user = require_user(request)
+    try:
+        run = get_analysis_stream_run(run_id, user_id=int(user["id"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    def generate():
+        cursor = int(after_seq)
+        while True:
+            events = wait_for_analysis_events(run, cursor, timeout=12.0)
+            if not events:
+                yield ": keep-alive\n\n"
+            for event in events:
+                cursor = int(event["seq"])
+                yield f"id: {cursor}\nevent: progress\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+            if run.status in {"completed", "failed"} and cursor >= len(run.events):
+                break
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive",
+    })
 
 
 @router.get("/api/auth/login-challenge")

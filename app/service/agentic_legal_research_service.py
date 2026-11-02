@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -70,7 +70,7 @@ def _normalize_evidence(item: dict[str, Any], query: str, round_no: int) -> Rese
 
 
 def _initial_queries(plan: Any, query: str, limit: int) -> list[str]:
-    issue_queries = [repair_text(issue.issue) for issue in plan.dispute_issues]
+    issue_queries = [repair_text(f"{issue.issue} {issue.legal_domain}") for issue in plan.dispute_issues]
     queries = issue_queries + [repair_text(plan.rule_query), repair_text(plan.case_query)]
     if not queries:
         queries = [query]
@@ -86,11 +86,23 @@ def _coverage(plan: Any, evidence: list[ResearchEvidence]) -> tuple[list[dict[st
             for token in repair_text(f"{issue.issue} {issue.legal_domain}").replace("/", " ").split()
             if len(token) >= 3
         }
+        generic = {
+            "ontario", "canada", "canadian", "legal", "law", "case", "evidence",
+            "burden", "issue", "civil", "procedure", "remedies", "obligation",
+        }
+        meaningful_terms = {term.strip(".,:;()[]") for term in terms if term.strip(".,:;()[]") not in generic}
+        strong_terms = {
+            "n12", "tenancy", "tenant", "landlord", "maintenance", "repair", "mould",
+            "habitability", "eviction", "retaliatory", "bad", "faith", "residential",
+        }
         matches = []
         for item in evidence:
             haystack = f"{item.title} {item.citation} {item.excerpt}".casefold()
-            overlap = sum(term in haystack for term in terms)
-            if overlap:
+            hits = {term for term in meaningful_terms if term in haystack}
+            # Do not mark an issue covered merely because a result says Ontario
+            # or contains generic procedural vocabulary. One strong domain term
+            # or two independent issue terms are required.
+            if len(hits) >= 2 or bool(hits & strong_terms):
                 matches.append(item)
         laws = [item for item in matches if item.source_kind == "law"]
         cases = [item for item in matches if item.source_kind == "case"]
@@ -139,6 +151,7 @@ def run_agentic_legal_research(
     max_queries_per_round: int | None = None,
     max_evidence: int | None = None,
     timeout_seconds: int | None = None,
+    event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Run bounded, gap-driven legal research; retrieved text is data, never instructions."""
     clean_query = repair_text(query)
@@ -158,7 +171,16 @@ def run_agentic_legal_research(
     timeout = max(5, min(int(timeout_seconds or settings.legal_research_timeout_seconds), 300))
     started = time.monotonic()
     plan = build_deep_query_plan(clean_query, keywords=keywords or [], use_llm=True, load_priors=True)
+    research_filters = dict(filters or {})
+    if not research_filters and any(
+        repair_text(value).lower() == "ontario" for value in (getattr(plan, "jurisdictions", []) or [])
+    ):
+        research_filters["jurisdiction_hint"] = "Ontario"
     queries = _initial_queries(plan, clean_query, per_round)
+    if event_callback:
+        event_callback("research_plan", "已完成争点拆分并生成首轮法规与案例查询。", {
+            "issue_count": len(plan.dispute_issues), "queries": queries,
+        })
     evidence_by_id: dict[str, ResearchEvidence] = {}
     rounds: list[dict[str, Any]] = []
     coverage: list[dict[str, Any]] = []
@@ -173,7 +195,8 @@ def run_agentic_legal_research(
         executed: list[dict[str, Any]] = []
         new_count = 0
         workers = min(4, len(queries))
-        with ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="legal-research") as pool:
+        pool = ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="legal-research")
+        try:
             futures = {
                 pool.submit(
                     hybrid_search,
@@ -182,11 +205,18 @@ def run_agentic_legal_research(
                     module=module,
                     source_filter=source_filter,
                     limit=min(12, evidence_limit),
-                    filters=filters,
+                    filters=research_filters,
+                    include_vector=round_no <= max(0, int(settings.legal_research_vector_rounds)),
                 ): search_query
                 for search_query in queries
             }
-            for future in as_completed(futures):
+            if event_callback:
+                event_callback("research_round_started", f"开始第 {round_no} 轮并行检索。", {
+                    "round_no": round_no, "queries": queries,
+                })
+            remaining = max(0.1, timeout - (time.monotonic() - started))
+            done, pending = wait(futures, timeout=remaining)
+            for future in done:
                 search_query = futures[future]
                 try:
                     result = future.result()
@@ -204,8 +234,24 @@ def run_agentic_legal_research(
                             evidence_by_id[normalized.evidence_id] = normalized
                 except Exception as exc:
                     executed.append({"query": search_query, "status": "error", "error": repair_text(str(exc))[:240], "hits": 0})
+            for future in pending:
+                future.cancel()
+                executed.append({"query": futures[future], "status": "timeout", "hits": 0})
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
-        ranked = sorted(evidence_by_id.values(), key=lambda item: item.score, reverse=True)[:evidence_limit]
+        all_ranked = sorted(evidence_by_id.values(), key=lambda item: item.score, reverse=True)
+        # A single global cutoff allowed the much larger case corpus to evict
+        # every statute from the evidence packet. Preserve a balanced authority
+        # set before filling remaining slots by score.
+        quota = max(1, evidence_limit // 3)
+        selected = (
+            [item for item in all_ranked if item.source_kind == "law"][:quota]
+            + [item for item in all_ranked if item.source_kind == "case"][:quota]
+        )
+        selected_ids = {item.evidence_id for item in selected}
+        selected.extend(item for item in all_ranked if item.evidence_id not in selected_ids)
+        ranked = sorted(selected[:evidence_limit], key=lambda item: item.score, reverse=True)
         evidence_by_id = {item.evidence_id: item for item in ranked}
         coverage, gaps = _coverage(plan, ranked)
         next_queries = _follow_up_queries(plan, coverage, gaps, per_round)
@@ -219,6 +265,8 @@ def run_agentic_legal_research(
                 "duration_ms": int((time.monotonic() - round_started) * 1000),
             }
         )
+        if event_callback:
+            event_callback("research_round_completed", f"第 {round_no} 轮检索完成，正在评估证据缺口。", rounds[-1])
         if not gaps:
             stop_reason = "all_issues_covered"
             break

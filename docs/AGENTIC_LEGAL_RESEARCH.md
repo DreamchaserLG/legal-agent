@@ -6,17 +6,28 @@ The Canadian-law analysis page uses a bounded research loop rather than treating
 
 1. Extract source-grounded facts and disputed issues.
 2. Generate separate rule and precedent queries.
-3. Search lexical, semantic and legal-graph indexes in parallel.
+3. Search lexical and legal-graph indexes in parallel; enable the semantic channel only within its configured latency budget.
 4. Measure rule/case coverage for every issue.
 5. Generate narrower follow-up queries from unresolved gaps.
 6. Stop on complete coverage, diminishing returns, timeout or the configured round limit.
-7. Bind the resulting evidence pool into deep analysis and expose the research trace in the UI.
+7. Bind the resulting evidence pool into deep analysis and stream safe progress events to the UI over SSE.
+
+The page exposes stage names, issued queries, evidence counts, coverage gaps and stop reasons. It does not expose private model chain-of-thought. Analysis runs are owner-scoped, bounded, and held in process memory for the configured TTL; a multi-node deployment should replace that store with Redis or a database-backed queue.
 
 Retrieved and downloaded text is always untrusted data. It cannot select tools or alter system behavior.
 
 ## Contextual index
 
-`rag_chunks` retains exact `text_content` for quotations and adds `context_prefix` and `contextual_text` for retrieval. The prefix carries document identity, citation, jurisdiction, document type, court, section and chunk position. `content_hash` is computed from contextual text, so changed context is re-embedded automatically.
+`rag_chunks` retains exact `text_content` for quotations and adds a compact `context_prefix`. The prefix carries document identity, citation, jurisdiction, document type, court, section and chunk position. Existing rows do not duplicate the complete text into `contextual_text`; vectorization composes prefix plus original text at read time. `content_hash` changes when the prefix changes, so contextual embeddings are rebuilt automatically and incrementally.
+
+The local PostgreSQL migration is additive and resumable:
+
+```powershell
+python -m app.service.context_index_migration_service --schema-only
+python -m app.service.context_index_migration_service --batch-size 10000
+```
+
+Each batch commits independently, uses `SKIP LOCKED`, and is restricted to Canadian source codes/tables. Re-run the second command until `remaining` reaches zero, then rebuild embeddings in controlled batches.
 
 ## Corpus governance
 
@@ -26,7 +37,7 @@ Large corpus and vector artifacts should remain in versioned object/database sto
 
 ## Operational sequence
 
-1. Rebuild the RAG index so existing chunks receive contextual fields.
+1. Add contextual schema fields and backfill prefixes in bounded batches.
 2. Rebuild embeddings because contextual content changes the content hash.
 3. Rebuild the legal graph.
 4. Run retrieval evaluation before activating the new index.

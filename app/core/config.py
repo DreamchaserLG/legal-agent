@@ -66,11 +66,24 @@ class Settings:
             os.getenv("AGENTIC_LEGAL_RESEARCH_ENABLED", "true").strip().lower()
             in {"1", "true", "yes", "on"}
         )
+        self.database_session_read_only = (
+            os.getenv("DATABASE_SESSION_READ_ONLY", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        self.database_statement_timeout_ms = int(os.getenv("DATABASE_STATEMENT_TIMEOUT_MS", "12000"))
+        self.database_lock_timeout_ms = int(os.getenv("DATABASE_LOCK_TIMEOUT_MS", "3000"))
         self.legal_research_max_rounds = int(os.getenv("LEGAL_RESEARCH_MAX_ROUNDS", "3"))
         self.legal_research_queries_per_round = int(os.getenv("LEGAL_RESEARCH_QUERIES_PER_ROUND", "6"))
         self.legal_research_max_evidence = int(os.getenv("LEGAL_RESEARCH_MAX_EVIDENCE", "40"))
         self.legal_research_min_new_evidence = int(os.getenv("LEGAL_RESEARCH_MIN_NEW_EVIDENCE", "2"))
         self.legal_research_timeout_seconds = int(os.getenv("LEGAL_RESEARCH_TIMEOUT_SECONDS", "90"))
+        # Vector search remains available for direct/baseline retrieval, but it is
+        # deliberately limited during multi-round research until contextual
+        # embeddings have been rebuilt.  Lexical and graph channels are much
+        # cheaper and provide better bounded latency on the local 6M+ corpus.
+        self.legal_research_vector_rounds = int(os.getenv("LEGAL_RESEARCH_VECTOR_ROUNDS", "0"))
+        self.analysis_stream_worker_threads = int(os.getenv("ANALYSIS_STREAM_WORKER_THREADS", "2"))
+        self.analysis_stream_event_ttl_seconds = int(os.getenv("ANALYSIS_STREAM_EVENT_TTL_SECONDS", "3600"))
         self.quality_gate_citation_traceability_min = float(
             os.getenv("QUALITY_GATE_CITATION_TRACEABILITY_MIN", "0.7")
         )

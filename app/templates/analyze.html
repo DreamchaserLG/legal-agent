@@ -12,7 +12,7 @@
             <p class="muted">如果同一案情已经保存过结果，系统会直接复用已有记录，不再重复消耗分析时间。</p>
         </div>
 
-        <form class="tool-panel" method="get" action="/analysis" data-loading-mode="analysis">
+        <form class="tool-panel" method="get" action="/analysis" data-loading-mode="analysis" id="analysis-stream-form" data-stream-enabled="true">
             <label for="module">研究模块</label>
             <select id="module" name="module">
                 {% for option in module_options %}
@@ -50,6 +50,17 @@
                 <a class="pager-link secondary" href="/hearing">进入庭审模拟</a>
             </div>
         </form>
+    </div>
+    <div class="shell analysis-stream-shell" id="analysis-stream-shell" hidden aria-live="polite">
+        <section class="analysis-stream-panel">
+            <div class="analysis-stream-head">
+                <div><p class="eyebrow">实时研究过程</p><h2>正在分析加拿大法律问题</h2></div>
+                <span class="task-status" id="analysis-stream-status">准备中</span>
+            </div>
+            <p class="muted" id="analysis-stream-summary">页面会逐步展示事实整理、争点拆分、法规检索、案例检索、缺口评估和质量检查。</p>
+            <ol class="analysis-stream-timeline" id="analysis-stream-timeline"></ol>
+            <div class="analysis-stream-metrics" id="analysis-stream-metrics"></div>
+        </section>
     </div>
 </section>
 
@@ -305,4 +316,83 @@
 
 {% include "partials/agent_chat_panel.html" %}
 {% endif %}
+
+<script>
+(() => {
+    const form = document.getElementById("analysis-stream-form");
+    const shell = document.getElementById("analysis-stream-shell");
+    const timeline = document.getElementById("analysis-stream-timeline");
+    const status = document.getElementById("analysis-stream-status");
+    const summary = document.getElementById("analysis-stream-summary");
+    const metrics = document.getElementById("analysis-stream-metrics");
+    if (!form || !shell || !window.EventSource || !window.fetch) return;
+
+    const labels = {
+        run_queued: "任务排队", run_started: "后台任务启动", analysis_started: "确认加拿大法域",
+        case_structured: "整理事实与争点", baseline_retrieval_started: "基础法规与案例检索",
+        baseline_retrieval_completed: "基础检索完成", evidence_packet_built: "建立证据资料包",
+        research_plan: "制定多轮研究计划", research_round_started: "并行检索",
+        research_round_completed: "评估本轮证据缺口", quality_gate_completed: "执行质量门",
+        analysis_completed: "生成结构化分析", run_completed: "全部完成", run_failed: "任务失败"
+    };
+
+    function addEvent(event) {
+        const li = document.createElement("li");
+        li.className = "analysis-stream-step";
+        const when = new Date((event.timestamp || Date.now() / 1000) * 1000).toLocaleTimeString();
+        li.innerHTML = `<span class="analysis-stream-dot"></span><div><strong>${labels[event.event_type] || event.event_type}</strong><p></p><small>${when}</small></div>`;
+        li.querySelector("p").textContent = event.message || "";
+        timeline.appendChild(li);
+        li.scrollIntoView({behavior: "smooth", block: "nearest"});
+        const payload = event.payload || {};
+        if (payload.new_evidence_count !== undefined) {
+            metrics.textContent = `新增证据 ${payload.new_evidence_count} · 累计 ${payload.total_evidence_count || 0} · 未解决问题 ${payload.unresolved_gap_count || 0}`;
+        }
+        status.textContent = event.event_type === "run_failed" ? "失败" : event.event_type === "run_completed" ? "完成" : "进行中";
+    }
+
+    form.addEventListener("submit", async (event) => {
+        if (form.querySelector('[name="module"]')?.value !== "canada") return;
+        event.preventDefault();
+        const data = new FormData(form);
+        shell.hidden = false; timeline.innerHTML = ""; metrics.textContent = "";
+        status.textContent = "创建任务"; summary.textContent = "正在创建后台研究任务……";
+        const payload = {
+            text: String(data.get("text") || ""), module: "canada",
+            source: String(data.get("source") || "all"), sort: String(data.get("sort") || "relevance"),
+            limit: Number(data.get("limit") || 10), offset: 0, refresh: false
+        };
+        try {
+            const response = await fetch("/api/analysis-stream/runs", {
+                method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw new Error((await response.json()).detail || "无法创建分析任务");
+            const run = await response.json();
+            summary.textContent = "分析在后台运行；你可以实时查看每一步，不需要等待空白页面。";
+            const source = new EventSource(run.events_url);
+            source.addEventListener("progress", async (message) => {
+                const item = JSON.parse(message.data); addEvent(item);
+                if (item.event_type === "run_completed") {
+                    source.close();
+                    // Finalize the completed result into the normal history
+                    // store before navigation, so the GET page renders it
+                    // immediately instead of starting the analysis a second time.
+                    try {
+                        await fetch(run.result_url, {headers: {"Accept": "application/json"}});
+                    } catch (_) {
+                        // The result remains available through the existing
+                        // analysis route even if history finalization is retried.
+                    }
+                    const target = new URL("/analysis", window.location.origin);
+                    for (const [key, value] of Object.entries(payload)) target.searchParams.set(key, String(value));
+                    setTimeout(() => window.location.assign(target.toString()), 700);
+                } else if (item.event_type === "run_failed") source.close();
+            });
+            source.onerror = () => { status.textContent = "连接重试中"; };
+        } catch (error) {
+            status.textContent = "失败"; summary.textContent = error.message || String(error);
+        }
+    });
+})();
+</script>
 {% endblock %}

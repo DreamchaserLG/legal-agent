@@ -165,6 +165,35 @@ LEGAL_TERMS: dict[str, str] = {
     "加拿大": "Canada",
 }
 
+# Canonical UTF-8 entries.  Some historical deployments carried a mojibake
+# version of the original table; these explicit keys keep Chinese Canadian
+# intake deterministic and are intentionally scoped to retrieval vocabulary.
+LEGAL_TERMS.update({
+    "安大略省": "Ontario",
+    "加拿大": "Canada",
+    "租房": "residential tenancy",
+    "租赁": "residential tenancy",
+    "房东": "landlord",
+    "租客": "tenant",
+    "承租人": "tenant",
+    "出租人": "landlord",
+    "维修": "repair maintenance",
+    "漏水": "water damage leak",
+    "霉菌": "mould habitability",
+    "适居": "habitability",
+    "驱逐": "eviction",
+    "收房": "termination possession",
+    "自用": "landlord own use N12",
+    "报复性驱逐": "retaliatory eviction",
+    "通知": "notice",
+    "救济": "remedy",
+    "判例": "case law",
+    "法规": "legislation",
+    "义务": "obligation",
+    "证据": "evidence",
+    "损害赔偿": "damages",
+})
+
 #: Filler words that carry no retrieval signal.
 _STOPWORDS = (
     "请问", "我想", "咨询", "一下", "相关的", "相关", "有关", "关于",

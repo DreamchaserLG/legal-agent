@@ -4267,6 +4267,19 @@ body { background: var(--bg); overflow-x: hidden; }
     position: relative;
 }
 
+.analysis-stream-shell { margin-top: 28px; }
+.analysis-stream-panel { padding: 28px; border: 1px solid var(--line); border-radius: 22px; background: var(--surface); box-shadow: var(--shadow-soft); }
+.analysis-stream-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.analysis-stream-head h2 { margin: 4px 0 0; }
+.analysis-stream-timeline { list-style: none; margin: 24px 0 0; padding: 0; display: grid; gap: 0; }
+.analysis-stream-step { position: relative; display: grid; grid-template-columns: 22px 1fr; gap: 12px; padding-bottom: 20px; }
+.analysis-stream-step:not(:last-child)::before { content: ""; position: absolute; left: 6px; top: 14px; bottom: 0; width: 2px; background: var(--line); }
+.analysis-stream-dot { position: relative; z-index: 1; width: 14px; height: 14px; margin-top: 4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 16%, transparent); }
+.analysis-stream-step strong { color: var(--text); }
+.analysis-stream-step p { margin: 4px 0; color: var(--muted); }
+.analysis-stream-step small { color: var(--muted); }
+.analysis-stream-metrics { margin-top: 8px; padding: 12px 16px; border-radius: 12px; background: var(--surface-soft); color: var(--text); }
+
 .history-quick-menu > summary {
     display: inline-flex;
     min-height: 34px;

@@ -137,6 +137,7 @@ def hybrid_search(
     lexical_limit: int | None = None,
     vector_limit: int | None = None,
     filters: dict | None = None,
+    include_vector: bool = True,
 ) -> dict:
     clean_query = repair_text(query)
     if not clean_query:
@@ -150,12 +151,15 @@ def hybrid_search(
     graph_weight = float(getattr(settings, "rag_graph_weight", 0.25))
     rrf_k = 60.0
 
-    query_plan = build_legal_query_plan(clean_query, keywords=keywords or [])
     # Chinese queries cannot hit the English full-text index, so translate the
     # lexical side into English legal terms while keeping the original text for
     # the multilingual vector channel.
     query_translation = translate_query(clean_query)
     lexical_query = query_translation.get("translated") or clean_query
+    # Build the partitioned legal plan from the English corpus query.  Previously
+    # the law/case partition queries were generated but the lexical channel
+    # ignored them and repeated one generic search for both partitions.
+    query_plan = build_legal_query_plan(lexical_query, keywords=keywords or [])
     # Graph lookup and reranking are English-corpus operations; scoring a Chinese
     # query against English documents drops every candidate.
     rerank_query = lexical_query
@@ -168,21 +172,36 @@ def hybrid_search(
     vector_status = ""
     vector_pgvector_enabled = False
     for partition_name, partition_source, partition_query in _retrieval_partitions(source_filter, query_plan):
-        lexical_result = rag_search(
-            lexical_query,
-            keywords=keywords or [],
-            module=module,
-            source_filter=partition_source,
-            limit=lexical_limit,
-            filters=filters,
-        )
-        vector_result = vector_search(
-            partition_query,
-            module=module,
-            source_filter=partition_source,
-            limit=vector_limit,
-            filters=filters,
-        )
+        try:
+            lexical_result = rag_search(
+                partition_query or lexical_query,
+                keywords=keywords or [],
+                module=module,
+                source_filter=partition_source,
+                limit=lexical_limit,
+                filters=filters,
+            )
+        except Exception as exc:
+            lexical_result = {"status": "error", "items": [], "error": repair_text(str(exc))[:300]}
+        if include_vector:
+            try:
+                vector_result = vector_search(
+                    partition_query,
+                    module=module,
+                    source_filter=partition_source,
+                    limit=vector_limit,
+                    filters=filters,
+                )
+            except Exception as exc:
+                vector_result = {
+                    "status": "timeout_or_error", "items": [], "embedding": {},
+                    "pgvector_enabled": False, "error": repair_text(str(exc))[:300],
+                }
+        else:
+            vector_result = {
+                "status": "skipped_by_research_budget", "items": [],
+                "embedding": {}, "pgvector_enabled": False,
+            }
         for item in lexical_result.get("items") or []:
             current = dict(item)
             current["retrieval_partition"] = partition_name
@@ -201,6 +220,10 @@ def hybrid_search(
                 "query": partition_query,
                 "lexical_total": len(lexical_result.get("items") or []),
                 "vector_total": len(vector_result.get("items") or []),
+                "lexical_status": lexical_result.get("status", "ok"),
+                "vector_status": vector_result.get("status", "ok"),
+                "lexical_error": lexical_result.get("error", ""),
+                "vector_error": vector_result.get("error", ""),
             }
         )
     graph_result: dict = {"status": "disabled", "items": [], "total": 0}

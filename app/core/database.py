@@ -25,6 +25,21 @@ engine = create_engine(
     connect_args={"check_same_thread": False} if _is_sqlite else {},
 )
 
+
+if not _is_sqlite:
+    @event.listens_for(engine, "connect")
+    def set_postgres_session_defaults(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        read_only = "on" if settings.database_session_read_only else "off"
+        cursor.execute(f"SET default_transaction_read_only = {read_only}")
+        cursor.execute(f"SET statement_timeout = {max(0, settings.database_statement_timeout_ms)}")
+        cursor.execute(f"SET lock_timeout = {max(0, settings.database_lock_timeout_ms)}")
+        cursor.execute("SET application_name = 'legal_demo_web'")
+        cursor.close()
+        # psycopg2 starts a transaction for SET statements. Commit it so the
+        # configured default applies to the first application transaction.
+        dbapi_connection.commit()
+
 # SQLite 优化设置
 if _is_sqlite:
     @event.listens_for(engine, "connect")

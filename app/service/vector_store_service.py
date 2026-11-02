@@ -499,7 +499,7 @@ def _select_chunks_needing_embeddings(source_filter: str, limit: int | None, mod
     if limit:
         params["limit"] = int(limit)
     sql = f"""
-    SELECT rc.id, rc.title, rc.text_content, rc.contextual_text, rc.content_hash
+    SELECT rc.id, rc.title, rc.text_content, rc.context_prefix, rc.contextual_text, rc.content_hash
     FROM rag_chunks rc
     LEFT JOIN rag_chunk_embeddings rce ON rce.chunk_id = rc.id
     WHERE {where_clause}
@@ -783,7 +783,10 @@ def rebuild_chunk_embeddings(source_filter: str = "all", limit: int | None = Non
             batch = chunks[start : start + batch_size]
             texts = [
                 repair_text(item.get("contextual_text"))
-                or "\n\n".join([repair_text(item.get("title")), repair_text(item.get("text_content"))]).strip()
+                or "\n\n".join([
+                    repair_text(item.get("context_prefix")) or repair_text(item.get("title")),
+                    repair_text(item.get("text_content")),
+                ]).strip()
                 for item in batch
             ]
             embedding_started = perf_counter()
