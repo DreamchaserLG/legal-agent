@@ -60,6 +60,19 @@
             <p class="muted" id="analysis-stream-summary">页面会逐步展示事实整理、争点拆分、法规检索、案例检索、缺口评估和质量检查。</p>
             <ol class="analysis-stream-timeline" id="analysis-stream-timeline"></ol>
             <div class="analysis-stream-metrics" id="analysis-stream-metrics"></div>
+            <div class="analysis-stream-controls" id="analysis-stream-controls" hidden>
+                <div class="action-row">
+                    <button type="button" class="pager-link secondary" data-research-action="pause">暂停下一轮</button>
+                    <button type="button" class="pager-link secondary" data-research-action="resume">继续</button>
+                    <button type="button" class="pager-link secondary" data-research-action="cancel">终止研究</button>
+                </div>
+                <label for="analysis-refinement-query">人工补充或纠正下一轮查询</label>
+                <div class="analysis-refinement-row">
+                    <input id="analysis-refinement-query" type="text" maxlength="500" placeholder="例如：仅检索 Ontario N12 恶意自用和 s.57 救济">
+                    <button type="button" class="pager-link" data-research-action="refine">加入下一轮</button>
+                </div>
+                <p class="muted">控制信号在当前数据库查询结束后生效；页面展示检索轨迹，不展示模型私有思维链。</p>
+            </div>
         </section>
     </div>
 </section>
@@ -325,6 +338,9 @@
     const status = document.getElementById("analysis-stream-status");
     const summary = document.getElementById("analysis-stream-summary");
     const metrics = document.getElementById("analysis-stream-metrics");
+    const controls = document.getElementById("analysis-stream-controls");
+    const refinement = document.getElementById("analysis-refinement-query");
+    let activeRun = null;
     if (!form || !shell || !window.EventSource || !window.fetch) return;
 
     const labels = {
@@ -334,6 +350,8 @@
         research_plan: "制定多轮研究计划", research_round_started: "并行检索",
         research_round_completed: "评估本轮证据缺口", quality_gate_completed: "执行质量门",
         analysis_completed: "生成结构化分析", run_completed: "全部完成", run_failed: "任务失败"
+        , control_pause: "人工暂停", control_resume: "人工继续", control_cancel: "人工终止",
+        control_refine: "人工补充查询", research_paused: "等待人工调整"
     };
 
     function addEvent(event) {
@@ -342,9 +360,36 @@
         const when = new Date((event.timestamp || Date.now() / 1000) * 1000).toLocaleTimeString();
         li.innerHTML = `<span class="analysis-stream-dot"></span><div><strong>${labels[event.event_type] || event.event_type}</strong><p></p><small>${when}</small></div>`;
         li.querySelector("p").textContent = event.message || "";
+        const payload = event.payload || {};
+        const queries = Array.isArray(payload.queries) ? payload.queries : [];
+        if (queries.length) {
+            const details = document.createElement("details");
+            const heading = document.createElement("summary");
+            heading.textContent = `查看本步骤的 ${queries.length} 个查询`;
+            const list = document.createElement("ul");
+            queries.forEach((entry) => {
+                const row = document.createElement("li");
+                if (typeof entry === "string") row.textContent = entry;
+                else row.textContent = `${entry.query || ""} · ${entry.status || ""} · 命中 ${entry.hits || 0}`;
+                list.appendChild(row);
+            });
+            details.append(heading, list);
+            li.querySelector("div").appendChild(details);
+        }
+        if (Array.isArray(payload.unresolved_gaps) && payload.unresolved_gaps.length) {
+            const gap = document.createElement("p");
+            gap.className = "analysis-stream-gap";
+            gap.textContent = `仍需解决：${payload.unresolved_gaps.join("；")}`;
+            li.querySelector("div").appendChild(gap);
+        }
+        if (Array.isArray(payload.next_queries) && payload.next_queries.length) {
+            const next = document.createElement("p");
+            next.className = "analysis-stream-next";
+            next.textContent = `下一步：${payload.next_queries.join("；")}`;
+            li.querySelector("div").appendChild(next);
+        }
         timeline.appendChild(li);
         li.scrollIntoView({behavior: "smooth", block: "nearest"});
-        const payload = event.payload || {};
         if (payload.new_evidence_count !== undefined) {
             metrics.textContent = `新增证据 ${payload.new_evidence_count} · 累计 ${payload.total_evidence_count || 0} · 未解决问题 ${payload.unresolved_gap_count || 0}`;
         }
@@ -368,12 +413,14 @@
             });
             if (!response.ok) throw new Error((await response.json()).detail || "无法创建分析任务");
             const run = await response.json();
+            activeRun = run; controls.hidden = false;
             summary.textContent = "分析在后台运行；你可以实时查看每一步，不需要等待空白页面。";
             const source = new EventSource(run.events_url);
             source.addEventListener("progress", async (message) => {
                 const item = JSON.parse(message.data); addEvent(item);
                 if (item.event_type === "run_completed") {
                     source.close();
+                    controls.hidden = true;
                     // Finalize the completed result into the normal history
                     // store before navigation, so the GET page renders it
                     // immediately instead of starting the analysis a second time.
@@ -386,12 +433,29 @@
                     const target = new URL("/analysis", window.location.origin);
                     for (const [key, value] of Object.entries(payload)) target.searchParams.set(key, String(value));
                     setTimeout(() => window.location.assign(target.toString()), 700);
-                } else if (item.event_type === "run_failed") source.close();
+                } else if (item.event_type === "run_failed") { source.close(); controls.hidden = true; }
             });
             source.onerror = () => { status.textContent = "连接重试中"; };
         } catch (error) {
             status.textContent = "失败"; summary.textContent = error.message || String(error);
         }
+    });
+
+    controls.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-research-action]");
+        if (!button || !activeRun) return;
+        const action = button.dataset.researchAction;
+        const query = action === "refine" ? String(refinement.value || "").trim() : "";
+        if (action === "refine" && !query) return;
+        const response = await fetch(activeRun.control_url, {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({action, query})
+        });
+        if (!response.ok) {
+            summary.textContent = (await response.json()).detail || "无法调整当前研究任务";
+            return;
+        }
+        if (action === "refine") refinement.value = "";
     });
 })();
 </script>

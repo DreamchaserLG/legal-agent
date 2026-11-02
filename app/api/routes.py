@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.service.agent_service import get_dashboard_metrics, predict_legal_outcome
 from app.service.analysis_service import analyze_sentence_search, enrich_with_deep_analysis
 from app.service.analysis_stream_service import (
+    apply_analysis_stream_control,
     create_analysis_stream_run,
     get_analysis_stream_run,
     serialize_analysis_stream_run,
@@ -125,6 +126,14 @@ from app.service.risk_assessment_service import list_risk_training_samples, reco
 from app.service.search_service import search_and_optionally_sync
 from app.service.skill_runtime_service import list_legal_skills, run_legal_skill
 from app.service.vector_store_service import get_vector_status, rebuild_chunk_embeddings, vector_search
+from app.service.vector_backend_service import backend_status
+from app.service.vector_benchmark_service import (
+    benchmark_local_vector_sample,
+    local_vector_experiment_manifest,
+    prepare_local_vector_sample,
+    run_local_vector_benchmark,
+)
+from app.service.vector_index_management_service import get_ivfflat_build_plan
 from app.service.user_service import (
     authenticate_user,
     build_case_history_payload,
@@ -801,6 +810,30 @@ class AnalyzePayload(BaseModel):
     sort: str = "relevance"
     module: str = "canada"
     refresh: bool = False
+
+
+class AnalysisControlPayload(BaseModel):
+    action: str = Field(min_length=3, max_length=20)
+    query: str = Field(default="", max_length=500)
+
+
+class VectorBenchmarkPayload(BaseModel):
+    queries: list[str] = Field(min_length=1, max_length=100)
+    k: int = Field(default=10, ge=1, le=100)
+    exact_timeout_ms: int = Field(default=90000, ge=1000, le=300000)
+
+
+class VectorSamplePayload(BaseModel):
+    confirmation_token: str = Field(min_length=8, max_length=80)
+    sample_size: int = Field(default=50000, ge=1000, le=500000)
+    lists: int | None = Field(default=None, ge=1, le=4096)
+
+
+class VectorSampleBenchmarkPayload(BaseModel):
+    queries: list[str] = Field(min_length=1, max_length=100)
+    sample_size: int = Field(default=50000, ge=1000, le=500000)
+    k: int = Field(default=10, ge=1, le=100)
+    probes: int = Field(default=16, ge=1, le=4096)
 
 
 class ProfilePayload(BaseModel):
@@ -2807,6 +2840,54 @@ def api_rag_vector_status(request: Request):
     return get_vector_status()
 
 
+@router.get("/api/rag/vector-backends")
+def api_rag_vector_backends(request: Request):
+    require_user(request)
+    return backend_status()
+
+
+@router.get("/api/rag/vector-experiment-manifest")
+def api_rag_vector_experiment_manifest(request: Request):
+    require_admin(request)
+    return local_vector_experiment_manifest()
+
+
+@router.post("/api/rag/vector-benchmark")
+def api_rag_vector_benchmark(request: Request, payload: VectorBenchmarkPayload):
+    require_admin(request)
+    return run_local_vector_benchmark(
+        payload.queries, k=payload.k, exact_timeout_ms=payload.exact_timeout_ms,
+    )
+
+
+@router.post("/api/rag/vector-sample/prepare")
+def api_rag_prepare_vector_sample(request: Request, payload: VectorSamplePayload):
+    require_admin(request)
+    return prepare_local_vector_sample(
+        confirmation_token=payload.confirmation_token,
+        sample_size=payload.sample_size,
+        lists=payload.lists,
+    )
+
+
+@router.post("/api/rag/vector-sample/benchmark")
+def api_rag_benchmark_vector_sample(request: Request, payload: VectorSampleBenchmarkPayload):
+    require_admin(request)
+    return benchmark_local_vector_sample(
+        payload.queries, sample_size=payload.sample_size, k=payload.k, probes=payload.probes,
+    )
+
+
+@router.get("/api/rag/ivfflat-build-plan")
+def api_rag_ivfflat_build_plan(
+    request: Request,
+    lists: int | None = Query(None, ge=1, le=32768),
+    half_precision: bool = Query(False),
+):
+    require_admin(request)
+    return get_ivfflat_build_plan(lists=lists, half_precision=half_precision)
+
+
 @router.get("/api/rag/graph-status")
 def api_rag_graph_status(request: Request):
     require_user(request)
@@ -2948,6 +3029,7 @@ def api_create_analysis_stream_run(request: Request, payload: AnalyzePayload):
         "events_url": f"/api/analysis-stream/runs/{run_id}/events",
         "status_url": f"/api/analysis-stream/runs/{run_id}",
         "result_url": f"/api/analysis-stream/runs/{run_id}/result",
+        "control_url": f"/api/analysis-stream/runs/{run_id}/control",
     })
     return run
 
@@ -2960,6 +3042,17 @@ def api_get_analysis_stream_run(request: Request, run_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return serialize_analysis_stream_run(run, include_result=False)
+
+
+@router.post("/api/analysis-stream/runs/{run_id}/control")
+def api_control_analysis_stream_run(request: Request, run_id: str, payload: AnalysisControlPayload):
+    user = require_user(request)
+    try:
+        return apply_analysis_stream_control(
+            run_id, user_id=int(user["id"]), action=payload.action, query=payload.query,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/api/analysis-stream/runs/{run_id}/result")

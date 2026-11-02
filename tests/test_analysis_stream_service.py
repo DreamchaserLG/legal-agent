@@ -41,6 +41,27 @@ class AnalysisStreamServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             service.get_analysis_stream_run(created["run_id"], user_id=8)
 
+    def test_owner_can_pause_refine_and_cancel(self):
+        gate = service.threading.Event()
+
+        def fake_analysis(**kwargs):
+            gate.wait(1)
+            return {}
+
+        with patch.object(service, "analyze_sentence_search", side_effect=fake_analysis):
+            created = service.create_analysis_stream_run(
+                {"text": "Ontario N12 dispute", "module": "canada"}, user_id=9, tenant_id="user:9",
+            )
+            paused = service.apply_analysis_stream_control(created["run_id"], user_id=9, action="pause")
+            refined = service.apply_analysis_stream_control(
+                created["run_id"], user_id=9, action="refine", query="Ontario RTA section 57 bad faith",
+            )
+            cancelled = service.apply_analysis_stream_control(created["run_id"], user_id=9, action="cancel")
+            gate.set()
+        self.assertTrue(paused["control"]["paused"])
+        self.assertIn("Ontario RTA section 57 bad faith", refined["control"]["additional_queries"])
+        self.assertTrue(cancelled["control"]["cancelled"])
+
 
 if __name__ == "__main__":
     unittest.main()

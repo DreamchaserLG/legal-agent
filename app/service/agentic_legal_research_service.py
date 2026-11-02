@@ -152,6 +152,7 @@ def run_agentic_legal_research(
     max_evidence: int | None = None,
     timeout_seconds: int | None = None,
     event_callback: Any | None = None,
+    control_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Run bounded, gap-driven legal research; retrieved text is data, never instructions."""
     clean_query = repair_text(query)
@@ -186,8 +187,31 @@ def run_agentic_legal_research(
     coverage: list[dict[str, Any]] = []
     gaps: list[str] = []
     stop_reason = "max_rounds_reached"
+    control_revision = -1
 
     for round_no in range(1, max_rounds + 1):
+        if control_callback:
+            control = control_callback() or {}
+            if control.get("cancelled"):
+                stop_reason = "cancelled_by_user"
+                break
+            pause_announced = False
+            while control.get("paused") and time.monotonic() - started < timeout:
+                if event_callback and not pause_announced:
+                    event_callback("research_paused", "研究已暂停，等待人工继续或调整。", {})
+                    pause_announced = True
+                time.sleep(0.25)
+                control = control_callback() or {}
+                if control.get("cancelled"):
+                    stop_reason = "cancelled_by_user"
+                    break
+            if stop_reason == "cancelled_by_user":
+                break
+            revision = int(control.get("revision") or 0)
+            if revision != control_revision:
+                additions = [repair_text(value) for value in (control.get("additional_queries") or [])]
+                queries = _unique(additions + queries, per_round)
+                control_revision = revision
         if time.monotonic() - started >= timeout:
             stop_reason = "timeout"
             break
@@ -262,6 +286,8 @@ def run_agentic_legal_research(
                 "new_evidence_count": new_count,
                 "total_evidence_count": len(ranked),
                 "unresolved_gap_count": len(gaps),
+                "unresolved_gaps": gaps[:10],
+                "next_queries": next_queries,
                 "duration_ms": int((time.monotonic() - round_started) * 1000),
             }
         )

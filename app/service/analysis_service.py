@@ -1150,6 +1150,7 @@ def analyze_sentence_search(
     tenant_id: str = "",
     user_id: int | None = None,
     event_callback=None,
+    research_control=None,
 ):
     def emit(event_type: str, message: str, payload: dict | None = None):
         if event_callback:
@@ -1336,6 +1337,7 @@ def analyze_sentence_search(
                 module=normalized_module,
                 source_filter=effective_source,
                 event_callback=event_callback,
+                control_callback=research_control,
             )
         except Exception as exc:
             response_payload["agentic_research"] = {

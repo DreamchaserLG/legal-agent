@@ -48,3 +48,25 @@ The current rollout is intentionally paused before bulk contextual migration. Fi
 7. Keep the prior corpus/index version until production checks pass.
 
 The research corpus and update pipeline are Canadian-only. A non-Canadian query is not reinterpreted using another country's law; it is returned as unsupported jurisdiction/coverage instead.
+
+## Local vector rollout checkpoint
+
+Bulk contextual migration remains paused. The local validation path uses an isolated table and never updates `rag_chunks` or the production embedding rows.
+
+Implemented controls:
+
+- dry-run IVFFlat build plans with an explicit confirmation token;
+- backend status for local IVFFlat, optional FAISS IVF-PQ and optional remote HNSW;
+- exact-versus-ANN Recall@K, MRR and latency metrics;
+- optional FAISS `IndexIVFPQ` artifact support with PostgreSQL FP32 re-ranking;
+- a deterministic Canadian legal entity extractor with source spans;
+- owner-scoped pause, resume, cancel and next-round query refinement controls.
+
+The first isolated 50,000-vector BGE-M3 experiment produced:
+
+| Configuration | Recall@5 | Recall@10 | MRR | Mean ANN latency |
+|---|---:|---:|---:|---:|
+| IVFFlat lists=224, probes=16 | 0.88 | 0.82 | 1.00 | 21.5 ms |
+| IVFFlat lists=224, probes=32 | 1.00 | 0.92 | 1.00 | 44.0 ms |
+
+The second configuration passes the initial Recall@10 >= 0.90 gate on this small five-query smoke set. It is not sufficient to activate a full-corpus index; the next evaluation must use the curated Canadian legal benchmark and include jurisdiction-error and authority-quality labels.

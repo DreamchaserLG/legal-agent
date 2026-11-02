@@ -244,7 +244,14 @@ def _existing_vector_index_def(conn) -> str:
             FROM pg_indexes
             WHERE schemaname = current_schema()
               AND tablename = 'rag_chunk_embeddings'
-              AND indexname = 'idx_rag_chunk_embeddings_vector'
+              AND (
+                  indexname = 'idx_rag_chunk_embeddings_vector'
+                  OR LOWER(indexdef) LIKE '% using ivfflat %'
+                  OR LOWER(indexdef) LIKE '% using hnsw %'
+              )
+            ORDER BY CASE WHEN indexname = 'idx_rag_chunk_embeddings_vector' THEN 0 ELSE 1 END,
+                     indexname
+            LIMIT 1
             """
         )
     ).mappings().first()

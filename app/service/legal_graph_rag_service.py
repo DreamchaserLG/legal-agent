@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.database import engine, is_sqlite
 from app.service.common_service import plain_text_preview, repair_text, sha256_text
 from app.service.legal_query_planner_service import build_legal_query_plan
+from app.service.legal_entity_extraction_service import extract_legal_entities
 from app.service.rag_service import ensure_rag_tables
 
 
@@ -20,13 +21,13 @@ _LEGAL_GRAPH_TABLES_READY = False
 _ENTITY_TYPES = {
     "Case", "Court", "Statute", "Regulation", "JudicialInterpretation", "Section", "LegalVersion",
     "LegalIssue", "LegalConcept", "Holding", "Claim", "Charge", "Element", "Defense", "Exception",
-    "Fact", "Evidence", "SentencingFactor", "Remedy",
+    "Fact", "Evidence", "SentencingFactor", "Remedy", "Person", "Organization", "Procedure",
 }
 _RELATION_TYPES = {
     "CITES", "MENTIONS", "APPLIES", "INTERPRETS", "DISTINGUISHES",
     "FOLLOWS", "OVERRULES", "AMENDS", "REPEALS", "SUPERSEDES", "HAS_VERSION",
     "HAS_SECTION", "HAS_ELEMENT", "HAS_SENTENCING_FACTOR", "AGGRAVATES", "MITIGATES",
-    "SATISFIES", "DISPUTES", "SUPPORTS", "CONTRADICTS", "RELATED_ISSUE",
+    "SATISFIES", "DISPUTES", "SUPPORTS", "CONTRADICTS", "RELATED_ISSUE", "DECIDED_BY",
 }
 _LEGAL_CONCEPT_HINTS = (
     (r"租客|承租|房东|出租|\b(?:tenant|landlord|lease|tenancy)\b", "residential tenancy"),
@@ -637,12 +638,21 @@ def build_case_query_graph(query: str, *, keywords: list[str] | None = None) -> 
     for term in (plan.get("meaningful_terms") or [])[:8]:
         if _normalize_name(term) not in _GENERIC_TERMS:
             add_node("LegalConcept", term, "RELATED_CONCEPT")
+    extracted = extract_legal_entities(clean_query, jurisdiction=(plan.get("jurisdictions") or ["Canada"])[0])
+    for entity in extracted.get("entities") or []:
+        entity_type = repair_text(entity.get("entity_type"))
+        relation = {
+            "Statute": "MENTIONS", "Section": "MENTIONS", "Case": "CITES",
+            "Court": "DECIDED_BY", "LegalIssue": "HAS_ISSUE",
+        }.get(entity_type, "RELATED_CONCEPT")
+        add_node(entity_type, repair_text(entity.get("canonical_name")), relation)
     return {
         "query": clean_query,
         "nodes": nodes,
         "edges": edges,
         "legal_domains": plan.get("domains") or [],
         "issues": plan.get("issues") or [],
+        "entity_extraction": extracted,
     }
 
 
