@@ -36,7 +36,8 @@ from app.service.rag_service import (
 from app.service.vector_store_service import ensure_vector_tables, rebuild_chunk_embeddings
 
 
-CHECKPOINT_NAME = "a2aj_case_bge_m3_v1"
+CHECKPOINT_NAME = "a2aj_case_legal_context_v2"
+REBUILD_CONFIRM_TOKEN = "REBUILD_LOCAL_CONTEXT_V2"
 
 
 def _log(path: Path, event: str, **payload) -> None:
@@ -346,6 +347,8 @@ def _drop_bulk_insert_indexes() -> None:
 
 
 def run(args: argparse.Namespace) -> dict:
+    if getattr(args, "confirm", "") != REBUILD_CONFIRM_TOKEN:
+        raise PermissionError("Explicit local legal-context-v2 rebuild confirmation is required")
     log_path = Path(args.log_path)
     started = time.perf_counter()
     # HNSW incremental maintenance is much slower and larger than one final concurrent build.
@@ -457,9 +460,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--progress-every-pages", type=int, default=10)
     parser.add_argument("--progress-every-embeddings", type=int, default=10)
     parser.add_argument("--log-path", default="logs/full_case_vectorization.jsonl")
+    parser.add_argument(
+        "--confirm", default="",
+        help=f"破坏性本机重建确认令牌：{REBUILD_CONFIRM_TOKEN}",
+    )
     args = parser.parse_args(argv)
     if args.page_size < 1 or args.embedding_batch_limit < 1:
         parser.error("批次大小必须大于 0")
+    if args.confirm != REBUILD_CONFIRM_TOKEN:
+        parser.error(f"必须显式传入 --confirm {REBUILD_CONFIRM_TOKEN}")
     try:
         payload = run(args)
         print(json.dumps(payload, ensure_ascii=False, default=str))

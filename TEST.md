@@ -328,6 +328,7 @@ python scripts\build_hnsw_index.py --plan --m 16 --ef-construction 64
 - 预期：无 valid/ready HNSW 时不得对大表隐式顺序扫描。实际：返回 `ann_unavailable`，且不会调用 query embedding；专项测试通过。
 - 预期：查询完成即推送进度，人工补查只消费一次，取消成为真正终态。实际：专项测试通过。
 - 预期：API 仅暴露新版 HNSW 与流式接口。实际：OpenAPI 共 139 条路径，必需路径全部存在，旧索引路径为 0。
+- 预期：旧检查点不能跳过新版分块，写入型脚本不能无确认运行。实际：全量脚本使用 `a2aj_case_legal_context_v2` 独立检查点并要求 `REBUILD_LOCAL_CONTEXT_V2`；空闲 worker 的非 dry-run 要求独立确认令牌。
 - 预期：隔离样本 Recall@10 不低于 0.90，查询计划使用 HNSW 且没有顺序扫描。实际：三个查询 Recall@10 均为 1.00；平均精确检索 21.611ms，平均 HNSW 6.318ms，延迟降低 70.8%，约 3.42 倍加速；全部使用 HNSW 且无顺序扫描。
 
 ### 首次失败与修正

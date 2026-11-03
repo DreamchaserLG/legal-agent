@@ -53,6 +53,9 @@ from app.service.rag_service import (
 from app.service.vector_store_service import rebuild_chunk_embeddings
 
 
+WORKER_CONFIRM_TOKEN = "RUN_LOCAL_CONTEXT_V2_WORKER"
+
+
 def _log(path: Path, event: str, **payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {"timestamp": datetime.now(timezone.utc).isoformat(), "event": event, **payload}
@@ -451,10 +454,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-actions", type=int, default=0, help="0 表示持续运行。")
     parser.add_argument("--once", action="store_true", help="只检查并尝试执行一个动作。")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--confirm", default="",
+        help=f"实际写入本机数据库时必须传入：{WORKER_CONFIRM_TOKEN}",
+    )
     parser.add_argument("--log-path", type=Path, default=Path("logs/idle_vectorization.jsonl"))
     args = parser.parse_args(argv)
     if args.batch_limit < 1 or args.cpu_cores < 1 or args.poll_seconds < 1 or args.min_idle_seconds < 0:
         parser.error("批次、轮询间隔和空闲时间必须为有效正数。")
+    if not args.dry_run and args.confirm != WORKER_CONFIRM_TOKEN:
+        parser.error(f"非 dry-run 必须显式传入 --confirm {WORKER_CONFIRM_TOKEN}")
     try:
         ensure_rag_tables()
         return run(args)
