@@ -58,6 +58,13 @@
                 <span class="task-status" id="analysis-stream-status">准备中</span>
             </div>
             <p class="muted" id="analysis-stream-summary">页面会逐步展示事实整理、争点拆分、法规检索、案例检索、缺口评估和质量检查。</p>
+            <div class="analysis-stream-progress" aria-label="分析进度">
+                <div class="analysis-stream-progress-bar" id="analysis-stream-progress-bar" style="width:0%"></div>
+            </div>
+            <div class="analysis-stream-state-grid">
+                <p><strong>当前阶段</strong><span id="analysis-stream-current-phase">等待开始</span></p>
+                <p><strong>下一动作</strong><span id="analysis-stream-next-action">拆分法律争点</span></p>
+            </div>
             <ol class="analysis-stream-timeline" id="analysis-stream-timeline"></ol>
             <div class="analysis-stream-metrics" id="analysis-stream-metrics"></div>
             <div class="analysis-stream-controls" id="analysis-stream-controls" hidden>
@@ -338,9 +345,15 @@
     const status = document.getElementById("analysis-stream-status");
     const summary = document.getElementById("analysis-stream-summary");
     const metrics = document.getElementById("analysis-stream-metrics");
+    const progressBar = document.getElementById("analysis-stream-progress-bar");
+    const currentPhase = document.getElementById("analysis-stream-current-phase");
+    const nextAction = document.getElementById("analysis-stream-next-action");
     const controls = document.getElementById("analysis-stream-controls");
     const refinement = document.getElementById("analysis-refinement-query");
     let activeRun = null;
+    let activeSource = null;
+    let submitting = false;
+    const seenEvents = new Set();
     if (!form || !shell || !window.EventSource || !window.fetch) return;
 
     const labels = {
@@ -348,19 +361,40 @@
         case_structured: "整理事实与争点", baseline_retrieval_started: "基础法规与案例检索",
         baseline_retrieval_completed: "基础检索完成", evidence_packet_built: "建立证据资料包",
         research_plan: "制定多轮研究计划", research_round_started: "并行检索",
+        research_query_started: "查询开始", research_query_completed: "查询完成",
+        research_query_failed: "查询失败", research_completed: "多轮检索完成",
+        research_cancelled: "多轮检索已终止",
         research_round_completed: "评估本轮证据缺口", quality_gate_completed: "执行质量门",
-        analysis_completed: "生成结构化分析", run_completed: "全部完成", run_failed: "任务失败"
+        analysis_completed: "生成结构化分析", run_completed: "全部完成", run_failed: "任务失败",
+        run_cancelled: "任务已终止"
         , control_pause: "人工暂停", control_resume: "人工继续", control_cancel: "人工终止",
         control_refine: "人工补充查询", research_paused: "等待人工调整"
     };
 
     function addEvent(event) {
+        const eventKey = `${activeRun?.run_id || "run"}:${event.seq || 0}`;
+        if (seenEvents.has(eventKey)) return;
+        seenEvents.add(eventKey);
         const li = document.createElement("li");
         li.className = "analysis-stream-step";
         const when = new Date((event.timestamp || Date.now() / 1000) * 1000).toLocaleTimeString();
-        li.innerHTML = `<span class="analysis-stream-dot"></span><div><strong>${labels[event.event_type] || event.event_type}</strong><p></p><small>${when}</small></div>`;
-        li.querySelector("p").textContent = event.message || "";
+        const dot = document.createElement("span");
+        dot.className = "analysis-stream-dot";
+        const body = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = labels[event.event_type] || String(event.event_type || "研究步骤");
+        const message = document.createElement("p");
+        message.textContent = event.message || "";
+        const timestamp = document.createElement("small");
+        timestamp.textContent = when;
+        body.append(title, message, timestamp);
+        li.append(dot, body);
         const payload = event.payload || {};
+        const progress = Math.max(0, Math.min(100, Number(event.progress ?? payload.progress ?? 0)));
+        progressBar.style.width = `${progress}%`;
+        progressBar.parentElement.setAttribute("aria-valuenow", String(progress));
+        currentPhase.textContent = String(event.current_phase || payload.current_phase || "进行中");
+        nextAction.textContent = String(event.next_action || payload.next_action || "继续分析");
         const queries = Array.isArray(payload.queries) ? payload.queries : [];
         if (queries.length) {
             const details = document.createElement("details");
@@ -374,31 +408,35 @@
                 list.appendChild(row);
             });
             details.append(heading, list);
-            li.querySelector("div").appendChild(details);
+            body.appendChild(details);
         }
         if (Array.isArray(payload.unresolved_gaps) && payload.unresolved_gaps.length) {
             const gap = document.createElement("p");
             gap.className = "analysis-stream-gap";
             gap.textContent = `仍需解决：${payload.unresolved_gaps.join("；")}`;
-            li.querySelector("div").appendChild(gap);
+            body.appendChild(gap);
         }
         if (Array.isArray(payload.next_queries) && payload.next_queries.length) {
             const next = document.createElement("p");
             next.className = "analysis-stream-next";
             next.textContent = `下一步：${payload.next_queries.join("；")}`;
-            li.querySelector("div").appendChild(next);
+            body.appendChild(next);
         }
         timeline.appendChild(li);
         li.scrollIntoView({behavior: "smooth", block: "nearest"});
         if (payload.new_evidence_count !== undefined) {
             metrics.textContent = `新增证据 ${payload.new_evidence_count} · 累计 ${payload.total_evidence_count || 0} · 未解决问题 ${payload.unresolved_gap_count || 0}`;
         }
-        status.textContent = event.event_type === "run_failed" ? "失败" : event.event_type === "run_completed" ? "完成" : "进行中";
+        status.textContent = event.event_type === "run_failed" ? "失败" : event.event_type === "run_completed" ? "完成" : event.event_type === "run_cancelled" ? "已终止" : "进行中";
     }
 
     form.addEventListener("submit", async (event) => {
         if (form.querySelector('[name="module"]')?.value !== "canada") return;
         event.preventDefault();
+        if (submitting) return;
+        submitting = true;
+        if (activeSource) activeSource.close();
+        seenEvents.clear();
         const data = new FormData(form);
         shell.hidden = false; timeline.innerHTML = ""; metrics.textContent = "";
         status.textContent = "创建任务"; summary.textContent = "正在创建后台研究任务……";
@@ -415,11 +453,11 @@
             const run = await response.json();
             activeRun = run; controls.hidden = false;
             summary.textContent = "分析在后台运行；你可以实时查看每一步，不需要等待空白页面。";
-            const source = new EventSource(run.events_url);
-            source.addEventListener("progress", async (message) => {
+            activeSource = new EventSource(run.events_url);
+            activeSource.addEventListener("progress", async (message) => {
                 const item = JSON.parse(message.data); addEvent(item);
                 if (item.event_type === "run_completed") {
-                    source.close();
+                    activeSource.close();
                     controls.hidden = true;
                     // Finalize the completed result into the normal history
                     // store before navigation, so the GET page renders it
@@ -433,10 +471,13 @@
                     const target = new URL("/analysis", window.location.origin);
                     for (const [key, value] of Object.entries(payload)) target.searchParams.set(key, String(value));
                     setTimeout(() => window.location.assign(target.toString()), 700);
-                } else if (item.event_type === "run_failed") { source.close(); controls.hidden = true; }
+                } else if (["run_failed", "run_cancelled"].includes(item.event_type)) {
+                    activeSource.close(); controls.hidden = true; submitting = false;
+                }
             });
-            source.onerror = () => { status.textContent = "连接重试中"; };
+            activeSource.onerror = () => { status.textContent = "连接重试中"; };
         } catch (error) {
+            submitting = false;
             status.textContent = "失败"; summary.textContent = error.message || String(error);
         }
     });

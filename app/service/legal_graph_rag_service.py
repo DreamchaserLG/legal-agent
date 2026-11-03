@@ -16,7 +16,7 @@ from app.service.legal_entity_extraction_service import extract_legal_entities
 from app.service.rag_service import ensure_rag_tables
 
 
-GRAPH_SCHEMA_VERSION = "legal-graph-rag-1.0"
+GRAPH_SCHEMA_VERSION = "legal-graph-rag-2.0"
 _LEGAL_GRAPH_TABLES_READY = False
 _ENTITY_TYPES = {
     "Case", "Court", "Statute", "Regulation", "JudicialInterpretation", "Section", "LegalVersion",
@@ -28,6 +28,7 @@ _RELATION_TYPES = {
     "FOLLOWS", "OVERRULES", "AMENDS", "REPEALS", "SUPERSEDES", "HAS_VERSION",
     "HAS_SECTION", "HAS_ELEMENT", "HAS_SENTENCING_FACTOR", "AGGRAVATES", "MITIGATES",
     "SATISFIES", "DISPUTES", "SUPPORTS", "CONTRADICTS", "RELATED_ISSUE", "DECIDED_BY",
+    "ALIASES",
 }
 _LEGAL_CONCEPT_HINTS = (
     (r"租客|承租|房东|出租|\b(?:tenant|landlord|lease|tenancy)\b", "residential tenancy"),
@@ -468,6 +469,56 @@ def _seed_document_rows(source_filter: str, limit: int | None) -> dict[str, int]
             entities_written.add(entity_id)
             _link_chunk(conn, int(row["id"]), entity_id, "document", 1.0)
 
+            extracted = extract_legal_entities(
+                repair_text(row.get("text_content")),
+                jurisdiction=repair_text(row.get("jurisdiction")) or "Canada",
+            )
+            for mention in extracted.get("entities") or []:
+                mention_type = repair_text(mention.get("entity_type"))
+                mention_name = repair_text(mention.get("canonical_name"))
+                normalized_mention = _normalize_name(mention_name)
+                if mention_type not in _ENTITY_TYPES or not normalized_mention:
+                    continue
+                mention_id = _upsert_entity(
+                    conn,
+                    entity_type=mention_type,
+                    canonical_key=f"{mention_type.lower()}:{normalized_mention}",
+                    canonical_name=mention_name,
+                    jurisdiction=repair_text(row.get("jurisdiction")),
+                    aliases=[mention_name, repair_text(mention.get("source_span"))],
+                    metadata={
+                        "origin": "chunk_entity_extraction",
+                        "source_span": repair_text(mention.get("source_span")),
+                        "mention_metadata": mention.get("metadata") or {},
+                    },
+                    confidence=float(mention.get("confidence") or 0.0),
+                    source_kind="extracted_entity",
+                )
+                entities_written.add(mention_id)
+                _link_chunk(
+                    conn, int(row["id"]), mention_id, "extracted_mention",
+                    float(mention.get("confidence") or 0.0),
+                )
+                relation_type = {
+                    "Case": "CITES",
+                    "Court": "DECIDED_BY",
+                    "LegalIssue": "RELATED_ISSUE",
+                    "SentencingFactor": "HAS_SENTENCING_FACTOR",
+                }.get(mention_type, "MENTIONS")
+                edge_ids.add(
+                    _upsert_edge(
+                        conn,
+                        source_entity_id=entity_id,
+                        target_entity_id=mention_id,
+                        relation_type=relation_type,
+                        source_chunk_id=int(row["id"]),
+                        source_ref=canonical_key,
+                        evidence_excerpt=repair_text(mention.get("source_span"))[:600],
+                        extraction_method="deterministic_canadian_legal_v2",
+                        confidence=float(mention.get("confidence") or 0.0),
+                    )
+                )
+
             for keyword in _keyword_values(metadata):
                 normalized = _normalize_name(keyword)
                 if not normalized or normalized in _GENERIC_TERMS:
@@ -777,10 +828,16 @@ def _traverse(entries: list[dict[str, Any]], max_hops: int, min_confidence: floa
                 existing = paths.get(neighbor_id)
                 if existing is not None and float(existing.get("score") or 0.0) >= score:
                     continue
+                traversed_edge = dict(edge)
+                traversed_edge.update({
+                    "traversal_direction": "forward" if current_id == source_id else "reverse",
+                    "traversed_from_entity_id": current_id,
+                    "traversed_to_entity_id": neighbor_id,
+                })
                 paths[neighbor_id] = {
                     "entry_id": current_path["entry_id"],
                     "node_ids": list(current_path["node_ids"]) + [neighbor_id],
-                    "edges": list(current_path["edges"]) + [dict(edge)],
+                    "edges": list(current_path["edges"]) + [traversed_edge],
                     "score": round(score, 6),
                     "hops": hop,
                 }
@@ -837,6 +894,9 @@ def _path_payload(path: dict[str, Any], entities: dict[int, dict[str, Any]]) -> 
                 "confidence": round(float(edge.get("confidence") or 0.0), 4),
                 "source_ref": repair_text(edge.get("source_ref")),
                 "source_chunk_id": edge.get("source_chunk_id"),
+                "direction": repair_text(edge.get("traversal_direction")),
+                "from_entity_id": edge.get("traversed_from_entity_id"),
+                "to_entity_id": edge.get("traversed_to_entity_id"),
             }
             for edge in path.get("edges") or []
         ],
@@ -962,7 +1022,7 @@ def search_legal_graph(
         "paths": len(paths),
         "max_hops": max_hops,
         "min_edge_confidence": min_confidence,
-        "strategy": "typed_legal_graph_1_to_2_hops",
+        "strategy": "typed_evidence_graph_1_to_3_hops",
     }
 
 

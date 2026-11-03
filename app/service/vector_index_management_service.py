@@ -1,99 +1,159 @@
 from __future__ import annotations
 
-"""Explicit ANN index management.
-
-Nothing in this module builds an index during application startup.  A caller
-must inspect the plan and pass the confirmation token, which keeps local
-experiments separate from corpus/context migrations.
-"""
-
-import math
-from time import perf_counter
+import json
+import re
+from typing import Any
 
 from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import engine, is_sqlite
-from app.service.common_service import repair_text
-from app.service.vector_store_service import embedding_metadata, get_vector_status
+from app.service.embedding_service import embedding_metadata
 
 
-IVFFLAT_CONFIRM_TOKEN = "BUILD_LOCAL_IVFFLAT"
+HNSW_CONFIRM_TOKEN = "BUILD_LOCAL_HNSW"
+HNSW_INDEX_NAME = "idx_rag_chunk_embeddings_active_hnsw"
 
 
-def _ident(value: str) -> str:
-    clean = repair_text(value)
-    if not clean.replace("_", "").isalnum() or not clean[0].isalpha():
-        raise ValueError("Unsafe SQL identifier")
-    return clean
+def _literal(value: str) -> str:
+    return str(value or "").replace("'", "''")
 
 
-def get_ivfflat_build_plan(*, lists: int | None = None, half_precision: bool = False) -> dict:
-    status = get_vector_status()
-    total = int(status.get("total_embeddings") or 0)
-    configured_lists = max(1, min(int(lists or settings.rag_ivfflat_lists), 32768))
-    recommended_lists = max(1, int(math.sqrt(total))) if total else configured_lists
+def get_hnsw_build_plan(*, m: int | None = None, ef_construction: int | None = None) -> dict[str, Any]:
     meta = embedding_metadata()
-    dimension = int(meta.get("dimension") or settings.embedding_dimension)
-    index_name = _ident(
-        f"idx_rag_embeddings_{'half_' if half_precision else ''}ivfflat_{configured_lists}"
-    )
-    provider = repair_text(meta.get("provider")).replace("'", "''")
-    model = repair_text(meta.get("model")).replace("'", "''")
-    expression = (
-        f"((embedding_vector::halfvec({dimension})) halfvec_cosine_ops)"
-        if half_precision
-        else "(embedding_vector vector_cosine_ops)"
-    )
+    configured_m = max(2, min(int(m or settings.rag_hnsw_m), 100))
+    configured_ef = max(4, min(int(ef_construction or settings.rag_hnsw_ef_construction), 1000))
+    provider = _literal(meta["provider"])
+    model = _literal(meta["model"])
     sql = (
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} "
-        f"ON rag_chunk_embeddings USING ivfflat {expression} "
-        f"WITH (lists = {configured_lists}) "
+        f"CREATE INDEX CONCURRENTLY {HNSW_INDEX_NAME} "
+        "ON rag_chunk_embeddings USING hnsw (embedding_vector vector_cosine_ops) "
+        f"WITH (m = {configured_m}, ef_construction = {configured_ef}) "
         "WHERE embedding_vector IS NOT NULL "
         f"AND embedding_provider = '{provider}' AND embedding_model = '{model}'"
     )
     return {
-        "status": "plan_only",
+        "backend": "pgvector_hnsw",
+        "index_name": HNSW_INDEX_NAME,
+        "index_type": "hnsw",
+        "provider": meta["provider"],
+        "model": meta["model"],
+        "dimension": int(meta["dimension"]),
+        "m": configured_m,
+        "ef_construction": configured_ef,
+        "ef_search": int(settings.rag_hnsw_ef_search),
+        "sql": sql,
         "will_execute": False,
         "migration_started": False,
-        "index_name": index_name,
-        "index_type": "ivfflat_halfvec" if half_precision else "ivfflat_float32",
-        "rows": total,
-        "dimension": dimension,
-        "lists": configured_lists,
-        "probes": int(settings.rag_ivfflat_probes),
-        "recommended_lists_sqrt_rows": recommended_lists,
-        "sql": sql,
-        "confirmation_token": IVFFLAT_CONFIRM_TOKEN,
-        "warnings": [
-            "Build on a local evaluation copy first.",
-            "CREATE INDEX is independent of contextual-prefix migration.",
-            "Measure exact-search recall before activating this index.",
-        ],
+        "confirmation_token": HNSW_CONFIRM_TOKEN,
     }
 
 
-def build_local_ivfflat_index(
-    *, confirmation_token: str, lists: int | None = None, half_precision: bool = False
-) -> dict:
+def get_hnsw_index_state() -> dict[str, Any]:
     if is_sqlite():
-        raise RuntimeError("IVFFlat requires PostgreSQL with pgvector")
-    if confirmation_token != IVFFLAT_CONFIRM_TOKEN:
-        raise PermissionError("Explicit IVFFlat confirmation token required")
-    plan = get_ivfflat_build_plan(lists=lists, half_precision=half_precision)
-    started = perf_counter()
+        return {"available": False, "reason": "pgvector HNSW requires PostgreSQL"}
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT c.relname AS index_name, i.indisvalid, i.indisready,
+                       pg_relation_size(c.oid) AS bytes, pg_get_indexdef(c.oid) AS definition
+                FROM pg_class c
+                JOIN pg_index i ON i.indexrelid = c.oid
+                WHERE c.oid = to_regclass(:index_name)
+                """
+            ),
+            {"index_name": HNSW_INDEX_NAME},
+        ).mappings().first()
+    if not row:
+        return {"available": False, "index_name": HNSW_INDEX_NAME, "valid": False, "ready": False}
+    state = dict(row)
+    state.update({
+        "available": True,
+        "valid": bool(state.pop("indisvalid")),
+        "ready": bool(state.pop("indisready")),
+    })
+    return state
+
+
+def build_local_hnsw_index(
+    *,
+    confirmation_token: str,
+    m: int | None = None,
+    ef_construction: int | None = None,
+    maintenance_work_mem: str = "1800MB",
+) -> dict[str, Any]:
+    if is_sqlite():
+        raise RuntimeError("pgvector HNSW requires PostgreSQL")
+    if confirmation_token != HNSW_CONFIRM_TOKEN:
+        raise PermissionError("Explicit HNSW confirmation token required")
+    if not re.fullmatch(r"\d+(?:MB|GB)", maintenance_work_mem.upper()):
+        raise ValueError("maintenance_work_mem must use an MB or GB value")
+    existing = get_hnsw_index_state()
+    if existing.get("valid") and existing.get("ready"):
+        return {"status": "already_ready", "index": existing, "migration_started": False}
+    plan = get_hnsw_build_plan(m=m, ef_construction=ef_construction)
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         conn.execute(text("SET statement_timeout = 0"))
+        conn.execute(text(f"SET maintenance_work_mem = '{maintenance_work_mem.upper()}'"))
+        conn.execute(text("SET max_parallel_maintenance_workers = 4"))
         conn.execute(text(plan["sql"]))
-        index_def = conn.execute(
-            text("SELECT indexdef FROM pg_indexes WHERE indexname=:name"),
-            {"name": plan["index_name"]},
-        ).scalar()
-    return {
-        **plan,
-        "status": "completed",
-        "will_execute": True,
-        "index_definition": repair_text(index_def),
-        "duration_seconds": round(perf_counter() - started, 3),
-    }
+    state = get_hnsw_index_state()
+    if not state.get("valid") or not state.get("ready"):
+        raise RuntimeError(f"HNSW index is not valid and ready: {state}")
+    return {"status": "built", "index": state, "migration_started": False}
 
+
+def _plan_nodes(value: Any) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        if "Node Type" in value:
+            nodes.append(value)
+        for child in value.values():
+            nodes.extend(_plan_nodes(child))
+    elif isinstance(value, list):
+        for child in value:
+            nodes.extend(_plan_nodes(child))
+    return nodes
+
+
+def verify_hnsw_query_plan(*, limit: int = 10) -> dict[str, Any]:
+    state = get_hnsw_index_state()
+    if not state.get("valid") or not state.get("ready"):
+        return {"verified": False, "reason": "HNSW index is not valid and ready", "index": state}
+    meta = embedding_metadata()
+    # A unit vector avoids undefined cosine distance for an all-zero probe
+    # while keeping this planner-only check independent of the embedder.
+    probe = ["0"] * int(meta["dimension"])
+    probe[0] = "1"
+    query_vector = "[" + ",".join(probe) + "]"
+    sql = """
+        EXPLAIN (FORMAT JSON)
+        SELECT chunk_id
+        FROM rag_chunk_embeddings
+        WHERE embedding_vector IS NOT NULL
+          AND embedding_provider = :provider
+          AND embedding_model = :model
+        ORDER BY embedding_vector <=> CAST(:query_vector AS vector)
+        LIMIT :limit
+    """
+    with engine.begin() as conn:
+        conn.execute(text(f"SET LOCAL hnsw.ef_search = {int(settings.rag_hnsw_ef_search)}"))
+        raw = conn.execute(
+            text(sql),
+            {
+                "provider": meta["provider"], "model": meta["model"],
+                "query_vector": query_vector, "limit": max(1, min(int(limit), 100)),
+            },
+        ).scalar()
+    plan = raw if isinstance(raw, list) else json.loads(raw)
+    nodes = _plan_nodes(plan)
+    used_indexes = [str(node.get("Index Name")) for node in nodes if node.get("Index Name")]
+    sequential_scan = any(node.get("Node Type") == "Seq Scan" for node in nodes)
+    return {
+        "verified": HNSW_INDEX_NAME in used_indexes and not sequential_scan,
+        "used_indexes": used_indexes,
+        "sequential_scan": sequential_scan,
+        "index": state,
+        "plan": plan,
+    }

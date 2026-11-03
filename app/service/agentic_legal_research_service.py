@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -72,9 +72,7 @@ def _normalize_evidence(item: dict[str, Any], query: str, round_no: int) -> Rese
 def _initial_queries(plan: Any, query: str, limit: int) -> list[str]:
     issue_queries = [repair_text(f"{issue.issue} {issue.legal_domain}") for issue in plan.dispute_issues]
     queries = issue_queries + [repair_text(plan.rule_query), repair_text(plan.case_query)]
-    if not queries:
-        queries = [query]
-    return _unique(queries, limit)
+    return _unique(queries or [query], limit)
 
 
 def _coverage(plan: Any, evidence: list[ResearchEvidence]) -> tuple[list[dict[str, Any]], list[str]]:
@@ -95,13 +93,10 @@ def _coverage(plan: Any, evidence: list[ResearchEvidence]) -> tuple[list[dict[st
             "n12", "tenancy", "tenant", "landlord", "maintenance", "repair", "mould",
             "habitability", "eviction", "retaliatory", "bad", "faith", "residential",
         }
-        matches = []
+        matches: list[ResearchEvidence] = []
         for item in evidence:
             haystack = f"{item.title} {item.citation} {item.excerpt}".casefold()
             hits = {term for term in meaningful_terms if term in haystack}
-            # Do not mark an issue covered merely because a result says Ontario
-            # or contains generic procedural vocabulary. One strong domain term
-            # or two independent issue terms are required.
             if len(hits) >= 2 or bool(hits & strong_terms):
                 matches.append(item)
         laws = [item for item in matches if item.source_kind == "law"]
@@ -111,15 +106,13 @@ def _coverage(plan: Any, evidence: list[ResearchEvidence]) -> tuple[list[dict[st
             gaps.append(f"{issue.issue}：缺少可直接绑定的正式法规或条文")
         if not cases:
             gaps.append(f"{issue.issue}：缺少可比较的裁判案例")
-        rows.append(
-            {
-                "issue": issue.issue,
-                "legal_domain": issue.legal_domain,
-                "status": status,
-                "law_evidence_ids": [item.evidence_id for item in laws[:5]],
-                "case_evidence_ids": [item.evidence_id for item in cases[:5]],
-            }
-        )
+        rows.append({
+            "issue": issue.issue,
+            "legal_domain": issue.legal_domain,
+            "status": status,
+            "law_evidence_ids": [item.evidence_id for item in laws[:5]],
+            "case_evidence_ids": [item.evidence_id for item in cases[:5]],
+        })
     if not plan.dispute_issues and not evidence:
         gaps.append("尚未识别出可检索争点或支持材料")
     return rows, _unique(gaps, 20)
@@ -138,6 +131,23 @@ def _follow_up_queries(plan: Any, coverage: list[dict[str, Any]], gaps: list[str
     for gap in gaps:
         queries.append(f"{gap} 适用条件 例外 关联规则")
     return _unique(queries, limit)
+
+
+def _event_state(
+    progress: float, current_phase: str, next_action: str, **payload: Any
+) -> dict[str, Any]:
+    return {
+        **payload,
+        "progress": max(0.0, min(float(progress), 100.0)),
+        "current_phase": current_phase,
+        "next_action": next_action,
+    }
+
+
+def _take_control(control_callback: Any | None, pending: list[str]) -> dict[str, Any]:
+    control = control_callback() or {} if control_callback else {}
+    pending.extend(repair_text(value) for value in (control.get("additional_queries") or []))
+    return control
 
 
 def run_agentic_legal_research(
@@ -162,10 +172,13 @@ def run_agentic_legal_research(
         return {
             "status": "unsupported_jurisdiction",
             "jurisdiction": repair_text(module),
-            "rounds": [], "evidence": [], "coverage": [],
+            "rounds": [],
+            "evidence": [],
+            "coverage": [],
             "unresolved_gaps": ["Agentic legal research is restricted to the installed Canadian legal corpus."],
             "review_required": True,
         }
+
     max_rounds = max(1, min(int(max_rounds or settings.legal_research_max_rounds), 5))
     per_round = max(1, min(int(max_queries_per_round or settings.legal_research_queries_per_round), 10))
     evidence_limit = max(5, min(int(max_evidence or settings.legal_research_max_evidence), 100))
@@ -179,50 +192,71 @@ def run_agentic_legal_research(
         research_filters["jurisdiction_hint"] = "Ontario"
     queries = _initial_queries(plan, clean_query, per_round)
     if event_callback:
-        event_callback("research_plan", "已完成争点拆分并生成首轮法规与案例查询。", {
-            "issue_count": len(plan.dispute_issues), "queries": queries,
-        })
+        event_callback("research_plan", "已完成争点拆分并生成首轮法规与案例查询。", _event_state(
+            8, "planning", "start_parallel_retrieval",
+            issue_count=len(plan.dispute_issues), queries=queries,
+        ))
+
     evidence_by_id: dict[str, ResearchEvidence] = {}
     rounds: list[dict[str, Any]] = []
     coverage: list[dict[str, Any]] = []
     gaps: list[str] = []
     stop_reason = "max_rounds_reached"
-    control_revision = -1
+    pending_refinements: list[str] = []
 
     for round_no in range(1, max_rounds + 1):
         if control_callback:
-            control = control_callback() or {}
+            control = _take_control(control_callback, pending_refinements)
             if control.get("cancelled"):
                 stop_reason = "cancelled_by_user"
                 break
             pause_announced = False
             while control.get("paused") and time.monotonic() - started < timeout:
                 if event_callback and not pause_announced:
-                    event_callback("research_paused", "研究已暂停，等待人工继续或调整。", {})
+                    event_callback("research_paused", "研究已暂停，等待人工继续或调整。", _event_state(
+                        8 + ((round_no - 1) / max_rounds) * 82,
+                        "paused", "resume_or_refine",
+                        round_no=round_no,
+                    ))
                     pause_announced = True
                 time.sleep(0.25)
-                control = control_callback() or {}
+                control = _take_control(control_callback, pending_refinements)
                 if control.get("cancelled"):
                     stop_reason = "cancelled_by_user"
                     break
             if stop_reason == "cancelled_by_user":
                 break
-            revision = int(control.get("revision") or 0)
-            if revision != control_revision:
-                additions = [repair_text(value) for value in (control.get("additional_queries") or [])]
-                queries = _unique(additions + queries, per_round)
-                control_revision = revision
+            if pending_refinements:
+                queries = _unique(pending_refinements + queries, per_round)
+                pending_refinements.clear()
+
         if time.monotonic() - started >= timeout:
             stop_reason = "timeout"
             break
+
         round_started = time.monotonic()
         executed: list[dict[str, Any]] = []
         new_count = 0
         workers = min(4, len(queries))
+        round_progress = 10 + ((round_no - 1) / max_rounds) * 80
+        round_progress_end = 10 + (round_no / max_rounds) * 80
+        if event_callback:
+            event_callback("research_round_started", f"开始第 {round_no} 轮并行检索。", _event_state(
+                round_progress, "parallel_retrieval", "wait_for_query_results",
+                round_no=round_no, queries=queries,
+            ))
+
         pool = ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="legal-research")
         try:
-            futures = {
-                pool.submit(
+            futures = {}
+            for query_index, search_query in enumerate(queries, start=1):
+                if event_callback:
+                    event_callback("research_query_started", f"开始并行查询：{search_query}", _event_state(
+                        round_progress, "parallel_retrieval", "evaluate_query_result",
+                        round_no=round_no, query=search_query,
+                        query_index=query_index, query_count=len(queries),
+                    ))
+                future = pool.submit(
                     hybrid_search,
                     search_query,
                     keywords=keywords or [],
@@ -231,43 +265,82 @@ def run_agentic_legal_research(
                     limit=min(12, evidence_limit),
                     filters=research_filters,
                     include_vector=round_no <= max(0, int(settings.legal_research_vector_rounds)),
-                ): search_query
-                for search_query in queries
-            }
-            if event_callback:
-                event_callback("research_round_started", f"开始第 {round_no} 轮并行检索。", {
-                    "round_no": round_no, "queries": queries,
-                })
+                )
+                futures[future] = search_query
+
             remaining = max(0.1, timeout - (time.monotonic() - started))
-            done, pending = wait(futures, timeout=remaining)
-            for future in done:
-                search_query = futures[future]
-                try:
-                    result = future.result()
-                    items = result.get("items") or []
-                    executed.append({"query": search_query, "status": result.get("status", "ok"), "hits": len(items)})
-                    for item in items:
-                        normalized = _normalize_evidence(item, search_query, round_no)
-                        if not normalized:
-                            continue
-                        current = evidence_by_id.get(normalized.evidence_id)
-                        if current is None:
-                            evidence_by_id[normalized.evidence_id] = normalized
-                            new_count += 1
-                        elif normalized.score > current.score:
-                            evidence_by_id[normalized.evidence_id] = normalized
-                except Exception as exc:
-                    executed.append({"query": search_query, "status": "error", "error": repair_text(str(exc))[:240], "hits": 0})
-            for future in pending:
+            done = set()
+            completed_count = 0
+            try:
+                # Yield each query as soon as it completes. This makes the SSE
+                # timeline reflect real retrieval progress instead of waiting
+                # for the slowest query in the whole round.
+                for future in as_completed(futures, timeout=remaining):
+                    done.add(future)
+                    search_query = futures[future]
+                    try:
+                        result = future.result()
+                        items = result.get("items") or []
+                        query_status = repair_text(result.get("status")) or "ok"
+                        executed.append({"query": search_query, "status": query_status, "hits": len(items)})
+                        completed_count += 1
+                        failed = query_status.lower() in {"error", "failed", "timeout"}
+                        if event_callback:
+                            event_callback(
+                                "research_query_failed" if failed else "research_query_completed",
+                                f"查询{'失败' if failed else '完成'}：{search_query}",
+                                _event_state(
+                                    round_progress + (completed_count / max(1, len(queries))) * (
+                                        round_progress_end - round_progress
+                                    ) * 0.8,
+                                    "parallel_retrieval", "evaluate_round_coverage",
+                                    round_no=round_no, query=search_query,
+                                    status=query_status, hits=len(items),
+                                ),
+                            )
+                        for item in items:
+                            normalized = _normalize_evidence(item, search_query, round_no)
+                            if not normalized:
+                                continue
+                            current = evidence_by_id.get(normalized.evidence_id)
+                            if current is None:
+                                evidence_by_id[normalized.evidence_id] = normalized
+                                new_count += 1
+                            elif normalized.score > current.score:
+                                evidence_by_id[normalized.evidence_id] = normalized
+                    except Exception as exc:
+                        clean_error = repair_text(str(exc))[:240]
+                        executed.append({"query": search_query, "status": "error", "error": clean_error, "hits": 0})
+                        completed_count += 1
+                        if event_callback:
+                            event_callback("research_query_failed", f"查询失败：{search_query}", _event_state(
+                                round_progress + (completed_count / max(1, len(queries))) * (
+                                    round_progress_end - round_progress
+                                ) * 0.8,
+                                "parallel_retrieval", "evaluate_round_coverage",
+                                round_no=round_no, query=search_query,
+                                status="error", error=clean_error, hits=0,
+                            ))
+            except FuturesTimeoutError:
+                pass
+            unfinished = set(futures) - done
+            for future in unfinished:
                 future.cancel()
-                executed.append({"query": futures[future], "status": "timeout", "hits": 0})
+                search_query = futures[future]
+                executed.append({"query": search_query, "status": "timeout", "hits": 0})
+                completed_count += 1
+                if event_callback:
+                    event_callback("research_query_failed", f"查询超时：{search_query}", _event_state(
+                        round_progress + (completed_count / max(1, len(queries))) * (
+                            round_progress_end - round_progress
+                        ) * 0.8,
+                        "parallel_retrieval", "evaluate_round_coverage",
+                        round_no=round_no, query=search_query, status="timeout", hits=0,
+                    ))
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
         all_ranked = sorted(evidence_by_id.values(), key=lambda item: item.score, reverse=True)
-        # A single global cutoff allowed the much larger case corpus to evict
-        # every statute from the evidence packet. Preserve a balanced authority
-        # set before filling remaining slots by score.
         quota = max(1, evidence_limit // 3)
         selected = (
             [item for item in all_ranked if item.source_kind == "law"][:quota]
@@ -279,20 +352,35 @@ def run_agentic_legal_research(
         evidence_by_id = {item.evidence_id: item for item in ranked}
         coverage, gaps = _coverage(plan, ranked)
         next_queries = _follow_up_queries(plan, coverage, gaps, per_round)
-        rounds.append(
-            {
-                "round_no": round_no,
-                "queries": executed,
-                "new_evidence_count": new_count,
-                "total_evidence_count": len(ranked),
-                "unresolved_gap_count": len(gaps),
-                "unresolved_gaps": gaps[:10],
-                "next_queries": next_queries,
-                "duration_ms": int((time.monotonic() - round_started) * 1000),
-            }
-        )
+        round_result = {
+            "round_no": round_no,
+            "queries": executed,
+            "new_evidence_count": new_count,
+            "total_evidence_count": len(ranked),
+            "unresolved_gap_count": len(gaps),
+            "unresolved_gaps": gaps[:10],
+            "next_queries": next_queries,
+            "duration_ms": int((time.monotonic() - round_started) * 1000),
+        }
+        rounds.append(round_result)
         if event_callback:
-            event_callback("research_round_completed", f"第 {round_no} 轮检索完成，正在评估证据缺口。", rounds[-1])
+            event_callback("research_round_completed", f"第 {round_no} 轮检索完成，正在评估证据缺口。", _event_state(
+                round_progress_end, "coverage_evaluation",
+                "refine_queries" if gaps else "finalize_research",
+                **round_result,
+            ))
+
+        if control_callback:
+            control = _take_control(control_callback, pending_refinements)
+            if control.get("cancelled"):
+                stop_reason = "cancelled_by_user"
+                break
+        # A human refinement has priority over the automatic stop rules. It is
+        # consumed exactly once and becomes the next round's leading query.
+        if pending_refinements and round_no < max_rounds:
+            queries = _unique(pending_refinements + next_queries, per_round)
+            pending_refinements.clear()
+            continue
         if not gaps:
             stop_reason = "all_issues_covered"
             break
@@ -305,8 +393,21 @@ def run_agentic_legal_research(
         queries = next_queries
 
     evidence = sorted(evidence_by_id.values(), key=lambda item: item.score, reverse=True)
+    final_status = "cancelled" if stop_reason == "cancelled_by_user" else (
+        "ready" if evidence else "insufficient_evidence"
+    )
+    if event_callback:
+        event_callback(
+            "research_cancelled" if final_status == "cancelled" else "research_completed",
+            "研究已按用户请求停止。" if final_status == "cancelled" else "多轮检索已完成，正在生成结构化分析。",
+            _event_state(
+                95, "cancelled" if final_status == "cancelled" else "research_complete",
+                "review_partial_result" if final_status == "cancelled" else "generate_structured_analysis",
+                status=final_status, stop_reason=stop_reason, evidence_count=len(evidence),
+            ),
+        )
     return {
-        "status": "ready" if evidence else "insufficient_evidence",
+        "status": final_status,
         "jurisdiction": "Canada",
         "strategy": "bounded_gap_driven_agentic_hybrid_graph_research",
         "query_plan": plan.model_dump(mode="json"),

@@ -16,7 +16,6 @@ UNVERIFIED_CITATION_MARKER = "[UNVERIFIED LEGAL CITATION BLOCKED]"
 # Requiring either a named instrument or a western reporter pattern avoids
 # treating ordinary expressions such as “第一个问题” as legal citations.
 _LEGAL_CITATION_PATTERNS = (
-    re.compile(r"(?:《[^》]{2,80}》|(?:民法典|民事诉讼法|刑法|刑事诉讼法|行政诉讼法|公司法|劳动合同法))\s*第[一二三四五六七八九十百千万零〇两0-9之\-—]+条(?:之[一二三四五六七八九十0-9]+)?"),
     re.compile(r"\b(?:R\.?S\.?O\.?|R\.?S\.?C\.?|S\.?C\.?|S\.?O\.?)\s*\d{4}[^，。；;\n]{0,45}\b(?:s\.?|ss\.?|r\.?|rr\.?)\s*\d+(?:\.\d+)*(?:\s*[-–]\s*\d+(?:\.\d+)*)?", re.I),
     re.compile(r"\b\d{4}\s+(?:SCC|ONCA|ONSC|FC|FCA)\s+\d+\b", re.I),
 )

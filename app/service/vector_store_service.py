@@ -47,8 +47,7 @@ def _vector_text(vector: list[float]) -> str:
 
 
 def _vector_index_type() -> str:
-    configured = repair_text(getattr(settings, "rag_vector_index_type", "hnsw")).lower()
-    return configured if configured in {"hnsw", "ivfflat"} else "hnsw"
+    return "hnsw"
 
 
 def _hnsw_m() -> int:
@@ -61,14 +60,6 @@ def _hnsw_ef_construction() -> int:
 
 def _hnsw_ef_search() -> int:
     return max(1, min(int(getattr(settings, "rag_hnsw_ef_search", 80) or 80), 1000))
-
-
-def _ivfflat_lists() -> int:
-    return max(1, min(int(getattr(settings, "rag_ivfflat_lists", 2048) or 2048), 32768))
-
-
-def _ivfflat_probes() -> int:
-    return max(1, min(int(getattr(settings, "rag_ivfflat_probes", 48) or 48), _ivfflat_lists()))
 
 
 def _defer_vector_indexes() -> bool:
@@ -244,12 +235,9 @@ def _existing_vector_index_def(conn) -> str:
             FROM pg_indexes
             WHERE schemaname = current_schema()
               AND tablename = 'rag_chunk_embeddings'
-              AND (
-                  indexname = 'idx_rag_chunk_embeddings_vector'
-                  OR LOWER(indexdef) LIKE '% using ivfflat %'
-                  OR LOWER(indexdef) LIKE '% using hnsw %'
-              )
-            ORDER BY CASE WHEN indexname = 'idx_rag_chunk_embeddings_vector' THEN 0 ELSE 1 END,
+              AND indexname IN ('idx_rag_chunk_embeddings_active_hnsw', 'idx_rag_chunk_embeddings_vector')
+              AND LOWER(indexdef) LIKE '% using hnsw %'
+            ORDER BY CASE WHEN indexname = 'idx_rag_chunk_embeddings_active_hnsw' THEN 0 ELSE 1 END,
                      indexname
             LIMIT 1
             """
@@ -280,32 +268,18 @@ def _pgvector_column_available_in_conn(conn) -> bool:
 def _ensure_pgvector_index(conn) -> None:
     if not _pgvector_column_available_in_conn(conn):
         return
-    index_type = _vector_index_type()
     existing = _existing_vector_index_def(conn).lower()
-    if existing and f"using {index_type}" not in existing:
-        conn.execute(text("DROP INDEX IF EXISTS idx_rag_chunk_embeddings_vector"))
-        existing = ""
     # opclass 必须跟随实际列类型，halfvec 列用 vector_cosine_ops 会报错
     column_type, _ = _pgvector_column_type()
     opclass = "halfvec_cosine_ops" if column_type == "halfvec" else "vector_cosine_ops"
-    if index_type == "hnsw":
-        conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_vector "
-                "ON rag_chunk_embeddings USING hnsw "
-                f"(embedding_vector {opclass}) "
-                f"WITH (m = {_hnsw_m()}, ef_construction = {_hnsw_ef_construction()})"
-            )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_vector "
+            "ON rag_chunk_embeddings USING hnsw "
+            f"(embedding_vector {opclass}) "
+            f"WITH (m = {_hnsw_m()}, ef_construction = {_hnsw_ef_construction()})"
         )
-    else:
-        conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_rag_chunk_embeddings_vector "
-                "ON rag_chunk_embeddings USING ivfflat "
-                f"(embedding_vector {opclass}) "
-                f"WITH (lists = {_ivfflat_lists()})"
-            )
-        )
+    )
 
 
 def _active_hnsw_index_name() -> str:
@@ -859,27 +833,25 @@ def get_vector_status() -> dict:
                 """
             )
         ).mappings().all()
-    configured_index_type = _vector_index_type()
-    actual_index_type = "none"
-    lowered_index_def = repair_text(index_def).lower()
-    if "using ivfflat" in lowered_index_def:
-        actual_index_type = "ivfflat"
-    elif "using hnsw" in lowered_index_def:
-        actual_index_type = "hnsw"
+    from app.service.vector_index_management_service import get_hnsw_index_state
+
+    index_state = get_hnsw_index_state()
+    ann_ready = bool(index_state.get("valid") and index_state.get("ready"))
+    actual_index_type = "hnsw" if ann_ready else "none"
     return {
         "enabled": True,
         "pgvector_enabled": _pgvector_column_available(),
-        "index_type": configured_index_type if _pgvector_column_available() else "json_fallback",
-        "configured_index_type": configured_index_type,
+        "index_type": "hnsw" if _pgvector_column_available() else "json_fallback",
+        "configured_index_type": "hnsw",
         "actual_index_type": actual_index_type,
-        "ann_index_ready": actual_index_type == configured_index_type,
+        "ann_index_ready": ann_ready,
         "index_definition": index_def,
+        "index_state": index_state,
         "hnsw": {
             "m": _hnsw_m(),
             "ef_construction": _hnsw_ef_construction(),
             "ef_search": _hnsw_ef_search(),
         },
-        "ivfflat": {"lists": _ivfflat_lists(), "probes": _ivfflat_probes()},
         "quantization": repair_text(getattr(settings, "rag_vector_quantization", "none")) or "none",
         "embedding": embedding_metadata(),
         "total_embeddings": int(total),
@@ -952,6 +924,16 @@ def vector_search(
     clean_query = repair_text(query)
     if not clean_query:
         return {"query": clean_query, "items": [], "total": 0, "status": "empty_query"}
+    if _pgvector_column_available():
+        from app.service.vector_index_management_service import get_hnsw_index_state
+
+        index_state = get_hnsw_index_state()
+        if not index_state.get("valid") or not index_state.get("ready"):
+            return {
+                "query": clean_query, "items": [], "total": 0,
+                "status": "ann_unavailable", "index_type": "hnsw",
+                "reason": "Vector retrieval is disabled until the local HNSW index is valid and ready.",
+            }
     query_vector = create_embedding(clean_query)
     max_items = max(1, min(int(limit or getattr(settings, "rag_vector_candidate_limit", 40)), 100))
     meta = embedding_metadata()
@@ -969,9 +951,7 @@ def vector_search(
 
     if _pgvector_column_available():
         params["query_vector"] = _vector_text(query_vector)
-        # The ORDER BY expression must exactly match the ANN index expression.
-        # Quantized retrieval is evaluated as a separate candidate-generation
-        # backend and must not be silently mixed with a float IVFFlat index.
+        # The ORDER BY expression and partial predicates exactly match the HNSW index.
         sql = f"""
             SELECT
                 rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
@@ -985,21 +965,16 @@ def vector_search(
               AND rce.embedding_model = :embedding_model
               AND rce.embedding_provider = :embedding_provider
               AND rce.embedding_vector IS NOT NULL
+              AND rce.content_hash = rc.content_hash
               {structured_clause}
             ORDER BY rce.embedding_vector <=> CAST(:query_vector AS vector)
             LIMIT :limit
         """
         with engine.connect() as conn:
-            if _vector_index_type() == "hnsw":
-                try:
-                    conn.execute(text(f"SET hnsw.ef_search = {_hnsw_ef_search()}"))
-                except Exception:
-                    pass
-            elif _vector_index_type() == "ivfflat":
-                try:
-                    conn.execute(text(f"SET ivfflat.probes = {_ivfflat_probes()}"))
-                except Exception:
-                    pass
+            try:
+                conn.execute(text(f"SET hnsw.ef_search = {_hnsw_ef_search()}"))
+            except Exception:
+                pass
             rows = [dict(row) for row in conn.execute(text(sql), params).mappings().all()]
         items = [_row_to_item(row, float(row.get("score") or 0)) for row in rows]
     else:
@@ -1014,6 +989,7 @@ def vector_search(
         WHERE {where_clause}
           AND rce.embedding_model = :embedding_model
           AND rce.embedding_provider = :embedding_provider
+          AND rce.content_hash = rc.content_hash
           {structured_clause}
         ORDER BY rc.updated_at DESC
         LIMIT 2000
@@ -1044,8 +1020,6 @@ def vector_search(
         "diagnostic_only": diagnostic_only,
         "pgvector_enabled": _pgvector_column_available(),
         "index_type": _vector_index_type() if _pgvector_column_available() else "json_fallback",
-        "index_options": {
-            "lists": _ivfflat_lists(), "probes": _ivfflat_probes(),
-        } if _vector_index_type() == "ivfflat" else {"ef_search": _hnsw_ef_search()},
+        "index_options": {"ef_search": _hnsw_ef_search()},
         "quantization": repair_text(getattr(settings, "rag_vector_quantization", "none")) or "none",
     }

@@ -133,7 +133,7 @@ from app.service.vector_benchmark_service import (
     prepare_local_vector_sample,
     run_local_vector_benchmark,
 )
-from app.service.vector_index_management_service import get_ivfflat_build_plan
+from app.service.vector_index_management_service import get_hnsw_build_plan, verify_hnsw_query_plan
 from app.service.user_service import (
     authenticate_user,
     build_case_history_payload,
@@ -826,14 +826,15 @@ class VectorBenchmarkPayload(BaseModel):
 class VectorSamplePayload(BaseModel):
     confirmation_token: str = Field(min_length=8, max_length=80)
     sample_size: int = Field(default=50000, ge=1000, le=500000)
-    lists: int | None = Field(default=None, ge=1, le=4096)
+    m: int = Field(default=16, ge=2, le=100)
+    ef_construction: int = Field(default=64, ge=4, le=1000)
 
 
 class VectorSampleBenchmarkPayload(BaseModel):
     queries: list[str] = Field(min_length=1, max_length=100)
     sample_size: int = Field(default=50000, ge=1000, le=500000)
     k: int = Field(default=10, ge=1, le=100)
-    probes: int = Field(default=16, ge=1, le=4096)
+    ef_search: int = Field(default=80, ge=1, le=1000)
 
 
 class ProfilePayload(BaseModel):
@@ -2866,7 +2867,8 @@ def api_rag_prepare_vector_sample(request: Request, payload: VectorSamplePayload
     return prepare_local_vector_sample(
         confirmation_token=payload.confirmation_token,
         sample_size=payload.sample_size,
-        lists=payload.lists,
+        m=payload.m,
+        ef_construction=payload.ef_construction,
     )
 
 
@@ -2874,18 +2876,24 @@ def api_rag_prepare_vector_sample(request: Request, payload: VectorSamplePayload
 def api_rag_benchmark_vector_sample(request: Request, payload: VectorSampleBenchmarkPayload):
     require_admin(request)
     return benchmark_local_vector_sample(
-        payload.queries, sample_size=payload.sample_size, k=payload.k, probes=payload.probes,
+        payload.queries, sample_size=payload.sample_size, k=payload.k, ef_search=payload.ef_search,
     )
 
 
-@router.get("/api/rag/ivfflat-build-plan")
-def api_rag_ivfflat_build_plan(
+@router.get("/api/rag/hnsw-build-plan")
+def api_rag_hnsw_build_plan(
     request: Request,
-    lists: int | None = Query(None, ge=1, le=32768),
-    half_precision: bool = Query(False),
+    m: int | None = Query(None, ge=2, le=100),
+    ef_construction: int | None = Query(None, ge=4, le=1000),
 ):
     require_admin(request)
-    return get_ivfflat_build_plan(lists=lists, half_precision=half_precision)
+    return get_hnsw_build_plan(m=m, ef_construction=ef_construction)
+
+
+@router.get("/api/rag/hnsw-query-plan")
+def api_rag_hnsw_query_plan(request: Request):
+    require_admin(request)
+    return verify_hnsw_query_plan()
 
 
 @router.get("/api/rag/graph-status")
@@ -3062,7 +3070,7 @@ def api_get_analysis_stream_result(request: Request, run_id: str):
         run = get_analysis_stream_run(run_id, user_id=int(user["id"]))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if run.status not in {"completed", "failed"}:
+    if run.status not in {"completed", "failed", "cancelled"}:
         raise HTTPException(status_code=409, detail="Analysis is still running")
     payload = serialize_analysis_stream_run(run, include_result=True)
     if run.status == "completed" and run.result:
@@ -3083,8 +3091,13 @@ def api_stream_analysis_events(request: Request, run_id: str, after_seq: int = Q
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    try:
+        last_event_id = max(0, int(request.headers.get("last-event-id") or 0))
+    except (TypeError, ValueError):
+        last_event_id = 0
+
     def generate():
-        cursor = int(after_seq)
+        cursor = max(int(after_seq), last_event_id)
         while True:
             events = wait_for_analysis_events(run, cursor, timeout=12.0)
             if not events:
@@ -3092,7 +3105,7 @@ def api_stream_analysis_events(request: Request, run_id: str, after_seq: int = Q
             for event in events:
                 cursor = int(event["seq"])
                 yield f"id: {cursor}\nevent: progress\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
-            if run.status in {"completed", "failed"} and cursor >= len(run.events):
+            if run.status in {"completed", "failed", "cancelled"} and cursor >= len(run.events):
                 break
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={

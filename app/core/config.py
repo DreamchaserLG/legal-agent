@@ -81,7 +81,7 @@ class Settings:
         # deliberately limited during multi-round research until contextual
         # embeddings have been rebuilt.  Lexical and graph channels are much
         # cheaper and provide better bounded latency on the local 6M+ corpus.
-        self.legal_research_vector_rounds = int(os.getenv("LEGAL_RESEARCH_VECTOR_ROUNDS", "0"))
+        self.legal_research_vector_rounds = int(os.getenv("LEGAL_RESEARCH_VECTOR_ROUNDS", "2"))
         self.analysis_stream_worker_threads = int(os.getenv("ANALYSIS_STREAM_WORKER_THREADS", "2"))
         self.analysis_stream_event_ttl_seconds = int(os.getenv("ANALYSIS_STREAM_EVENT_TTL_SECONDS", "3600"))
         self.quality_gate_citation_traceability_min = float(
@@ -137,58 +137,6 @@ class Settings:
             os.getenv("HEARING_SIMULATION_PROBABILITY_ENABLED", "true").strip().lower()
             in {"1", "true", "yes", "on"}
         )
-        # 中国民事一审模拟庭审：所有程序上限均由配置注入，编排逻辑不得写死。
-        self.civil_trial_user_turn_timeout_seconds = int(
-            os.getenv("CIVIL_TRIAL_USER_TURN_TIMEOUT_SECONDS", "300")
-        )
-        self.civil_trial_warning_before_seconds = int(
-            os.getenv("CIVIL_TRIAL_WARNING_BEFORE_SECONDS", "30")
-        )
-        self.civil_trial_agent_call_timeout_seconds = int(
-            os.getenv("CIVIL_TRIAL_AGENT_CALL_TIMEOUT_SECONDS", "30")
-        )
-        self.civil_trial_agent_retry_count = int(os.getenv("CIVIL_TRIAL_AGENT_RETRY_COUNT", "1"))
-        self.civil_trial_opponent_tool_limit = int(os.getenv("CIVIL_TRIAL_OPPONENT_TOOL_LIMIT", "3"))
-        self.civil_trial_opponent_max_tokens = int(os.getenv("CIVIL_TRIAL_OPPONENT_MAX_TOKENS", "500"))
-        self.civil_trial_procedure_max_tokens = int(os.getenv("CIVIL_TRIAL_PROCEDURE_MAX_TOKENS", "800"))
-        self.civil_trial_adjudication_max_tokens = int(
-            os.getenv("CIVIL_TRIAL_ADJUDICATION_MAX_TOKENS", "2400")
-        )
-        self.civil_trial_evidence_exchange_rounds = int(
-            os.getenv("CIVIL_TRIAL_EVIDENCE_EXCHANGE_ROUNDS", "2")
-        )
-        self.civil_trial_issue_summary_rounds = int(
-            os.getenv("CIVIL_TRIAL_ISSUE_SUMMARY_ROUNDS", "2")
-        )
-        self.civil_trial_simple_debate_rounds = int(
-            os.getenv("CIVIL_TRIAL_SIMPLE_DEBATE_ROUNDS", "1")
-        )
-        self.civil_trial_ordinary_debate_rounds = int(
-            os.getenv("CIVIL_TRIAL_ORDINARY_DEBATE_ROUNDS", "2")
-        )
-        self.civil_trial_complex_debate_rounds = int(
-            os.getenv("CIVIL_TRIAL_COMPLEX_DEBATE_ROUNDS", "3")
-        )
-        self.civil_trial_max_user_timeouts = int(os.getenv("CIVIL_TRIAL_MAX_USER_TIMEOUTS", "3"))
-        self.civil_trial_max_opponent_fallbacks = int(
-            os.getenv("CIVIL_TRIAL_MAX_OPPONENT_FALLBACKS", "5")
-        )
-        self.civil_trial_max_total_tokens = int(
-            os.getenv("CIVIL_TRIAL_MAX_TOTAL_TOKENS", "30000")
-        )
-        self.civil_trial_max_api_calls = int(os.getenv("CIVIL_TRIAL_MAX_API_CALLS", "80"))
-        self.civil_trial_judgment_reserve_calls = int(
-            os.getenv("CIVIL_TRIAL_JUDGMENT_RESERVE_CALLS", "2")
-        )
-        self.civil_trial_judgment_reserve_tokens = int(
-            os.getenv("CIVIL_TRIAL_JUDGMENT_RESERVE_TOKENS", "5000")
-        )
-        self.civil_trial_budget_warning_ratio = float(
-            os.getenv("CIVIL_TRIAL_BUDGET_WARNING_RATIO", "0.8")
-        )
-        self.civil_trial_procedure_model = os.getenv("CIVIL_TRIAL_PROCEDURE_MODEL", "").strip()
-        self.civil_trial_opponent_model = os.getenv("CIVIL_TRIAL_OPPONENT_MODEL", "").strip()
-        self.civil_trial_adjudication_model = os.getenv("CIVIL_TRIAL_ADJUDICATION_MODEL", "").strip()
         self.agent_collaboration_enabled = (
             os.getenv("AGENT_COLLABORATION_ENABLED", "true").strip().lower()
             in {"1", "true", "yes", "on"}
@@ -213,10 +161,12 @@ class Settings:
             os.getenv("RAG_ENABLED", "true").strip().lower()
             in {"1", "true", "yes", "on"}
         )
-        self.rag_chunk_size = int(os.getenv("RAG_CHUNK_SIZE", "1800"))
-        self.rag_chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", "180"))
-        self.rag_chunk_size_tokens = int(os.getenv("RAG_CHUNK_SIZE_TOKENS", "512"))
-        self.rag_chunk_overlap_tokens = int(os.getenv("RAG_CHUNK_OVERLAP_TOKENS", "64"))
+        # Legal documents are divided on structural boundaries.  The target is
+        # a packing goal, not a fixed sliding window; source paragraphs are
+        # never duplicated merely to create token overlap.
+        self.legal_chunk_target_tokens = int(os.getenv("LEGAL_CHUNK_TARGET_TOKENS", "384"))
+        self.legal_chunk_max_tokens = int(os.getenv("LEGAL_CHUNK_MAX_TOKENS", "512"))
+        self.legal_chunk_min_tokens = int(os.getenv("LEGAL_CHUNK_MIN_TOKENS", "96"))
         self.rag_max_context_items = int(os.getenv("RAG_MAX_CONTEXT_ITEMS", "8"))
         self.rag_hybrid_enabled = (
             os.getenv("RAG_HYBRID_ENABLED", "true").strip().lower()
@@ -242,16 +192,12 @@ class Settings:
         self.rag_graph_candidate_limit = int(os.getenv("RAG_GRAPH_CANDIDATE_LIMIT", "20"))
         self.rag_graph_max_hops = int(os.getenv("RAG_GRAPH_MAX_HOPS", "3"))
         self.rag_graph_edge_min_confidence = float(os.getenv("RAG_GRAPH_EDGE_MIN_CONFIDENCE", "0.65"))
-        # IVFFlat is the deployable baseline for memory-constrained PostgreSQL.
-        # HNSW remains an optional high-recall backend on a larger remote host.
-        self.rag_vector_index_type = os.getenv("RAG_VECTOR_INDEX_TYPE", "ivfflat").strip().lower()
-        self.rag_ivfflat_lists = int(os.getenv("RAG_IVFFLAT_LISTS", "2048"))
-        self.rag_ivfflat_probes = int(os.getenv("RAG_IVFFLAT_PROBES", "96"))
-        self.rag_vector_quantization = os.getenv("RAG_VECTOR_QUANTIZATION", "none").strip().lower()
-        self.vector_backend = os.getenv("VECTOR_BACKEND", "pgvector_ivfflat").strip().lower()
-        self.vector_faiss_index_path = os.getenv("VECTOR_FAISS_INDEX_PATH", "").strip()
-        self.vector_remote_hnsw_url = os.getenv("VECTOR_REMOTE_HNSW_URL", "").strip().rstrip("/")
-        self.vector_remote_hnsw_token = os.getenv("VECTOR_REMOTE_HNSW_TOKEN", "").strip()
+        # One local ANN implementation keeps planner behaviour and quality
+        # validation deterministic.  Lexical/graph retrieval remains the safe
+        # fallback when the real pgvector HNSW index is not ready.
+        self.rag_vector_index_type = "hnsw"
+        self.rag_vector_quantization = "none"
+        self.vector_backend = os.getenv("VECTOR_BACKEND", "pgvector_hnsw").strip().lower()
         self.rag_hnsw_m = int(os.getenv("RAG_HNSW_M", "16"))
         self.rag_hnsw_ef_construction = int(os.getenv("RAG_HNSW_EF_CONSTRUCTION", "64"))
         self.rag_hnsw_ef_search = int(os.getenv("RAG_HNSW_EF_SEARCH", "80"))

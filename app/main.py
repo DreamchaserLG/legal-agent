@@ -80,8 +80,6 @@ def on_startup():
         ensure_appeal_workflow_tables()
         ensure_civil_trial_tables()
 
-    # 中国民事一审 v2 独立于旧 Ontario 流程，SQLite/PostgreSQL 均需初始化。
-
     # 用户偏好是独立的数据库能力，不属于任何 Agent 上下文。
     ensure_user_preference_tables()
 

@@ -27,7 +27,14 @@ class AnalysisStreamRun:
     paused: bool = False
     cancelled: bool = False
     control_revision: int = 0
+    # `additional_queries` is the public audit history. The pending list is
+    # consumed atomically by the research worker, so a refinement is not
+    # injected again when an unrelated pause/resume changes the revision.
     additional_queries: list[str] = field(default_factory=list)
+    pending_additional_queries: list[str] = field(default_factory=list)
+    progress: float = 0.0
+    current_phase: str = "queued"
+    next_action: str = "start_analysis"
     condition: threading.Condition = field(default_factory=threading.Condition, repr=False)
 
 
@@ -37,23 +44,58 @@ _EXECUTOR = ThreadPoolExecutor(
     max_workers=max(1, min(int(settings.analysis_stream_worker_threads), 8)),
     thread_name_prefix="analysis-stream",
 )
+_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
 
 def _cleanup() -> None:
     cutoff = time.time() - max(300, int(settings.analysis_stream_event_ttl_seconds))
     with _LOCK:
-        expired = [key for key, run in _RUNS.items() if run.updated_at < cutoff and run.status in {"completed", "failed"}]
+        expired = [
+            key for key, run in _RUNS.items()
+            if run.updated_at < cutoff and run.status in _TERMINAL_STATUSES
+        ]
         for key in expired:
             _RUNS.pop(key, None)
 
 
 def _emit(run: AnalysisStreamRun, event_type: str, message: str, payload: dict[str, Any] | None = None) -> None:
+    """Append one event using the common observable-research event shape."""
     with run.condition:
+        clean_payload = dict(payload or {})
+        defaults = {
+            "run_queued": (0.0, "queued", "start_analysis"),
+            "run_started": (2.0, "initializing", "decompose_legal_issues"),
+            "run_completed": (100.0, "completed", "review_result"),
+            "run_cancelled": (100.0, "cancelled", "review_partial_result"),
+            "run_failed": (100.0, "failed", "review_error"),
+        }
+        default_progress, default_phase, default_next = defaults.get(
+            event_type, (run.progress, run.current_phase, run.next_action)
+        )
+        try:
+            progress = max(0.0, min(float(clean_payload.get("progress", default_progress)), 100.0))
+        except (TypeError, ValueError):
+            progress = default_progress
+        current_phase = repair_text(clean_payload.get("current_phase")) or default_phase
+        next_action = repair_text(clean_payload.get("next_action")) or default_next
+        clean_payload.update({
+            "progress": progress,
+            "current_phase": current_phase,
+            "next_action": next_action,
+        })
+        run.progress = progress
+        run.current_phase = current_phase
+        run.next_action = next_action
         event = {
             "seq": len(run.events) + 1,
             "event_type": repair_text(event_type),
             "message": repair_text(message),
-            "payload": payload or {},
+            "payload": clean_payload,
+            # Kept at the top level as well so an SSE client need not know the
+            # event-specific payload shape to draw progress and controls.
+            "progress": progress,
+            "current_phase": current_phase,
+            "next_action": next_action,
             "timestamp": time.time(),
         }
         run.events.append(event)
@@ -73,15 +115,30 @@ def _worker(run: AnalysisStreamRun) -> None:
             "research_control": lambda: research_control_snapshot(run),
         })
         run.result = analyze_sentence_search(**payload)
+        research = (run.result or {}).get("agentic_research") or {}
+        was_cancelled = run.cancelled or research.get("stop_reason") == "cancelled_by_user"
+        if was_cancelled:
+            run.cancelled = True
+            run.status = "cancelled"
+            _emit(run, "run_cancelled", "分析已按用户请求停止，已保留可用的部分结果。", {
+                "result_available": bool(run.result),
+            })
+            return
         run.status = "completed"
         _emit(run, "run_completed", "分析已完成，正在打开结构化结果页面。", {
             "result_summary": {
                 "laws": len(((run.result or {}).get("module_packet") or {}).get("relevant_laws") or []),
                 "cases": len(((run.result or {}).get("module_packet") or {}).get("case_law_rows") or []),
-                "rounds": len(((run.result or {}).get("agentic_research") or {}).get("rounds") or []),
+                "rounds": len(research.get("rounds") or []),
             }
         })
     except Exception as exc:
+        if run.cancelled:
+            run.status = "cancelled"
+            _emit(run, "run_cancelled", "分析已按用户请求停止。", {
+                "error": repair_text(str(exc))[:1000],
+            })
+            return
         run.status = "failed"
         run.error = repair_text(str(exc))[:1000]
         _emit(run, "run_failed", "分析未完成，已保留执行轨迹。", {"error": run.error})
@@ -112,12 +169,21 @@ def get_analysis_stream_run(run_id: str, *, user_id: int, include_result: bool =
 
 def serialize_analysis_stream_run(run: AnalysisStreamRun, *, include_result: bool = False) -> dict[str, Any]:
     payload = {
-        "run_id": run.run_id, "status": run.status, "error": run.error,
-        "last_seq": len(run.events), "created_at": run.created_at, "updated_at": run.updated_at,
+        "run_id": run.run_id,
+        "status": run.status,
+        "error": run.error,
+        "last_seq": len(run.events),
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+        "progress": run.progress,
+        "current_phase": run.current_phase,
+        "next_action": run.next_action,
         "request": run.request,
         "control": {
-            "paused": run.paused, "cancelled": run.cancelled,
-            "revision": run.control_revision, "additional_queries": list(run.additional_queries),
+            "paused": run.paused,
+            "cancelled": run.cancelled,
+            "revision": run.control_revision,
+            "additional_queries": list(run.additional_queries),
         },
     }
     if include_result:
@@ -128,18 +194,21 @@ def serialize_analysis_stream_run(run: AnalysisStreamRun, *, include_result: boo
 def wait_for_analysis_events(run: AnalysisStreamRun, after_seq: int, timeout: float = 15.0) -> list[dict[str, Any]]:
     with run.condition:
         available = [event for event in run.events if int(event["seq"]) > int(after_seq)]
-        if not available and run.status not in {"completed", "failed"}:
+        if not available and run.status not in _TERMINAL_STATUSES:
             run.condition.wait(timeout=max(0.1, min(timeout, 30.0)))
         return [event for event in run.events if int(event["seq"]) > int(after_seq)]
 
 
 def research_control_snapshot(run: AnalysisStreamRun) -> dict[str, Any]:
+    """Return control state and atomically consume pending refinement queries."""
     with run.condition:
+        pending_queries = list(run.pending_additional_queries)
+        run.pending_additional_queries.clear()
         return {
             "paused": run.paused,
             "cancelled": run.cancelled,
             "revision": run.control_revision,
-            "additional_queries": list(run.additional_queries),
+            "additional_queries": pending_queries,
         }
 
 
@@ -149,7 +218,7 @@ def apply_analysis_stream_control(
     run = get_analysis_stream_run(run_id, user_id=user_id)
     clean_action = repair_text(action).lower()
     clean_query = repair_text(query)
-    if run.status in {"completed", "failed"}:
+    if run.status in _TERMINAL_STATUSES:
         raise ValueError("Analysis stream run is already terminal")
     with run.condition:
         if clean_action == "pause":
@@ -165,8 +234,10 @@ def apply_analysis_stream_control(
         elif clean_action == "refine":
             if not clean_query:
                 raise ValueError("A refinement query is required")
+            clean_query = clean_query[:500]
             if clean_query not in run.additional_queries:
-                run.additional_queries.append(clean_query[:500])
+                run.additional_queries.append(clean_query)
+                run.pending_additional_queries.append(clean_query)
             run.paused = False
             message = "人工补充查询已加入下一轮研究计划。"
         else:
@@ -175,6 +246,10 @@ def apply_analysis_stream_control(
         run.updated_at = time.time()
         run.condition.notify_all()
     _emit(run, f"control_{clean_action}", message, {
-        "action": clean_action, "query": clean_query[:500], "revision": run.control_revision,
+        "action": clean_action,
+        "query": clean_query[:500],
+        "revision": run.control_revision,
+        "current_phase": "control",
+        "next_action": "stop_after_current_query" if clean_action == "cancel" else "continue_research",
     })
     return serialize_analysis_stream_run(run, include_result=False)

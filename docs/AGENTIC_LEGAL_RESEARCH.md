@@ -1,72 +1,73 @@
-# Agentic Legal Research Architecture
+# 加拿大法律多轮研究与本地检索架构
 
-The Canadian-law analysis page uses a bounded research loop rather than treating a complex case as one search query. The interface may accept Chinese or English, but language never changes the jurisdiction: this research pipeline only reasons over Canadian authorities.
+## 核心理念
 
-## Runtime flow
+复杂案件不是“抽关键词后搜一次”。系统先把事实、争点、法域、时间效力和待证明关系拆开，再以证据缺口驱动后续查询。中文和英文都可以作为输入语言，但知识、判断规则和权威来源只属于加拿大法域；无法映射到加拿大法的请求会标为不支持，不会借用其他国家法律补答案。
 
-1. Extract source-grounded facts and disputed issues.
-2. Generate separate rule and precedent queries.
-3. Search lexical and legal-graph indexes in parallel; enable the semantic channel only within its configured latency budget.
-4. Measure rule/case coverage for every issue.
-5. Generate narrower follow-up queries from unresolved gaps.
-6. Stop on complete coverage, diminishing returns, timeout or the configured round limit.
-7. Bind the resulting evidence pool into deep analysis and stream safe progress events to the UI over SSE.
+检索结果只是“不可信数据”。外部网页、文档正文、元数据和检索片段都不能修改系统提示、选择工具或触发命令；答案必须绑定可追溯的法规条文或案例材料，并保留律师复核提示。
 
-The page exposes stage names, issued queries, evidence counts, coverage gaps and stop reasons. It does not expose private model chain-of-thought. Analysis runs are owner-scoped, bounded, and held in process memory for the configured TTL; a multi-node deployment should replace that store with Redis or a database-backed queue.
+## 在线分析主流程
 
-Retrieved and downloaded text is always untrusted data. It cannot select tools or alter system behavior.
+1. 结构化当前案情：事实、当事方、时间、地点、法域、请求、抗辩、程序阶段、证据和不确定项。
+2. 抽取并链接当前案情实体：法规、条文、案件、法院、主体、法律问题、程序、救济、量刑因素及高置信别名。
+3. 将争点拆成独立查询，首轮并行检索法规、案例、关键词和 HNSW 语义候选。
+4. 通过实体链接进入法律图谱，沿有类型、有证据来源的边进行一至三跳扩展，再回取原始证据块。
+5. 重排并生成证据矩阵：每个争点分别检查规则依据、可比案例、适用条件、例外、时间效力和法域一致性。
+6. 对缺口生成更聚焦的第二轮查询。例如先分别找到醉酒责任、过失犯罪和既往记录规则，再查询它们在加拿大量刑原则中的具体关联。
+7. 在覆盖完成、边际收益过低、超时、人工终止或达到最大轮数时停止。
+8. 只根据已绑定证据生成结构化结果；区分事实、规则、推论、冲突证据和仍需核实事项。
 
-## Contextual index
+页面通过 SSE 流式展示阶段、查询、命中数、证据缺口、下一步动作和停止原因。用户可暂停、继续、终止或为下一轮补充查询。页面不展示模型私有思维链。
 
-`rag_chunks` retains exact `text_content` for quotations and adds a compact `context_prefix`. The prefix carries document identity, citation, jurisdiction, document type, court, section and chunk position. Existing rows do not duplicate the complete text into `contextual_text`; vectorization composes prefix plus original text at read time. `content_hash` changes when the prefix changes, so contextual embeddings are rebuilt automatically and incrementally.
+## 新版上下文感知分块
 
-The local PostgreSQL migration is additive and resumable:
+`legal-context-v2` 以法律文档结构为边界，不再使用固定字符滑窗或重叠切分：
 
-```powershell
-python -m app.service.context_index_migration_service --schema-only
-python -m app.service.context_index_migration_service --batch-size 10000
-```
+- 优先识别标题、章节、条款和编号段落；章节之间不会拼接。
+- 目标 384 token，硬上限 512 token；过长段落才在句子边界继续拆分。
+- `text_content` 永远保存未经改写的原文，供引用和核验。
+- 向量输入使用“短上下文前缀 + 原文”，前缀包含文档标题、neutral citation、法域、法院、文档类型、章节、段落范围和确定性实体。
+- “该公司”“申请人”“其”等指代只在唯一、高置信候选存在时消歧；有多个候选时明确保留 unresolved，不让模型猜测。
+- `content_hash` 覆盖上下文表示。只有文档内容、结构或消歧上下文真正改变时才重建对应向量。
 
-Each batch commits independently, uses `SKIP LOCKED`, and is restricted to Canadian source codes/tables. Re-run the second command until `remaining` reaches zero, then rebuild embeddings in controlled batches.
+这解决了孤立文本块缺少“谁、哪一节、哪一个案件”的问题，同时保持原文可追溯。上下文前缀用于召回，不可冒充原文引文。
 
-## Corpus governance
+## 离线实体关系索引
 
-Corpus changes are fetched only from approved Canadian sources such as Justice Laws, the Supreme Court of Canada, federal/provincial court sites, official gazettes, Ontario government/court sites and CanLII. They are built outside the live index and represented by immutable source snapshots and versioned changesets. A builder and reviewer must use different vendors. Only an independently approved changeset can become a staged release; activation atomically changes the active release pointer and preserves a rollback target.
+多跳检索需要离线和在线两端都做实体处理，但不需要每次查询重新抽取整库：
 
-Large corpus and vector artifacts should remain in versioned object/database storage. Git pull requests should contain manifests, parsers, mappings, schema migrations, structured diffs and evaluation reports rather than raw vector files.
+- 离线：只对新增或变更文档执行结构解析、实体/提及/别名抽取、引用关系和法律关系抽取、canonical ID 对齐、分块向量化、图谱写入。
+- 在线：只抽取当前案件实体并链接 canonical ID，先做关键词/HNSW 首跳，再做定向图谱扩展和证据回取。
+- 图边必须保留 `source_chunk_id`、关系类型和置信度。没有文本证据的模型猜测不能进入生产图谱。
+- 法规版本之间记录生效、废止、替代和修订关系；案例记录法院层级、引用、处理方式和后续效力状态。
 
-## Operational sequence
+图谱负责“关系”，HNSW 负责“相似候选”，关键词/字段索引负责精确 citation、条款和专名。三者融合后再重排，不能用图谱替代证据原文。
 
-The current rollout is intentionally paused before bulk contextual migration. First validate the complete path locally on a representative Canadian subset.
+## 本地 HNSW 策略
 
-1. Build a float IVFFlat baseline locally with explicit `lists` and `probes`.
-2. Measure exact-search recall, IVFFlat recall, latency, memory and disk use.
-3. Evaluate half-precision and binary-quantized candidate generation with float-vector re-ranking. Native pgvector quantization is not product quantization; true IVF-PQ requires a separate backend such as FAISS.
-4. Extract source-grounded legal entities and typed relations on the same subset, then evaluate one-to-three-hop graph retrieval.
-5. Only after the local quality gate passes, backfill contextual prefixes and rebuild embeddings in versioned batches.
-6. Keep IVFFlat as the memory-constrained server baseline. A high-memory machine may expose HNSW as a separate vector-search backend; application retrieval must be able to fall back to local IVFFlat.
-7. Keep the prior corpus/index version until production checks pass.
+当前唯一近似向量索引是 PostgreSQL/pgvector HNSW。应用在索引不存在或未就绪时返回 `ann_unavailable`，不会在 658 万级向量表上悄悄退化为顺序扫描。查询计划验证必须同时满足：
 
-The research corpus and update pipeline are Canadian-only. A non-Canadian query is not reinterpreted using another country's law; it is returned as unsupported jurisdiction/coverage instead.
+- 使用 `idx_rag_chunk_embeddings_active_hnsw`；
+- 索引为 valid/ready；
+- `EXPLAIN` 出现 HNSW 索引扫描；
+- 不出现大表顺序扫描；
+- 向量行的 `content_hash` 与当前文本块一致，拒绝陈旧向量。
 
-## Local vector rollout checkpoint
+本地隔离样本验证通过后才允许创建全量索引。上下文分块和整库向量回填仍是独立阶段，不因 HNSW 建成而自动执行。
 
-Bulk contextual migration remains paused. The local validation path uses an isolated table and never updates `rag_chunks` or the production embedding rows.
+## 加拿大语料更新与安全边界
 
-Implemented controls:
+语料只从经过批准的加拿大权威来源获取，例如 Justice Laws、加拿大最高法院、联邦和省级法院、官方公报、Ontario 官方法规/法院站点以及合规使用的 CanLII 数据。
 
-- dry-run IVFFlat build plans with an explicit confirmation token;
-- backend status for local IVFFlat, optional FAISS IVF-PQ and optional remote HNSW;
-- exact-versus-ANN Recall@K, MRR and latency metrics;
-- optional FAISS `IndexIVFPQ` artifact support with PostgreSQL FP32 re-ranking;
-- a deterministic Canadian legal entity extractor with source spans;
-- owner-scoped pause, resume, cancel and next-round query refinement controls.
+增量更新采用不可变快照和版本化 changeset：抓取与解析在非活动索引中完成；提交内容包含清单、解析器、映射、结构化差异和评测报告，不把大型向量文件提交到 Git。构建代理与复核代理必须来自不同厂商，复核通过后才可激活新版本，旧版本保留回滚点。定期全量核查负责发现漏更、废止和引用效力变化。
 
-The first isolated 50,000-vector BGE-M3 experiment produced:
+## 当前本机验证状态（2026-11-03）
 
-| Configuration | Recall@5 | Recall@10 | MRR | Mean ANN latency |
-|---|---:|---:|---:|---:|
-| IVFFlat lists=224, probes=16 | 0.88 | 0.82 | 1.00 | 21.5 ms |
-| IVFFlat lists=224, probes=32 | 1.00 | 0.92 | 1.00 | 44.0 ms |
+- 中国民事审判遗留和相关测试已移除，加拿大/Ontario 民事庭审模块保留。
+- 旧索引实现和旧滑窗切分已移除。
+- 新版结构化分块、上下文前缀、保守消歧、实体关系入图和 HNSW-only 查询路径已完成。
+- 5,000 条真实本地向量隔离样本：3 个加拿大法律查询的 Recall@10 均为 1.00；平均精确检索 21.61 ms，平均 HNSW 6.32 ms，约 3.42 倍加速；查询计划均使用 HNSW 且没有顺序扫描。
+- 代码单元/回归测试 55 项全部通过，前端脚本语法检查通过。
+- 全量本机 HNSW 正在构建；未执行上下文整库回填、远端迁移或部署。
 
-The second configuration passes the initial Recall@10 >= 0.90 gate on this small five-query smoke set. It is not sufficient to activate a full-corpus index; the next evaluation must use the curated Canadian legal benchmark and include jurisdiction-error and authority-quality labels.
+全量索引完成后还必须运行真实查询计划检查、加拿大跨领域评测集和接口端到端测试。只有召回率、权威性、法域错误率、引用可追溯率和延迟共同通过质量门，才进入后续整库上下文重建阶段。

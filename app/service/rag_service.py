@@ -13,6 +13,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import engine
 from app.service.common_service import plain_text_preview, repair_text, sha256_text, split_keywords
+from app.service.legal_chunking_service import INDEX_VERSION, split_legal_document
 from app.service.module_service import normalize_module
 
 CANADA_SOURCE_CODES = {
@@ -45,14 +46,16 @@ def _safe_int(value, default: int = 0) -> int:
         return default
 
 
-def _chunk_size() -> int:
-    return max(64, _safe_int(getattr(settings, "rag_chunk_size_tokens", 512), 512))
+def _chunk_target() -> int:
+    return max(64, _safe_int(getattr(settings, "legal_chunk_target_tokens", 384), 384))
 
 
-def _chunk_overlap() -> int:
-    size = _chunk_size()
-    configured = max(0, _safe_int(getattr(settings, "rag_chunk_overlap_tokens", 64), 64))
-    return min(configured, size // 3)
+def _chunk_max() -> int:
+    return max(_chunk_target(), _safe_int(getattr(settings, "legal_chunk_max_tokens", 512), 512))
+
+
+def _chunk_min() -> int:
+    return max(1, min(_safe_int(getattr(settings, "legal_chunk_min_tokens", 96), 96), _chunk_target()))
 
 
 def _max_context_items(default: int = 8) -> int:
@@ -127,15 +130,22 @@ def ensure_rag_tables() -> None:
                 citation TEXT NOT NULL DEFAULT '',
                 published_at TIMESTAMP NULL,
                 chunk_index INTEGER NOT NULL DEFAULT 0,
+                section_id TEXT NOT NULL DEFAULT '',
+                section_title TEXT NOT NULL DEFAULT '',
+                paragraph_start INTEGER NULL,
+                paragraph_end INTEGER NULL,
+                token_count INTEGER NOT NULL DEFAULT 0,
                 text_content TEXT NOT NULL,
                 context_prefix TEXT NOT NULL DEFAULT '',
                 contextual_text TEXT NOT NULL DEFAULT '',
                 document_hash VARCHAR(64) NOT NULL DEFAULT '',
-                index_version VARCHAR(40) NOT NULL DEFAULT 'context-v1',
+                index_version VARCHAR(40) NOT NULL DEFAULT 'legal-context-v2',
                 authority_status VARCHAR(40) NOT NULL DEFAULT 'unknown',
                 effective_from TEXT NOT NULL DEFAULT '',
                 effective_to TEXT NOT NULL DEFAULT '',
                 content_hash VARCHAR(64) NOT NULL,
+                entities_json TEXT NOT NULL DEFAULT '[]',
+                disambiguation_json TEXT NOT NULL DEFAULT '{}',
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -177,15 +187,22 @@ def ensure_rag_tables() -> None:
                 citation TEXT NOT NULL DEFAULT '',
                 published_at TIMESTAMP NULL,
                 chunk_index INTEGER NOT NULL DEFAULT 0,
+                section_id TEXT NOT NULL DEFAULT '',
+                section_title TEXT NOT NULL DEFAULT '',
+                paragraph_start INTEGER NULL,
+                paragraph_end INTEGER NULL,
+                token_count INTEGER NOT NULL DEFAULT 0,
                 text_content TEXT NOT NULL,
                 context_prefix TEXT NOT NULL DEFAULT '',
                 contextual_text TEXT NOT NULL DEFAULT '',
                 document_hash VARCHAR(64) NOT NULL DEFAULT '',
-                index_version VARCHAR(40) NOT NULL DEFAULT 'context-v1',
+                index_version VARCHAR(40) NOT NULL DEFAULT 'legal-context-v2',
                 authority_status VARCHAR(40) NOT NULL DEFAULT 'unknown',
                 effective_from TEXT NOT NULL DEFAULT '',
                 effective_to TEXT NOT NULL DEFAULT '',
                 content_hash VARCHAR(64) NOT NULL,
+                entities_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+                disambiguation_json JSONB NOT NULL DEFAULT '{}'::jsonb,
                 metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
                 search_vector TSVECTOR,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -224,10 +241,17 @@ def ensure_rag_tables() -> None:
                 "court_level": "TEXT NOT NULL DEFAULT ''",
                 "language": "TEXT NOT NULL DEFAULT ''",
                 "citation": "TEXT NOT NULL DEFAULT ''",
+                "section_id": "TEXT NOT NULL DEFAULT ''",
+                "section_title": "TEXT NOT NULL DEFAULT ''",
+                "paragraph_start": "INTEGER NULL",
+                "paragraph_end": "INTEGER NULL",
+                "token_count": "INTEGER NOT NULL DEFAULT 0",
                 "context_prefix": "TEXT NOT NULL DEFAULT ''",
                 "contextual_text": "TEXT NOT NULL DEFAULT ''",
                 "document_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
-                "index_version": "VARCHAR(40) NOT NULL DEFAULT 'context-v1'",
+                "index_version": "VARCHAR(40) NOT NULL DEFAULT 'legal-context-v2'",
+                "entities_json": "TEXT NOT NULL DEFAULT '[]'",
+                "disambiguation_json": "TEXT NOT NULL DEFAULT '{}'",
                 "authority_status": "VARCHAR(40) NOT NULL DEFAULT 'unknown'",
                 "effective_from": "TEXT NOT NULL DEFAULT ''",
                 "effective_to": "TEXT NOT NULL DEFAULT ''",
@@ -262,10 +286,17 @@ def ensure_rag_tables() -> None:
                 "language": "VARCHAR(20) NOT NULL DEFAULT ''",
                 "citation": "TEXT NOT NULL DEFAULT ''",
                 "search_vector": "TSVECTOR",
+                "section_id": "TEXT NOT NULL DEFAULT ''",
+                "section_title": "TEXT NOT NULL DEFAULT ''",
+                "paragraph_start": "INTEGER NULL",
+                "paragraph_end": "INTEGER NULL",
+                "token_count": "INTEGER NOT NULL DEFAULT 0",
                 "context_prefix": "TEXT NOT NULL DEFAULT ''",
                 "contextual_text": "TEXT NOT NULL DEFAULT ''",
                 "document_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
-                "index_version": "VARCHAR(40) NOT NULL DEFAULT 'context-v1'",
+                "index_version": "VARCHAR(40) NOT NULL DEFAULT 'legal-context-v2'",
+                "entities_json": "JSONB NOT NULL DEFAULT '[]'::jsonb",
+                "disambiguation_json": "JSONB NOT NULL DEFAULT '{}'::jsonb",
                 "authority_status": "VARCHAR(40) NOT NULL DEFAULT 'unknown'",
                 "effective_from": "TEXT NOT NULL DEFAULT ''",
                 "effective_to": "TEXT NOT NULL DEFAULT ''",
@@ -280,6 +311,9 @@ def ensure_rag_tables() -> None:
                 )
             )
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rag_chunks_vector ON rag_chunks USING GIN(search_vector)"))
+            # New large-corpus indexes are created explicitly by the local
+            # rebuild rollout after its quality gate. Application startup must
+            # not trigger a multi-million-row index migration.
     _RAG_TABLES_READY = True
 
 
@@ -475,49 +509,27 @@ def _rag_tokenizer():
         return _RAG_TOKENIZER
 
 
-def _token_windows(tokenizer, text_value: str, size: int, overlap: int) -> list[str]:
-    token_ids = tokenizer.encode(text_value, add_special_tokens=False)
-    step = max(1, size - overlap)
-    return [
-        tokenizer.decode(token_ids[start : start + size], skip_special_tokens=True).strip()
-        for start in range(0, len(token_ids), step)
-        if token_ids[start : start + size]
-    ]
-
-
-def split_into_chunks(text_value: str, *, chunk_size: int | None = None, overlap: int | None = None) -> list[str]:
-    """按 BGE-M3 tokenizer 的 512/64 token 规则切分法律文本。"""
-    cleaned = plain_text_preview(text_value)
+def split_legal_chunks(text_value: str, *, doc: dict | None = None) -> list[dict]:
+    """Create legal-structure-v2 chunks using the active embedding tokenizer."""
+    cleaned = repair_text(text_value).strip()
     if not cleaned:
         return []
-    size = max(64, int(chunk_size or _chunk_size()))
-    overlap = max(0, min(int(overlap if overlap is not None else _chunk_overlap()), size // 3))
     tokenizer = _rag_tokenizer()
-    token_count = lambda value: len(tokenizer.encode(value, add_special_tokens=False))
-    if token_count(cleaned) <= size:
-        return [cleaned]
-    try:
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
-    except Exception as exc:
-        raise RuntimeError("精确 token 分块需要 langchain-text-splitters。") from exc
-    splitter = RecursiveCharacterTextSplitter(
-        separators=["\n\n", "\n", "。", "！", "？", ".", "!", "?", " ", ""],
-        chunk_size=size,
-        chunk_overlap=overlap,
-        length_function=token_count,
-        is_separator_regex=False,
-        keep_separator=True,
+    return split_legal_document(
+        cleaned,
+        doc=doc or {},
+        target_tokens=_chunk_target(),
+        max_tokens=_chunk_max(),
+        min_tokens=_chunk_min(),
+        token_count=lambda value: len(tokenizer.encode(value, add_special_tokens=False)),
+        token_encode=lambda value: tokenizer.encode(value, add_special_tokens=False),
+        token_decode=lambda values: tokenizer.decode(values, skip_special_tokens=True),
     )
-    chunks = []
-    for raw_chunk in splitter.split_text(cleaned):
-        chunk = raw_chunk.strip()
-        if not chunk:
-            continue
-        if token_count(chunk) <= size:
-            chunks.append(chunk)
-        else:
-            chunks.extend(piece for piece in _token_windows(tokenizer, chunk, size, overlap) if piece)
-    return chunks or _token_windows(tokenizer, cleaned, size, overlap)
+
+
+def split_into_chunks(text_value: str, *, doc: dict | None = None) -> list[str]:
+    """Compatibility wrapper; no sliding overlap or alternate splitter remains."""
+    return [item["text"] for item in split_legal_chunks(text_value, doc=doc)]
 
 
 def _source_item_documents(source_filter: str, limit: int | None) -> list[dict]:
@@ -753,13 +765,24 @@ def build_contextual_prefix(doc: dict, chunk_index: int) -> str:
     return " | ".join(f"{label}: {repair_text(value)}" for label, value in fields if repair_text(value))[:1200]
 
 
-def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
+def _upsert_chunk(conn, doc: dict, chunk: dict) -> None:
     from app.core.database import is_sqlite
     source_kind = _source_kind(doc.get("source_code", ""), doc.get("source_table", ""))
     structured_fields = _doc_structured_fields(doc, source_kind)
-    metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
-    context_prefix = build_contextual_prefix(doc, chunk_index)
-    contextual_text = f"{context_prefix}\n\n{repair_text(chunk_text)}".strip()
+    metadata = dict(doc.get("metadata")) if isinstance(doc.get("metadata"), dict) else {}
+    chunk_index = int(chunk.get("chunk_index") or 0)
+    chunk_text = repair_text(chunk.get("text"))
+    context_prefix = repair_text(chunk.get("context_prefix"))
+    contextual_text = repair_text(chunk.get("contextual_text")) or f"{context_prefix}\n\n{chunk_text}".strip()
+    metadata.update({
+        "chunk_strategy": "legal_structure_context",
+        "chunk_strategy_version": INDEX_VERSION,
+        "section_id": repair_text(chunk.get("section_id")),
+        "section_title": repair_text(chunk.get("section_title")),
+        "paragraph_start": chunk.get("paragraph_start"),
+        "paragraph_end": chunk.get("paragraph_end"),
+        "source_text_preserved": True,
+    })
 
     if is_sqlite():
         # SQLite: 不支持 search_vector 和 ON CONFLICT DO UPDATE
@@ -769,18 +792,23 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                 INSERT OR REPLACE INTO rag_chunks (
                     source_kind, source_table, source_id, source_code, source_uid,
                     title, source_url, jurisdiction, document_type, court_level,
-                    language, citation, published_at, chunk_index, text_content,
+                    language, citation, published_at, chunk_index,
+                    section_id, section_title, paragraph_start, paragraph_end, token_count,
+                    text_content,
                     context_prefix, contextual_text, document_hash, index_version,
                     authority_status, effective_from, effective_to,
-                    content_hash, metadata_json, created_at, updated_at
+                    content_hash, entities_json, disambiguation_json, metadata_json,
+                    created_at, updated_at
                 )
                 VALUES (
                     :source_kind, :source_table, :source_id, :source_code, :source_uid,
                     :title, :source_url, :jurisdiction, :document_type, :court_level,
-                    :language, :citation, :published_at, :chunk_index, :text_content,
-                    :context_prefix, :contextual_text, :document_hash, 'context-v1',
+                    :language, :citation, :published_at, :chunk_index,
+                    :section_id, :section_title, :paragraph_start, :paragraph_end, :token_count,
+                    :text_content,
+                    :context_prefix, :contextual_text, :document_hash, :index_version,
                     :authority_status, :effective_from, :effective_to,
-                    :content_hash, :metadata_json,
+                    :content_hash, :entities_json, :disambiguation_json, :metadata_json,
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 """
@@ -800,15 +828,23 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                 "citation": structured_fields["citation"],
                 "published_at": doc.get("published_at"),
                 "chunk_index": int(chunk_index),
-                "text_content": repair_text(chunk_text),
+                "section_id": repair_text(chunk.get("section_id")),
+                "section_title": repair_text(chunk.get("section_title")),
+                "paragraph_start": chunk.get("paragraph_start"),
+                "paragraph_end": chunk.get("paragraph_end"),
+                "token_count": int(chunk.get("token_count") or 0),
+                "text_content": chunk_text,
                 "context_prefix": context_prefix,
                 "contextual_text": contextual_text,
                 "document_hash": sha256_text(repair_text(doc.get("text")) or repair_text(doc.get("title"))),
                 "authority_status": repair_text(metadata.get("authority_status") or metadata.get("in_force_status") or "unknown"),
                 "effective_from": repair_text(metadata.get("effective_from") or metadata.get("in_force_date")),
                 "effective_to": repair_text(metadata.get("effective_to") or metadata.get("repealed_at")),
+                "index_version": INDEX_VERSION,
                 "content_hash": sha256_text(contextual_text),
-                "metadata_json": _json_text(doc.get("metadata") or {}),
+                "entities_json": _json_text(chunk.get("entities") or []),
+                "disambiguation_json": _json_text(chunk.get("disambiguation") or {}),
+                "metadata_json": _json_text(metadata),
             },
         )
     else:
@@ -818,18 +854,24 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                 INSERT INTO rag_chunks (
                     source_kind, source_table, source_id, source_code, source_uid,
                     title, source_url, jurisdiction, document_type, court_level,
-                    language, citation, published_at, chunk_index, text_content,
+                    language, citation, published_at, chunk_index,
+                    section_id, section_title, paragraph_start, paragraph_end, token_count,
+                    text_content,
                     context_prefix, contextual_text, document_hash, index_version,
                     authority_status, effective_from, effective_to,
-                    content_hash, metadata_json, search_vector, created_at, updated_at
+                    content_hash, entities_json, disambiguation_json, metadata_json,
+                    search_vector, created_at, updated_at
                 )
                 VALUES (
                     :source_kind, :source_table, :source_id, :source_code, :source_uid,
                     :title, :source_url, :jurisdiction, :document_type, :court_level,
-                    :language, :citation, :published_at, :chunk_index, :text_content,
-                    :context_prefix, :contextual_text, :document_hash, 'context-v1',
+                    :language, :citation, :published_at, :chunk_index,
+                    :section_id, :section_title, :paragraph_start, :paragraph_end, :token_count,
+                    :text_content,
+                    :context_prefix, :contextual_text, :document_hash, :index_version,
                     :authority_status, :effective_from, :effective_to,
-                    :content_hash, CAST(:metadata_json AS jsonb),
+                    :content_hash, CAST(:entities_json AS jsonb), CAST(:disambiguation_json AS jsonb),
+                    CAST(:metadata_json AS jsonb),
                     to_tsvector('english', :search_text),
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
@@ -846,6 +888,11 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                     language = EXCLUDED.language,
                     citation = EXCLUDED.citation,
                     published_at = EXCLUDED.published_at,
+                    section_id = EXCLUDED.section_id,
+                    section_title = EXCLUDED.section_title,
+                    paragraph_start = EXCLUDED.paragraph_start,
+                    paragraph_end = EXCLUDED.paragraph_end,
+                    token_count = EXCLUDED.token_count,
                     text_content = EXCLUDED.text_content,
                     context_prefix = EXCLUDED.context_prefix,
                     contextual_text = EXCLUDED.contextual_text,
@@ -855,6 +902,8 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                     effective_from = EXCLUDED.effective_from,
                     effective_to = EXCLUDED.effective_to,
                     content_hash = EXCLUDED.content_hash,
+                    entities_json = EXCLUDED.entities_json,
+                    disambiguation_json = EXCLUDED.disambiguation_json,
                     metadata_json = EXCLUDED.metadata_json,
                     search_vector = EXCLUDED.search_vector,
                     updated_at = CURRENT_TIMESTAMP
@@ -875,15 +924,23 @@ def _upsert_chunk(conn, doc: dict, chunk_index: int, chunk_text: str) -> None:
                 "citation": structured_fields["citation"],
                 "published_at": doc.get("published_at"),
                 "chunk_index": int(chunk_index),
-                "text_content": repair_text(chunk_text),
+                "section_id": repair_text(chunk.get("section_id")),
+                "section_title": repair_text(chunk.get("section_title")),
+                "paragraph_start": chunk.get("paragraph_start"),
+                "paragraph_end": chunk.get("paragraph_end"),
+                "token_count": int(chunk.get("token_count") or 0),
+                "text_content": chunk_text,
                 "context_prefix": context_prefix,
                 "contextual_text": contextual_text,
                 "document_hash": sha256_text(repair_text(doc.get("text")) or repair_text(doc.get("title"))),
                 "authority_status": repair_text(metadata.get("authority_status") or metadata.get("in_force_status") or "unknown"),
                 "effective_from": repair_text(metadata.get("effective_from") or metadata.get("in_force_date")),
                 "effective_to": repair_text(metadata.get("effective_to") or metadata.get("repealed_at")),
+                "index_version": INDEX_VERSION,
                 "content_hash": sha256_text(contextual_text),
-                "metadata_json": _json_text(doc.get("metadata") or {}),
+                "entities_json": _json_text(chunk.get("entities") or []),
+                "disambiguation_json": _json_text(chunk.get("disambiguation") or {}),
+                "metadata_json": _json_text(metadata),
                 "search_text": contextual_text,
             },
         )
@@ -910,13 +967,13 @@ def rebuild_rag_index(source_filter: str = "all", limit: int | None = None) -> d
     chunks_written = 0
     try:
         for doc in iter_rag_documents(source_filter=source_filter, limit=limit):
-            chunks = split_into_chunks(doc.get("text", ""))
+            chunks = split_legal_chunks(doc.get("text", ""), doc=doc)
             if not chunks:
                 continue
             documents_seen += 1
             with engine.begin() as conn:
-                for index, chunk in enumerate(chunks):
-                    _upsert_chunk(conn, doc, index, chunk)
+                for chunk in chunks:
+                    _upsert_chunk(conn, doc, chunk)
                     chunks_written += 1
                 conn.execute(
                     text(
@@ -1005,8 +1062,11 @@ def get_rag_status() -> dict:
     return {
         "enabled": bool(getattr(settings, "rag_enabled", True)),
         "hybrid_enabled": bool(getattr(settings, "rag_hybrid_enabled", True)),
-        "chunk_size": _chunk_size(),
-        "chunk_overlap": _chunk_overlap(),
+        "chunk_strategy": "legal_structure_context",
+        "index_version": INDEX_VERSION,
+        "chunk_target_tokens": _chunk_target(),
+        "chunk_max_tokens": _chunk_max(),
+        "chunk_overlap_tokens": 0,
         "max_context_items": _max_context_items(),
         "by_kind": [dict(row) for row in by_kind],
         "recent_runs": [dict(row) for row in recent_runs],

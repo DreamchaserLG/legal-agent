@@ -9,9 +9,10 @@ from app.service.vector_benchmark_service import (
     recall_at_k,
     summarize_backend_trials,
     run_local_vector_benchmark,
+    load_canada_queries,
 )
 from app.service import vector_index_management_service as index_service
-from app.service.faiss_benchmark_service import load_canada_queries
+from app.service import vector_store_service as vector_store
 
 
 class VectorRolloutServiceTests(unittest.TestCase):
@@ -28,23 +29,34 @@ class VectorRolloutServiceTests(unittest.TestCase):
     def test_manifest_keeps_migration_paused(self):
         manifest = local_vector_experiment_manifest()
         self.assertFalse(manifest["migration_started"])
-        self.assertIn("faiss_ivfpq", [row["id"] for row in manifest["experiments"]])
+        self.assertEqual([row["id"] for row in manifest["experiments"]], ["pgvector_hnsw_sample", "exact_cosine"])
 
     def test_benchmark_refuses_sequential_scan_when_ann_missing(self):
-        with patch("app.service.vector_benchmark_service.get_vector_status", return_value={"ann_index_ready": False}):
+        with patch("app.service.vector_benchmark_service.get_hnsw_index_state", return_value={"valid": False, "ready": False}):
             result = run_local_vector_benchmark(["Ontario tenancy"])
         self.assertEqual(result["status"], "blocked")
         self.assertFalse(result["migration_started"])
 
-    def test_ivfflat_plan_is_dry_run_and_explicit(self):
-        with patch.object(index_service, "get_vector_status", return_value={"total_embeddings": 6_587_249}), patch.object(
+    def test_live_vector_search_refuses_hidden_full_table_scan(self):
+        with patch.object(vector_store, "ensure_vector_tables"), patch.object(
+            vector_store, "_pgvector_column_available", return_value=True
+        ), patch(
+            "app.service.vector_index_management_service.get_hnsw_index_state",
+            return_value={"valid": False, "ready": False},
+        ), patch.object(vector_store, "create_embedding") as create_embedding:
+            result = vector_store.vector_search("Ontario sentencing principles")
+        self.assertEqual(result["status"], "ann_unavailable")
+        create_embedding.assert_not_called()
+
+    def test_hnsw_plan_is_dry_run_and_explicit(self):
+        with patch.object(
             index_service, "embedding_metadata", return_value={"provider": "sentence_transformers", "model": "BAAI/bge-m3", "dimension": 1024}
         ):
-            plan = index_service.get_ivfflat_build_plan(lists=2048)
+            plan = index_service.get_hnsw_build_plan(m=16, ef_construction=64)
         self.assertFalse(plan["will_execute"])
         self.assertFalse(plan["migration_started"])
-        self.assertIn("USING ivfflat", plan["sql"])
-        self.assertIn("lists = 2048", plan["sql"])
+        self.assertIn("USING hnsw", plan["sql"])
+        self.assertIn("m = 16", plan["sql"])
 
     def test_canadian_entity_extraction_preserves_spans(self):
         result = extract_legal_entities(
