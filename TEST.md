@@ -397,3 +397,25 @@ p50_ms=9.563 p95_ms=14.769 rows=96
 ```
 
 `limit=40` 候选数守护通过；外层过滤不足时仅补查一次的边界测试通过。P0 阶段未修改 PostgreSQL 参数，未重建索引、未写入业务表、未回填或迁移。完整计划对比见 `docs/RETRIEVAL_PLAN_FIX_REPORT.md`。
+
+## 2026-11-04 P1 PostgreSQL 检索参数调优
+
+严格在 P0 提交 `5b28659` 之后执行 `ALTER SYSTEM` 并重启 `postgresql-x64-17`。实际生效值为：`shared_buffers=8GB`、`effective_cache_size=20GB`、`random_page_cost=1.1`、`work_mem=16MB`、`maintenance_work_mem=2097151kB`。最后一项是本机 PostgreSQL 允许的最大值，比整 2GB 少 1kB。五项均为 `pending_restart=false`。
+
+相同固定查询复测：
+
+```text
+plan_uses_hnsw=true
+plan_has_seq_scan=false
+p50_ms=8.596 p95_ms=9.993 rows=96
+```
+
+把当前验收会话的 `random_page_cost` 临时恢复到 4：
+
+```text
+plan_uses_hnsw=true
+plan_has_seq_scan=false
+p50_ms=8.421 p95_ms=19.716 rows=96
+```
+
+两次均使用 HNSW 且没有顺序扫描。重启后 HNSW 仍为 valid/ready，两个业务表行数与调整前一致。

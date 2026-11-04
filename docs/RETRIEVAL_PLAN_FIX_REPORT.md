@@ -123,7 +123,41 @@ Ran 58 tests ... OK
 
 ## 4. P1 参数调整
 
-P0 提交时尚未执行。必须在 P0 独立提交后再调整，并在本节补充重启后的实际值、相同脚本指标，以及会话级 `random_page_cost=4` 的计划回退验证。
+P0 已先作为独立提交 `5b28659` 固化，随后才执行 `ALTER SYSTEM` 并重启明确核实的 `postgresql-x64-17` 服务。主机物理内存为 34,023,731,200 bytes（约 31.7 GiB），重启前没有其他 `legal_demo` 活动会话。
+
+重启后的实际值：
+
+| 参数 | P0/调整前 | P1/调整后 | 状态 |
+|---|---:|---:|---|
+| `shared_buffers` | 128MB | 8GB | `pending_restart=false` |
+| `effective_cache_size` | 4GB | 20GB | 已生效 |
+| `random_page_cost` | 4 | 1.1 | 已生效 |
+| `work_mem` | 4MB | 16MB | 已生效 |
+| `maintenance_work_mem` | 64MB | 2,097,151kB | 已生效 |
+
+PostgreSQL 17.9 在本机报告的 `maintenance_work_mem.max_val=2097151kB`，整 `2GB`（2,097,152kB）会超出上限 1kB，因此使用该版本允许的最大值；没有通过绕过校验写入无效配置。
+
+重启后再次确认：HNSW `valid=true, ready=true, size=50GB`；`rag_chunks=6,587,274`、`rag_chunk_embeddings=6,587,249`，与调整前一致。
+
+相同固定查询与相同 20 次暖缓存验收：
+
+```text
+plan_uses_hnsw=true
+plan_has_seq_scan=false
+p50_ms=8.596 p95_ms=9.993 rows=96
+```
+
+与 P0 的 9.563/14.769 ms 相比，P50 下降 10.1%，P95 下降 32.3%。单机暖缓存样本较小，这一变化只说明参数调整未造成退化，不单独宣称为稳定吞吐收益。
+
+随后仅在验收会话内临时执行 `SET LOCAL random_page_cost=4`，结果为：
+
+```text
+plan_uses_hnsw=true
+plan_has_seq_scan=false
+p50_ms=8.421 p95_ms=19.716 rows=96
+```
+
+计划仍是 `Index Scan using idx_rag_chunk_embeddings_active_hnsw`，没有 `Seq Scan`。因此 P0 的正确计划由 ANN-first SQL 结构保证，不依赖把 `random_page_cost` 降到 1.1。
 
 ## 5. 未解决问题与本轮边界
 
