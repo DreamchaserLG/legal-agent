@@ -912,6 +912,75 @@ def _dedupe_vector_items(items: list[dict], limit: int) -> list[dict]:
     return deduped
 
 
+def _build_pgvector_ann_query(
+    query_vector: list[float],
+    *,
+    meta: dict,
+    module: str,
+    source_filter: str,
+    filters: dict | None,
+    ann_limit: int,
+) -> tuple[str, dict]:
+    """Build the exact ANN-first SQL used by ``vector_search``.
+
+    The HNSW-indexed relation must be ordered and limited before joining the
+    multi-million-row chunk table. Freshness and business filters belong to
+    the bounded outer lookup, never to the partial-index scan.
+    """
+    bounded_limit = max(1, min(int(ann_limit), 1000))
+    params = {
+        "ann_limit": bounded_limit,
+        "outer_limit": bounded_limit,
+        "embedding_model": meta["model"],
+        "embedding_provider": meta["provider"],
+        "query_vector": _vector_text(query_vector),
+    }
+    where_clause = _chunk_filter_clause(source_filter, module, params, alias="rc")
+    structured_clause, structured_params = _structured_filter_clause(filters, alias="rc")
+    params.update(structured_params)
+    sql = f"""
+        WITH ann AS MATERIALIZED (
+            SELECT
+                chunk_id,
+                embedding_vector <=> CAST(:query_vector AS vector) AS distance
+            FROM rag_chunk_embeddings
+            WHERE embedding_provider = :embedding_provider
+              AND embedding_model = :embedding_model
+              AND embedding_vector IS NOT NULL
+            ORDER BY embedding_vector <=> CAST(:query_vector AS vector)
+            LIMIT :ann_limit
+        )
+        SELECT
+            rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
+            rc.source_uid, rc.title, rc.source_url, rc.published_at, rc.chunk_index,
+            rc.jurisdiction, rc.document_type, rc.court_level, rc.language, rc.citation,
+            rc.text_content, rc.metadata_json,
+            1 - (rce.embedding_vector <=> CAST(:query_vector AS vector)) AS score
+        FROM ann a
+        JOIN rag_chunk_embeddings rce ON rce.chunk_id = a.chunk_id
+        JOIN rag_chunks rc ON rc.id = a.chunk_id
+        WHERE rc.content_hash = rce.content_hash
+          AND {where_clause}
+          {structured_clause}
+        ORDER BY a.distance
+        LIMIT :outer_limit
+    """
+    return sql, params
+
+
+def _configure_hnsw_search(conn, *, ann_limit: int) -> int:
+    effective_ef = max(_hnsw_ef_search(), int(ann_limit))
+    conn.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
+    conn.execute(text("SET LOCAL hnsw.max_scan_tuples = 20000"))
+    conn.execute(text(f"SET LOCAL hnsw.ef_search = {effective_ef}"))
+    return effective_ef
+
+
+def _execute_pgvector_ann(conn, sql: str, params: dict, *, ann_limit: int) -> list[dict]:
+    _configure_hnsw_search(conn, ann_limit=ann_limit)
+    return [dict(row) for row in conn.execute(text(sql), params).mappings().all()]
+
+
 def vector_search(
     query: str,
     *,
@@ -950,32 +1019,30 @@ def vector_search(
     params.update(structured_params)
 
     if _pgvector_column_available():
-        params["query_vector"] = _vector_text(query_vector)
-        # The ORDER BY expression and partial predicates exactly match the HNSW index.
-        sql = f"""
-            SELECT
-                rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
-                rc.source_uid, rc.title, rc.source_url, rc.published_at, rc.chunk_index,
-                rc.jurisdiction, rc.document_type, rc.court_level, rc.language, rc.citation,
-                rc.text_content, rc.metadata_json,
-                1 - (rce.embedding_vector <=> CAST(:query_vector AS vector)) AS score
-            FROM rag_chunks rc
-            JOIN rag_chunk_embeddings rce ON rce.chunk_id = rc.id
-            WHERE {where_clause}
-              AND rce.embedding_model = :embedding_model
-              AND rce.embedding_provider = :embedding_provider
-              AND rce.embedding_vector IS NOT NULL
-              AND rce.content_hash = rc.content_hash
-              {structured_clause}
-            ORDER BY rce.embedding_vector <=> CAST(:query_vector AS vector)
-            LIMIT :limit
-        """
+        sql, ann_params = _build_pgvector_ann_query(
+            query_vector,
+            meta=meta,
+            module=module,
+            source_filter=source_filter,
+            filters=filters,
+            ann_limit=raw_limit,
+        )
         with engine.connect() as conn:
-            try:
-                conn.execute(text(f"SET hnsw.ef_search = {_hnsw_ef_search()}"))
-            except Exception:
-                pass
-            rows = [dict(row) for row in conn.execute(text(sql), params).mappings().all()]
+            rows = _execute_pgvector_ann(conn, sql, ann_params, ann_limit=raw_limit)
+            first_items = [_row_to_item(row, float(row.get("score") or 0)) for row in rows]
+            if len(_dedupe_vector_items(first_items, max_items)) < max_items:
+                retry_limit = raw_limit * 2
+                retry_sql, retry_params = _build_pgvector_ann_query(
+                    query_vector,
+                    meta=meta,
+                    module=module,
+                    source_filter=source_filter,
+                    filters=filters,
+                    ann_limit=retry_limit,
+                )
+                rows = _execute_pgvector_ann(
+                    conn, retry_sql, retry_params, ann_limit=retry_limit,
+                )
         items = [_row_to_item(row, float(row.get("score") or 0)) for row in rows]
     else:
         sql = f"""

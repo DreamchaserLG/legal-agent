@@ -338,3 +338,62 @@ python scripts\build_hnsw_index.py --plan --m 16 --ef-construction 64
 ### 当前状态与未覆盖风险
 
 全量 HNSW 仍在本机后台构建，构建完成前 `valid=false/ready=false` 属正常状态，应用不会使用半成品。完成后必须补做全量 `EXPLAIN`、真实混合检索、加拿大 30+ 条/8+ 领域评测和页面端到端测试。当前 5,000 条样本不能替代全量业务准确率；结构化分块和多跳推理的提升幅度必须在整库 `legal-context-v2` 回填后用同语料、同模型、同查询的旧单轮基线做 A/B 才能最终确认。
+
+## 2026-11-04 全量 HNSW 独立复核与索引层评测
+
+### 目的与边界
+
+对前一轮"加拿大法律 RAG / 上下文分块 / 多跳检索 / HNSW"升级的量化叙述做独立复核，并在 6,587,249 条真实 BGE-M3 向量上补做全量 `EXPLAIN` 与召回/延迟评测。只读执行：未重建索引、未写入业务表、未执行 `legal-context-v2` 回填、未迁移、未部署。
+
+### 可复现命令
+
+```powershell
+python -m unittest discover -s tests -v
+python scripts\collect_hnsw_facts.py
+python scripts\eval_hnsw_fullscale_v2.py --queries 6 --k 10
+python scripts\make_hnsw_charts.py
+```
+
+原始结果：`outputs/hnsw_fullscale/`（`facts.json`、`results_v2.json`、`plan_compare.json`、`run_v2.log`、`fig1..fig4.png`）。完整报告：`docs/HNSW_FULLSCALE_EVAL_REPORT.md`。
+
+### 预期与实际
+
+- 预期：索引 valid/ready，体积与占用描述一致。实际：`indisvalid=t, indisready=t`；HNSW 50.2 GB，表 86 GB（主堆 1,180 MB + TOAST 34 GB + 索引 50 GB），与叙述一致。
+- 预期：分块 6,587,274、向量 6,587,249、缺 25、陈旧 60,000、`embedding_json` 425 万 NULL + 233 万空数组。实际：全部一致。
+- 预期：D 盘剩余约 133.8 GB。实际：133.81 GB。
+- 预期：55/55 回归通过。实际：`Ran 55 tests in 0.888s / OK`。
+- 预期：应用向量检索 SQL 在满量级数据上使用 HNSW 且无顺序扫描。实际：**不通过**。保留 `rce.content_hash = rc.content_hash` 时计划为 `Parallel Hash Join` + 对 20 GB 与 86 GB 两表各一次 `Seq Scan`，实测 306,380.6 ms；应用 `statement_timeout=12000` 会中断该查询，`hybrid_retrieval_service` 捕获异常后静默降级为纯关键词检索。
+- 预期：改写为 ANN 先行再 join 后恢复索引计划。实际：`Index Scan using idx_rag_chunk_embeddings_active_hnsw`，45.1 ms，计划成本由 1,846,964 降至 9,776。
+- 预期：全量 Recall@10 不低于 0.90。实际：6 条真实向量在 ef=40/80/160/400 均为 1.00；另 8 条独立取样中 7 条为 1.00、1 条稳定为 0.70（ef=400 为 0.80），故不应把 1.00 表述为系统固有属性。
+- 预期：全量 P50 延迟低于 100 ms。实际：ef=40/80/160/400 分别为 1.76 / 2.17 / 3.34 / 6.16 ms，精确基线 36,949 ms。
+- 预期：`LIMIT 160` 能取回 160 个候选。实际：`ef_search=80` 时只返回 80 行；`ef=200` 才返回 160 行。说明 `raw_limit = max_items * 4` 的过采样被 `ef_search` 上限抵消。
+- 预期：context-v1 记录可通过新鲜度过滤参与检索。实际：60,025 条中 0 条 `content_hash` 一致，该版本对语义检索完全不可见。
+
+### 结论
+
+上一轮的数字准确，但结论存在一处严重缺口：样本级（5,000 条）验收未覆盖满量级的 join 计划，导致一条 306 秒的查询被当作"已使用 HNSW"。同样口径下 5,000 条样本的 7.54x 与全量的 17,027x 相差三个数量级，说明 3.42x 不能作为 HNSW 的收益表述。修复项与优先级见报告第 5、8 节；本次未改动生产代码。
+
+## 2026-11-04 P0 向量检索执行计划修复
+
+固定查询：`Ontario sentencing principles prior criminal record intoxication`。数据库参数保持默认值，先复现旧 SQL 的 `Parallel Hash Join + 2 x Parallel Seq Scan`；本轮客户端等待超过 60 秒仍未完成，独立全程基线为 306,380.6 ms。
+
+修复后执行：
+
+```powershell
+python scripts\verify_retrieval_plan.py --runs 20
+python -m unittest tests.test_vector_search_query_plan -v
+python -m unittest discover -s tests -v
+```
+
+实际结果：
+
+```text
+plan_uses_hnsw=true
+plan_has_seq_scan=false
+p50_ms=9.563 p95_ms=14.769 rows=96
+
+专项测试：Ran 3 tests / OK
+全量回归：Ran 58 tests / OK
+```
+
+`limit=40` 候选数守护通过；外层过滤不足时仅补查一次的边界测试通过。P0 阶段未修改 PostgreSQL 参数，未重建索引、未写入业务表、未回填或迁移。完整计划对比见 `docs/RETRIEVAL_PLAN_FIX_REPORT.md`。
