@@ -1,0 +1,95 @@
+{
+  "id": "ontario-eviction",
+  "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+  "steps": [
+    {
+      "stage": "01_input",
+      "state": "received",
+      "detail": {
+        "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+        "limit": 24
+      }
+    },
+    {
+      "stage": "02_embedding",
+      "state": "encoded",
+      "detail": {
+        "model": "BAAI/bge-m3",
+        "dim": 1024,
+        "l2_norm": 1.0
+      }
+    },
+    {
+      "stage": "03_vector_search",
+      "state": "ok",
+      "detail": {
+        "ms": 1541.05,
+        "pgvector_enabled": true,
+        "index_type": "hnsw",
+        "items": 24,
+        "retrieval_stats": {
+          "ann_attempts": [
+            {
+              "ann_limit": 96,
+              "rows": 96
+            }
+          ],
+          "ann_query_count": 1,
+          "filtered_expansion": false
+        }
+      }
+    },
+    {
+      "stage": "04_ann_candidates",
+      "state": "bounded",
+      "detail": {
+        "ann_limit": 96,
+        "candidates": 96,
+        "uses_hnsw": true,
+        "has_seq_scan": false,
+        "plan_cost": 1506.12
+      }
+    },
+    {
+      "stage": "05_after_join_freshness",
+      "state": "filtered",
+      "detail": {
+        "rows": 24,
+        "note": "content_hash 相等 + 模块/source 过滤"
+      }
+    },
+    {
+      "stage": "06_deduped",
+      "state": "deduped",
+      "detail": {
+        "kept": 24,
+        "requested": 24,
+        "fill_rate": 1.0
+      }
+    },
+    {
+      "stage": "07_output",
+      "state": "ok",
+      "detail": {
+        "total_ms": 11427.87,
+        "top3": [
+          {
+            "title": "2025 NSSM 68 K.N. v. A.N.",
+            "citation": "2025 NSSM 68",
+            "score": 0.6261
+          },
+          {
+            "title": "2024 NSSC 101 Bluenose Inn and Suites v. McGuire",
+            "citation": "2024 NSSC 101",
+            "score": 0.6124
+          },
+          {
+            "title": "2007 NSSC 233 Whitty v. Nova Scotia (Human Rights Commission)",
+            "citation": "2007 NSSC 233",
+            "score": 0.608
+          }
+        ]
+      }
+    }
+  ]
+}

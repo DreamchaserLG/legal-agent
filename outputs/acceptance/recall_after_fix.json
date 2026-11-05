@@ -1,0 +1,193 @@
+{
+  "k": 10,
+  "exact_n": 100,
+  "configured_ef_search": 500,
+  "queries": [
+    {
+      "id": "ontario-eviction",
+      "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+      "exact_ms": 40833.6,
+      "ann": {
+        "10": {
+          "ms": 1362.89,
+          "returned": 10,
+          "recall_at_10": 1.0,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.3927,
+          "effective_ef_search": 500
+        },
+        "40": {
+          "ms": 53.66,
+          "returned": 40,
+          "recall_at_10": 1.0,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.3927,
+          "effective_ef_search": 500
+        },
+        "96": {
+          "ms": 71.34,
+          "returned": 96,
+          "recall_at_10": 1.0,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.3927,
+          "effective_ef_search": 500
+        },
+        "200": {
+          "ms": 97.24,
+          "returned": 200,
+          "recall_at_10": 1.0,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.3927,
+          "effective_ef_search": 500
+        }
+      },
+      "exact_mean_distance": 0.3927
+    },
+    {
+      "id": "criminal-sentencing",
+      "query": "加拿大刑事量刑中醉酒、过失与既往记录的加重减轻",
+      "exact_ms": 39762.8,
+      "ann": {
+        "10": {
+          "ms": 1272.47,
+          "returned": 10,
+          "recall_at_10": 1.0,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.36834,
+          "effective_ef_search": 500
+        },
+        "40": {
+          "ms": 43.61,
+          "returned": 40,
+          "recall_at_10": 1.0,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.36834,
+          "effective_ef_search": 500
+        },
+        "96": {
+          "ms": 63.29,
+          "returned": 95,
+          "recall_at_10": 1.0,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.36834,
+          "effective_ef_search": 500
+        },
+        "200": {
+          "ms": 93.29,
+          "returned": 195,
+          "recall_at_10": 1.0,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.36834,
+          "effective_ef_search": 500
+        }
+      },
+      "exact_mean_distance": 0.36834
+    },
+    {
+      "id": "contract",
+      "query": "显失公平交易与不当影响合同撤销",
+      "exact_ms": 37626.2,
+      "ann": {
+        "10": {
+          "ms": 1362.26,
+          "returned": 10,
+          "recall_at_10": 0.8,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.36161,
+          "effective_ef_search": 500
+        },
+        "40": {
+          "ms": 42.53,
+          "returned": 40,
+          "recall_at_10": 0.8,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.36161,
+          "effective_ef_search": 500
+        },
+        "96": {
+          "ms": 63.65,
+          "returned": 96,
+          "recall_at_10": 0.8,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.36161,
+          "effective_ef_search": 500
+        },
+        "200": {
+          "ms": 89.68,
+          "returned": 200,
+          "recall_at_10": 0.8,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.36161,
+          "effective_ef_search": 500
+        }
+      },
+      "exact_mean_distance": 0.36047
+    },
+    {
+      "id": "summary-judgment",
+      "query": "Ontario summary judgment threshold no genuine issue requiring trial",
+      "exact_ms": 37757.3,
+      "ann": {
+        "10": {
+          "ms": 1310.41,
+          "returned": 10,
+          "recall_at_10": 0.9,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.34199,
+          "effective_ef_search": 500
+        },
+        "40": {
+          "ms": 42.8,
+          "returned": 40,
+          "recall_at_10": 0.9,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.34199,
+          "effective_ef_search": 500
+        },
+        "96": {
+          "ms": 63.59,
+          "returned": 96,
+          "recall_at_10": 0.9,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.34199,
+          "effective_ef_search": 500
+        },
+        "200": {
+          "ms": 100.3,
+          "returned": 200,
+          "recall_at_10": 0.9,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.34199,
+          "effective_ef_search": 500
+        }
+      },
+      "exact_mean_distance": 0.34159
+    }
+  ],
+  "summary": {
+    "10": {
+      "recall_at_10_mean": 0.925,
+      "recall_at_10_min": 0.8,
+      "recall_at_10_tol1pct_mean": 1.0,
+      "p50_ms": 1336.34
+    },
+    "40": {
+      "recall_at_10_mean": 0.925,
+      "recall_at_10_min": 0.8,
+      "recall_at_10_tol1pct_mean": 1.0,
+      "p50_ms": 43.2
+    },
+    "96": {
+      "recall_at_10_mean": 0.925,
+      "recall_at_10_min": 0.8,
+      "recall_at_10_tol1pct_mean": 1.0,
+      "p50_ms": 63.62
+    },
+    "200": {
+      "recall_at_10_mean": 0.925,
+      "recall_at_10_min": 0.8,
+      "recall_at_10_tol1pct_mean": 1.0,
+      "p50_ms": 95.27
+    }
+  }
+}

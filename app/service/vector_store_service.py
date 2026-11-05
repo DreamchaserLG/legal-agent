@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import threading
 from datetime import datetime
 from time import perf_counter
 
@@ -37,6 +38,9 @@ CANADA_SOURCE_CODES = {
 }
 OFAC_SOURCE_CODES = {"ofac"}
 
+_VECTOR_SCHEMA_LOCK = threading.Lock()
+_VECTOR_SCHEMA_READY = False
+
 
 def _json_text(payload) -> str:
     return json.dumps(payload or {}, ensure_ascii=False, default=str)
@@ -59,7 +63,14 @@ def _hnsw_ef_construction() -> int:
 
 
 def _hnsw_ef_search() -> int:
-    return max(1, min(int(getattr(settings, "rag_hnsw_ef_search", 80) or 80), 1000))
+    return max(1, min(int(getattr(settings, "rag_hnsw_ef_search", 500) or 500), 1000))
+
+
+def _hnsw_filtered_scan_tuples() -> int:
+    return max(
+        1000,
+        min(int(getattr(settings, "rag_hnsw_filtered_scan_tuples", 20000) or 20000), 200000),
+    )
 
 
 def _defer_vector_indexes() -> bool:
@@ -362,7 +373,7 @@ def _ensure_active_hnsw_index() -> None:
         return
 
 
-def ensure_vector_tables() -> None:
+def _ensure_vector_tables_impl() -> None:
     ensure_rag_tables()
     use_pgvector = _try_enable_pgvector()
     vector_dimension = int(getattr(settings, "embedding_dimension", 384))
@@ -431,6 +442,24 @@ def ensure_vector_tables() -> None:
                 _ensure_pgvector_index(conn)
     if use_pgvector and not _defer_vector_indexes():
         _ensure_active_hnsw_index()
+
+
+def ensure_vector_tables() -> None:
+    """Initialize vector schema once per process without concurrent DDL.
+
+    Retrieval runs concurrently in the legal-research executor.  Reissuing
+    CREATE EXTENSION/TABLE/INDEX from every request can deadlock PostgreSQL's
+    catalogs even when every statement uses IF NOT EXISTS.  A failed first
+    initialization is deliberately not cached, so the next request can retry.
+    """
+    global _VECTOR_SCHEMA_READY
+    if _VECTOR_SCHEMA_READY:
+        return
+    with _VECTOR_SCHEMA_LOCK:
+        if _VECTOR_SCHEMA_READY:
+            return
+        _ensure_vector_tables_impl()
+        _VECTOR_SCHEMA_READY = True
 
 
 def _chunk_filter_clause(source_filter: str, module: str, params: dict, alias: str = "rc") -> str:
@@ -920,6 +949,7 @@ def _build_pgvector_ann_query(
     source_filter: str,
     filters: dict | None,
     ann_limit: int,
+    outer_limit: int | None = None,
 ) -> tuple[str, dict]:
     """Build the exact ANN-first SQL used by ``vector_search``.
 
@@ -927,10 +957,11 @@ def _build_pgvector_ann_query(
     multi-million-row chunk table. Freshness and business filters belong to
     the bounded outer lookup, never to the partial-index scan.
     """
-    bounded_limit = max(1, min(int(ann_limit), 1000))
+    bounded_limit = max(1, min(int(ann_limit), _hnsw_filtered_scan_tuples()))
+    bounded_outer_limit = max(1, min(int(outer_limit or ann_limit), 1000))
     params = {
         "ann_limit": bounded_limit,
-        "outer_limit": bounded_limit,
+        "outer_limit": bounded_outer_limit,
         "embedding_model": meta["model"],
         "embedding_provider": meta["provider"],
         "query_vector": _vector_text(query_vector),
@@ -969,11 +1000,24 @@ def _build_pgvector_ann_query(
 
 
 def _configure_hnsw_search(conn, *, ann_limit: int) -> int:
-    effective_ef = max(_hnsw_ef_search(), int(ann_limit))
+    # pgvector caps ef_search at 1000.  Larger filtered candidate scans rely on
+    # iterative_scan/max_scan_tuples rather than an invalid ef_search value.
+    effective_ef = min(1000, max(_hnsw_ef_search(), int(ann_limit)))
+    max_scan_tuples = max(20000, min(int(ann_limit), _hnsw_filtered_scan_tuples()))
     conn.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
-    conn.execute(text("SET LOCAL hnsw.max_scan_tuples = 20000"))
+    conn.execute(text(f"SET LOCAL hnsw.max_scan_tuples = {max_scan_tuples}"))
     conn.execute(text(f"SET LOCAL hnsw.ef_search = {effective_ef}"))
     return effective_ef
+
+
+def _needs_filtered_expansion(source_filter: str, filters: dict | None) -> bool:
+    source_is_selective = repair_text(source_filter or "all").lower() not in {
+        "", "all", "canada",
+    }
+    structured_is_selective = any(
+        repair_text(value) for value in (filters or {}).values() if value is not None
+    )
+    return source_is_selective or structured_is_selective
 
 
 def _execute_pgvector_ann(conn, sql: str, params: dict, *, ann_limit: int) -> list[dict]:
@@ -994,6 +1038,7 @@ def vector_search(
     if not clean_query:
         return {"query": clean_query, "items": [], "total": 0, "status": "empty_query"}
     if _pgvector_column_available():
+        used_filtered_expansion = False
         from app.service.vector_index_management_service import get_hnsw_index_state
 
         index_state = get_hnsw_index_state()
@@ -1029,9 +1074,17 @@ def vector_search(
         )
         with engine.connect() as conn:
             rows = _execute_pgvector_ann(conn, sql, ann_params, ann_limit=raw_limit)
+            ann_attempts = [{"ann_limit": raw_limit, "rows": len(rows)}]
             first_items = [_row_to_item(row, float(row.get("score") or 0)) for row in rows]
             if len(_dedupe_vector_items(first_items, max_items)) < max_items:
-                retry_limit = raw_limit * 2
+                needs_expanded_retry = _needs_filtered_expansion(source_filter, filters)
+                retry_limit = (
+                    max(raw_limit * 2, _hnsw_filtered_scan_tuples())
+                    if needs_expanded_retry
+                    else raw_limit * 2
+                )
+                used_filtered_expansion = needs_expanded_retry
+                retry_outer_limit = min(raw_limit * 2, 1000)
                 retry_sql, retry_params = _build_pgvector_ann_query(
                     query_vector,
                     meta=meta,
@@ -1039,12 +1092,16 @@ def vector_search(
                     source_filter=source_filter,
                     filters=filters,
                     ann_limit=retry_limit,
+                    outer_limit=retry_outer_limit,
                 )
                 rows = _execute_pgvector_ann(
                     conn, retry_sql, retry_params, ann_limit=retry_limit,
                 )
+                ann_attempts.append({"ann_limit": retry_limit, "rows": len(rows)})
         items = [_row_to_item(row, float(row.get("score") or 0)) for row in rows]
     else:
+        ann_attempts = []
+        used_filtered_expansion = False
         sql = f"""
         SELECT
             rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
@@ -1082,11 +1139,16 @@ def vector_search(
         "filters": filters or {},
         "items": items,
         "total": len(items),
-        "status": "ok",
+        "status": "ok" if items else "no_results",
         "embedding": meta,
         "diagnostic_only": diagnostic_only,
         "pgvector_enabled": _pgvector_column_available(),
         "index_type": _vector_index_type() if _pgvector_column_available() else "json_fallback",
         "index_options": {"ef_search": _hnsw_ef_search()},
+        "retrieval_stats": {
+            "ann_attempts": ann_attempts,
+            "ann_query_count": len(ann_attempts),
+            "filtered_expansion": used_filtered_expansion,
+        },
         "quantization": repair_text(getattr(settings, "rag_vector_quantization", "none")) or "none",
     }

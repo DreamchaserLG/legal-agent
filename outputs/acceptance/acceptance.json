@@ -1,0 +1,2137 @@
+{
+  "generated_at": "2026-11-04T23:45:39",
+  "A_env": {
+    "index": {
+      "name": "idx_rag_chunk_embeddings_active_hnsw",
+      "valid": true,
+      "ready": true,
+      "live": true,
+      "size": "50 GB",
+      "ddl": "CREATE INDEX idx_rag_chunk_embeddings_active_hnsw ON public.rag_chunk_embeddings USING hnsw (embedding_vector vector_cosine_ops) WITH (m='16', ef_construction='64') WHERE ((embedding_vector IS NOT NULL) AND ((embedding_provider)::text = 'sentence_transformers'::text) AND ((embedding_model)::text = 'BAAI/bge-m3'::text))"
+    },
+    "gucs": {
+      "effective_cache_size": {
+        "value": "2621440",
+        "unit": "8kB",
+        "pending": false
+      },
+      "hnsw.ef_search": {
+        "value": "40",
+        "unit": null,
+        "pending": false
+      },
+      "hnsw.iterative_scan": {
+        "value": "off",
+        "unit": null,
+        "pending": false
+      },
+      "hnsw.max_scan_tuples": {
+        "value": "20000",
+        "unit": null,
+        "pending": false
+      },
+      "maintenance_work_mem": {
+        "value": "2097151",
+        "unit": "kB",
+        "pending": false
+      },
+      "random_page_cost": {
+        "value": "1.1",
+        "unit": null,
+        "pending": false
+      },
+      "shared_buffers": {
+        "value": "1048576",
+        "unit": "8kB",
+        "pending": false
+      },
+      "statement_timeout": {
+        "value": "0",
+        "unit": "ms",
+        "pending": false
+      },
+      "work_mem": {
+        "value": "16384",
+        "unit": "kB",
+        "pending": false
+      }
+    },
+    "counts": {
+      "chunks": 6587274,
+      "embeddings": 6587249,
+      "stale": 60000
+    },
+    "app": {
+      "embedding_provider": "sentence_transformers",
+      "embedding_model": "BAAI/bge-m3",
+      "embedding_dimension": 1024,
+      "rag_hnsw_ef_search": 500,
+      "rag_vector_candidate_limit": 24,
+      "statement_timeout_ms": 12000,
+      "legal_research_max_rounds": 3
+    }
+  },
+  "B_plan": {
+    "total_combinations": 48,
+    "hnsw_hit": 48,
+    "hit_rate": 1.0,
+    "rows": [
+      {
+        "source_filter": "all",
+        "filters": null,
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1188.49,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": null,
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1506.12,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": null,
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1824.26,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": null,
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 3011.74,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1176.4,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1465.5,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1754.6,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 2836.5,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1176.4,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1465.5,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1754.6,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "all",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 2836.5,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": null,
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1176.52,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": null,
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1470.21,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": null,
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1763.12,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": null,
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 2859.68,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1176.9,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1466.16,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1755.42,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 2835.75,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1176.9,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1466.16,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1755.42,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "law",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 2835.75,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": null,
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1187.17,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": null,
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1502.67,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": null,
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1817.66,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": null,
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 2995.5,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1176.51,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1465.77,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1755.03,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 2837.57,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1176.51,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1465.77,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1755.03,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "case",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 2837.57,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": null,
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1189.14,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": null,
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1507.58,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": null,
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1826.01,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": null,
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 3015.87,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1177.99,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1470.21,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1762.43,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": {
+          "jurisdiction": "Ontario"
+        },
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 2856.07,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 8,
+        "ann_limit": 32,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1177.99,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 24,
+        "ann_limit": 96,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1470.21,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 40,
+        "ann_limit": 160,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 1762.43,
+        "plan_rows": 1
+      },
+      {
+        "source_filter": "canada",
+        "filters": {
+          "document_type": "statute"
+        },
+        "limit": 100,
+        "ann_limit": 400,
+        "uses_hnsw": true,
+        "node_types": [
+          "Limit",
+          "Limit",
+          "Index Scan",
+          "Nested Loop",
+          "Nested Loop",
+          "CTE Scan",
+          "Index Scan",
+          "Index Scan"
+        ],
+        "has_seq_scan": false,
+        "has_hash_join": false,
+        "total_cost": 2856.07,
+        "plan_rows": 1
+      }
+    ]
+  },
+  "C_perf": {
+    "limit_sweep": {
+      "8": {
+        "p50_ms": 52.2,
+        "p95_ms": 933.14,
+        "p99_ms": 933.14,
+        "min_ms": 48.59,
+        "max_ms": 933.14,
+        "avg_items": 8.0,
+        "requested": 8
+      },
+      "24": {
+        "p50_ms": 63.89,
+        "p95_ms": 90.84,
+        "p99_ms": 90.84,
+        "min_ms": 60.86,
+        "max_ms": 90.84,
+        "avg_items": 24.0,
+        "requested": 24
+      },
+      "40": {
+        "p50_ms": 78.42,
+        "p95_ms": 119.16,
+        "p99_ms": 119.16,
+        "min_ms": 75.71,
+        "max_ms": 119.16,
+        "avg_items": 40.0,
+        "requested": 40
+      },
+      "100": {
+        "p50_ms": 155.07,
+        "p95_ms": 247.44,
+        "p99_ms": 247.44,
+        "min_ms": 151.7,
+        "max_ms": 247.44,
+        "avg_items": 100.0,
+        "requested": 100
+      }
+    },
+    "cold_first": {
+      "ms": 638.43,
+      "items": 24,
+      "note": "进程内首查，含索引页首次加载"
+    },
+    "concurrency": {
+      "1": {
+        "requests": 24,
+        "errors": 0,
+        "qps": 8.75,
+        "p50_ms": 67.52,
+        "p95_ms": 77.75,
+        "error_sample": []
+      },
+      "4": {
+        "requests": 24,
+        "errors": 0,
+        "qps": 20.52,
+        "p50_ms": 188.83,
+        "p95_ms": 263.68,
+        "error_sample": []
+      },
+      "8": {
+        "requests": 24,
+        "errors": 0,
+        "qps": 18.86,
+        "p50_ms": 408.22,
+        "p95_ms": 485.32,
+        "error_sample": []
+      }
+    },
+    "db_only": {
+      "p50_ms": 29.7,
+      "p95_ms": 32.79,
+      "note": "仅 SQL 往返，不含 embedding 与 ensure_vector_tables"
+    },
+    "concurrency_sql": {
+      "1": {
+        "requests": 24,
+        "errors": 0,
+        "qps": 70.84,
+        "p50_ms": 13.49,
+        "p95_ms": 17.26,
+        "error_sample": []
+      },
+      "4": {
+        "requests": 24,
+        "errors": 0,
+        "qps": 231.74,
+        "p50_ms": 16.93,
+        "p95_ms": 18.11,
+        "error_sample": []
+      },
+      "8": {
+        "requests": 24,
+        "errors": 0,
+        "qps": 222.97,
+        "p50_ms": 20.2,
+        "p95_ms": 102.99,
+        "error_sample": []
+      }
+    }
+  },
+  "D_semantic": {
+    "k": 10,
+    "queries": [
+      {
+        "id": "ontario-eviction",
+        "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+        "ann_ms": 85.29,
+        "exact_ms": 39851.7,
+        "returned": 10,
+        "plan_uses_hnsw": true,
+        "plan_has_seq_scan": false,
+        "recall_at_10": 1.0,
+        "recall_dist_10": 1.0,
+        "mrr": 1.0,
+        "top1_in_exact": true,
+        "top1_score": 0.6261,
+        "latency_ratio": 467.2
+      },
+      {
+        "id": "wrongful-dismissal",
+        "query": "Ontario wrongful dismissal reasonable notice period calculation",
+        "ann_ms": 827.83,
+        "exact_ms": 37016.16,
+        "returned": 10,
+        "plan_uses_hnsw": true,
+        "plan_has_seq_scan": false,
+        "recall_at_10": 1.0,
+        "recall_dist_10": 1.0,
+        "mrr": 1.0,
+        "top1_in_exact": true,
+        "top1_score": 0.7444,
+        "latency_ratio": 44.7
+      },
+      {
+        "id": "criminal-sentencing",
+        "query": "加拿大刑事量刑中醉酒、过失与既往记录的加重减轻",
+        "ann_ms": 1279.15,
+        "exact_ms": 36025.75,
+        "returned": 10,
+        "plan_uses_hnsw": true,
+        "plan_has_seq_scan": false,
+        "recall_at_10": 1.0,
+        "recall_dist_10": 1.0,
+        "mrr": 1.0,
+        "top1_in_exact": true,
+        "top1_score": 0.639,
+        "latency_ratio": 28.2
+      },
+      {
+        "id": "charter-delay",
+        "query": "Charter s.11(b) unreasonable delay stay of proceedings",
+        "ann_ms": 986.7,
+        "exact_ms": 36454.12,
+        "returned": 10,
+        "plan_uses_hnsw": true,
+        "plan_has_seq_scan": false,
+        "recall_at_10": 1.0,
+        "recall_dist_10": 1.0,
+        "mrr": 1.0,
+        "top1_in_exact": true,
+        "top1_score": 0.7207,
+        "latency_ratio": 36.9
+      },
+      {
+        "id": "immigration",
+        "query": "inadmissibility for organized criminality and appeal rights",
+        "ann_ms": 880.94,
+        "exact_ms": 36253.52,
+        "returned": 10,
+        "plan_uses_hnsw": true,
+        "plan_has_seq_scan": false,
+        "recall_at_10": 1.0,
+        "recall_dist_10": 1.0,
+        "mrr": 1.0,
+        "top1_in_exact": true,
+        "top1_score": 0.6879,
+        "latency_ratio": 41.2
+      },
+      {
+        "id": "contract",
+        "query": "显失公平交易与不当影响合同撤销",
+        "ann_ms": 1287.74,
+        "exact_ms": 36297.44,
+        "returned": 10,
+        "plan_uses_hnsw": true,
+        "plan_has_seq_scan": false,
+        "recall_at_10": 0.8,
+        "recall_dist_10": 0.8,
+        "mrr": 1.0,
+        "top1_in_exact": true,
+        "top1_score": 0.6507,
+        "latency_ratio": 28.2
+      },
+      {
+        "id": "summary-judgment",
+        "query": "Ontario summary judgment threshold no genuine issue requiring trial",
+        "ann_ms": 1336.0,
+        "exact_ms": 36220.76,
+        "returned": 10,
+        "plan_uses_hnsw": true,
+        "plan_has_seq_scan": false,
+        "recall_at_10": 0.9,
+        "recall_dist_10": 0.9,
+        "mrr": 1.0,
+        "top1_in_exact": true,
+        "top1_score": 0.6875,
+        "latency_ratio": 27.1
+      },
+      {
+        "id": "appeal-standard",
+        "query": "上诉标准 palpable and overriding error standard of review",
+        "ann_ms": 344.2,
+        "exact_ms": 36513.25,
+        "returned": 10,
+        "plan_uses_hnsw": true,
+        "plan_has_seq_scan": false,
+        "recall_at_10": 1.0,
+        "recall_dist_10": 1.0,
+        "mrr": 1.0,
+        "top1_in_exact": true,
+        "top1_score": 0.7821,
+        "latency_ratio": 106.1
+      }
+    ],
+    "recall_at_10_mean": 0.9625,
+    "recall_dist_10_mean": 0.9625,
+    "mrr_mean": 1.0,
+    "plan_all_hnsw": true,
+    "ann_p50_ms": 986.7,
+    "exact_p50_ms": 36454.12,
+    "speedup_p50": 36.9
+  },
+  "E_traces": {
+    "vector": [
+      {
+        "id": "ontario-eviction",
+        "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+        "steps": [
+          {
+            "stage": "01_input",
+            "state": "received",
+            "detail": {
+              "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+              "limit": 24
+            }
+          },
+          {
+            "stage": "02_embedding",
+            "state": "encoded",
+            "detail": {
+              "model": "BAAI/bge-m3",
+              "dim": 1024,
+              "l2_norm": 1.0
+            }
+          },
+          {
+            "stage": "03_vector_search",
+            "state": "ok",
+            "detail": {
+              "ms": 1541.05,
+              "pgvector_enabled": true,
+              "index_type": "hnsw",
+              "items": 24,
+              "retrieval_stats": {
+                "ann_attempts": [
+                  {
+                    "ann_limit": 96,
+                    "rows": 96
+                  }
+                ],
+                "ann_query_count": 1,
+                "filtered_expansion": false
+              }
+            }
+          },
+          {
+            "stage": "04_ann_candidates",
+            "state": "bounded",
+            "detail": {
+              "ann_limit": 96,
+              "candidates": 96,
+              "uses_hnsw": true,
+              "has_seq_scan": false,
+              "plan_cost": 1506.12
+            }
+          },
+          {
+            "stage": "05_after_join_freshness",
+            "state": "filtered",
+            "detail": {
+              "rows": 24,
+              "note": "content_hash 相等 + 模块/source 过滤"
+            }
+          },
+          {
+            "stage": "06_deduped",
+            "state": "deduped",
+            "detail": {
+              "kept": 24,
+              "requested": 24,
+              "fill_rate": 1.0
+            }
+          },
+          {
+            "stage": "07_output",
+            "state": "ok",
+            "detail": {
+              "total_ms": 11427.87,
+              "top3": [
+                {
+                  "title": "2025 NSSM 68 K.N. v. A.N.",
+                  "citation": "2025 NSSM 68",
+                  "score": 0.6261
+                },
+                {
+                  "title": "2024 NSSC 101 Bluenose Inn and Suites v. McGuire",
+                  "citation": "2024 NSSC 101",
+                  "score": 0.6124
+                },
+                {
+                  "title": "2007 NSSC 233 Whitty v. Nova Scotia (Human Rights Commission)",
+                  "citation": "2007 NSSC 233",
+                  "score": 0.608
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "criminal-sentencing",
+        "query": "加拿大刑事量刑中醉酒、过失与既往记录的加重减轻",
+        "steps": [
+          {
+            "stage": "01_input",
+            "state": "received",
+            "detail": {
+              "query": "加拿大刑事量刑中醉酒、过失与既往记录的加重减轻",
+              "limit": 24
+            }
+          },
+          {
+            "stage": "02_embedding",
+            "state": "encoded",
+            "detail": {
+              "model": "BAAI/bge-m3",
+              "dim": 1024,
+              "l2_norm": 1.0
+            }
+          },
+          {
+            "stage": "03_vector_search",
+            "state": "ok",
+            "detail": {
+              "ms": 1165.23,
+              "pgvector_enabled": true,
+              "index_type": "hnsw",
+              "items": 24,
+              "retrieval_stats": {
+                "ann_attempts": [
+                  {
+                    "ann_limit": 96,
+                    "rows": 95
+                  }
+                ],
+                "ann_query_count": 1,
+                "filtered_expansion": false
+              }
+            }
+          },
+          {
+            "stage": "04_ann_candidates",
+            "state": "bounded",
+            "detail": {
+              "ann_limit": 96,
+              "candidates": 96,
+              "uses_hnsw": true,
+              "has_seq_scan": false,
+              "plan_cost": 1506.12
+            }
+          },
+          {
+            "stage": "05_after_join_freshness",
+            "state": "filtered",
+            "detail": {
+              "rows": 24,
+              "note": "content_hash 相等 + 模块/source 过滤"
+            }
+          },
+          {
+            "stage": "06_deduped",
+            "state": "deduped",
+            "detail": {
+              "kept": 24,
+              "requested": 24,
+              "fill_rate": 1.0
+            }
+          },
+          {
+            "stage": "07_output",
+            "state": "ok",
+            "detail": {
+              "total_ms": 1234.33,
+              "top3": [
+                {
+                  "title": "2020 BCCA 362 R. v. McGee",
+                  "citation": "2020 BCCA 362",
+                  "score": 0.639
+                },
+                {
+                  "title": "2014 BCCA 79 Sivia v. British Columbia (Superintendent of Motor Vehicl",
+                  "citation": "2014 BCCA 79",
+                  "score": 0.6378
+                },
+                {
+                  "title": "2010 BCCA 536 R. v. Truong",
+                  "citation": "2010 BCCA 536",
+                  "score": 0.6369
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "immigration",
+        "query": "inadmissibility for organized criminality and appeal rights",
+        "steps": [
+          {
+            "stage": "01_input",
+            "state": "received",
+            "detail": {
+              "query": "inadmissibility for organized criminality and appeal rights",
+              "limit": 24
+            }
+          },
+          {
+            "stage": "02_embedding",
+            "state": "encoded",
+            "detail": {
+              "model": "BAAI/bge-m3",
+              "dim": 1024,
+              "l2_norm": 1.0
+            }
+          },
+          {
+            "stage": "03_vector_search",
+            "state": "ok",
+            "detail": {
+              "ms": 826.78,
+              "pgvector_enabled": true,
+              "index_type": "hnsw",
+              "items": 24,
+              "retrieval_stats": {
+                "ann_attempts": [
+                  {
+                    "ann_limit": 96,
+                    "rows": 96
+                  }
+                ],
+                "ann_query_count": 1,
+                "filtered_expansion": false
+              }
+            }
+          },
+          {
+            "stage": "04_ann_candidates",
+            "state": "bounded",
+            "detail": {
+              "ann_limit": 96,
+              "candidates": 96,
+              "uses_hnsw": true,
+              "has_seq_scan": false,
+              "plan_cost": 1506.12
+            }
+          },
+          {
+            "stage": "05_after_join_freshness",
+            "state": "filtered",
+            "detail": {
+              "rows": 24,
+              "note": "content_hash 相等 + 模块/source 过滤"
+            }
+          },
+          {
+            "stage": "06_deduped",
+            "state": "deduped",
+            "detail": {
+              "kept": 24,
+              "requested": 24,
+              "fill_rate": 1.0
+            }
+          },
+          {
+            "stage": "07_output",
+            "state": "ok",
+            "detail": {
+              "total_ms": 905.88,
+              "top3": [
+                {
+                  "title": "2021 FCA 163 Canada (Public Safety and Emergency Preparedness) v. Gayt",
+                  "citation": "2021 FCA 163",
+                  "score": 0.6879
+                },
+                {
+                  "title": "2025 FC 797 Blanco Rubian v. Canada (Citizenship and Immigration)",
+                  "citation": "2025 FC 797",
+                  "score": 0.6595
+                },
+                {
+                  "title": "2023 FCA 151 Obazughanmwen v. Canada (Public Safety and Emergency Prep",
+                  "citation": "2023 FCA 151",
+                  "score": 0.6593
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "hybrid": [
+      {
+        "id": "ontario-eviction",
+        "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+        "total_ms": 9655.22,
+        "steps": [
+          {
+            "stage": "01_input",
+            "state": "received",
+            "detail": {
+              "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+              "limit": 8
+            }
+          },
+          {
+            "stage": "02_translate",
+            "state": "translated",
+            "detail": {
+              "source_lang": "zh",
+              "translated": "Ontario landlord tenant eviction remedy"
+            }
+          },
+          {
+            "stage": "03_plan",
+            "state": "planned",
+            "detail": {
+              "law_query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenanc",
+              "case_query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenanc",
+              "preferred_sources": [
+                "case",
+                "law"
+              ]
+            }
+          },
+          {
+            "stage": "04_partition:case",
+            "state": "lex=ok/vec=ok",
+            "detail": {
+              "lexical_total": 24,
+              "vector_total": 24,
+              "vector_error": "",
+              "lexical_ms": 2965.162,
+              "vector_ms": 684.755,
+              "vector_retrieval_stats": {
+                "ann_attempts": [
+                  {
+                    "ann_limit": 96,
+                    "rows": 96
+                  }
+                ],
+                "ann_query_count": 1,
+                "filtered_expansion": false
+              }
+            }
+          },
+          {
+            "stage": "04_partition:law",
+            "state": "lex=ok/vec=ok",
+            "detail": {
+              "lexical_total": 24,
+              "vector_total": 24,
+              "vector_error": "",
+              "lexical_ms": 245.708,
+              "vector_ms": 5348.663,
+              "vector_retrieval_stats": {
+                "ann_attempts": [
+                  {
+                    "ann_limit": 96,
+                    "rows": 0
+                  },
+                  {
+                    "ann_limit": 20000,
+                    "rows": 192
+                  }
+                ],
+                "ann_query_count": 2,
+                "filtered_expansion": true
+              }
+            }
+          },
+          {
+            "stage": "05_channels",
+            "state": "fused",
+            "detail": {
+              "lexical": 48,
+              "vector": 48,
+              "graph": 0,
+              "graph_paths": 24,
+              "vector_pgvector_enabled": true,
+              "vector_status": "ok"
+            }
+          },
+          {
+            "stage": "06_rerank_window",
+            "state": "n/a",
+            "detail": {
+              "window": {
+                "enabled": true,
+                "radius": 1,
+                "seed_limit": 4,
+                "bundles": 4,
+                "chunks": 11,
+                "estimated_tokens": 2558,
+                "token_budget": 8000
+              },
+              "timing_ms": {
+                "graph": 373.28,
+                "rerank": 6.551,
+                "context_window": 15.893
+              }
+            }
+          },
+          {
+            "stage": "07_output",
+            "state": "ok",
+            "detail": {
+              "total": 8,
+              "strategy": "structured_hybrid_graph_rrf_rerank_window",
+              "ms": 9655.22,
+              "top3": [
+                {
+                  "title": "1994 NSCA 124 Reference re Residential Tenancies Act",
+                  "score": 0.1988,
+                  "vector_score": 0.7223,
+                  "lexical_score": 0.1392
+                },
+                {
+                  "title": "2008 BCSC 727 Glandon v. (British Columbia) Residential Tenancy Branch",
+                  "score": 0.1752,
+                  "vector_score": 0.7118,
+                  "lexical_score": 0.0
+                },
+                {
+                  "title": "C40655 1162994 Ontario Inc. v. Bakker",
+                  "score": 0.1702,
+                  "vector_score": 0.7294,
+                  "lexical_score": 0.0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "charter-delay",
+        "query": "Charter s.11(b) unreasonable delay stay of proceedings",
+        "total_ms": 7263.25,
+        "steps": [
+          {
+            "stage": "01_input",
+            "state": "received",
+            "detail": {
+              "query": "Charter s.11(b) unreasonable delay stay of proceedings",
+              "limit": 8
+            }
+          },
+          {
+            "stage": "02_translate",
+            "state": "translated",
+            "detail": {
+              "source_lang": "en",
+              "translated": "Charter s.11(b) unreasonable delay stay of proceedings"
+            }
+          },
+          {
+            "stage": "03_plan",
+            "state": "planned",
+            "detail": {
+              "law_query": "Charter s.11(b) unreasonable delay stay of proceedings charter s.11 unreasonable delay stay proceedi",
+              "case_query": "Charter s.11(b) unreasonable delay stay of proceedings charter s.11 unreasonable delay stay proceedi",
+              "preferred_sources": [
+                "law",
+                "case"
+              ]
+            }
+          },
+          {
+            "stage": "04_partition:law",
+            "state": "lex=ok/vec=ok",
+            "detail": {
+              "lexical_total": 24,
+              "vector_total": 24,
+              "vector_error": "",
+              "lexical_ms": 216.302,
+              "vector_ms": 6495.242,
+              "vector_retrieval_stats": {
+                "ann_attempts": [
+                  {
+                    "ann_limit": 96,
+                    "rows": 6
+                  },
+                  {
+                    "ann_limit": 20000,
+                    "rows": 192
+                  }
+                ],
+                "ann_query_count": 2,
+                "filtered_expansion": true
+              }
+            }
+          },
+          {
+            "stage": "04_partition:case",
+            "state": "lex=ok/vec=ok",
+            "detail": {
+              "lexical_total": 17,
+              "vector_total": 24,
+              "vector_error": "",
+              "lexical_ms": 24.805,
+              "vector_ms": 96.604,
+              "vector_retrieval_stats": {
+                "ann_attempts": [
+                  {
+                    "ann_limit": 96,
+                    "rows": 89
+                  }
+                ],
+                "ann_query_count": 1,
+                "filtered_expansion": false
+              }
+            }
+          },
+          {
+            "stage": "05_channels",
+            "state": "fused",
+            "detail": {
+              "lexical": 41,
+              "vector": 48,
+              "graph": 20,
+              "graph_paths": 80,
+              "vector_pgvector_enabled": true,
+              "vector_status": "ok"
+            }
+          },
+          {
+            "stage": "06_rerank_window",
+            "state": "n/a",
+            "detail": {
+              "window": {
+                "enabled": true,
+                "radius": 1,
+                "seed_limit": 4,
+                "bundles": 4,
+                "chunks": 10,
+                "estimated_tokens": 1383,
+                "token_budget": 8000
+              },
+              "timing_ms": {
+                "graph": 404.277,
+                "rerank": 5.815,
+                "context_window": 8.878
+              }
+            }
+          },
+          {
+            "stage": "07_output",
+            "state": "ok",
+            "detail": {
+              "total": 8,
+              "strategy": "structured_hybrid_graph_rrf_rerank_window",
+              "ms": 7263.25,
+              "top3": [
+                {
+                  "title": "2001 BCSC 1599 R. v. Wilder",
+                  "score": 0.0845,
+                  "vector_score": 0.6662,
+                  "lexical_score": 0.0005
+                },
+                {
+                  "title": "2004 BCSC 987 HMTQ v. R.E.M.",
+                  "score": 0.0828,
+                  "vector_score": 0.6617,
+                  "lexical_score": 0.0
+                },
+                {
+                  "title": "2013 BCSC 1431 R. v. Goodkey",
+                  "score": 0.0812,
+                  "vector_score": 0.6559,
+                  "lexical_score": 0.0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "summary-judgment",
+        "query": "Ontario summary judgment threshold no genuine issue requiring trial",
+        "total_ms": 5877.11,
+        "steps": [
+          {
+            "stage": "01_input",
+            "state": "received",
+            "detail": {
+              "query": "Ontario summary judgment threshold no genuine issue requiring trial",
+              "limit": 8
+            }
+          },
+          {
+            "stage": "02_translate",
+            "state": "translated",
+            "detail": {
+              "source_lang": "en",
+              "translated": "Ontario summary judgment threshold no genuine issue requiring trial"
+            }
+          },
+          {
+            "stage": "03_plan",
+            "state": "planned",
+            "detail": {
+              "law_query": "Ontario Ontario summary judgment threshold no genuine issue requiring trial summary judgment thresho",
+              "case_query": "Ontario Ontario summary judgment threshold no genuine issue requiring trial summary judgment thresho",
+              "preferred_sources": [
+                "law",
+                "case"
+              ]
+            }
+          },
+          {
+            "stage": "04_partition:law",
+            "state": "lex=ok/vec=ok",
+            "detail": {
+              "lexical_total": 24,
+              "vector_total": 24,
+              "vector_error": "",
+              "lexical_ms": 493.362,
+              "vector_ms": 4863.027,
+              "vector_retrieval_stats": {
+                "ann_attempts": [
+                  {
+                    "ann_limit": 96,
+                    "rows": 1
+                  },
+                  {
+                    "ann_limit": 20000,
+                    "rows": 192
+                  }
+                ],
+                "ann_query_count": 2,
+                "filtered_expansion": true
+              }
+            }
+          },
+          {
+            "stage": "04_partition:case",
+            "state": "lex=ok/vec=ok",
+            "detail": {
+              "lexical_total": 10,
+              "vector_total": 24,
+              "vector_error": "",
+              "lexical_ms": 93.253,
+              "vector_ms": 93.224,
+              "vector_retrieval_stats": {
+                "ann_attempts": [
+                  {
+                    "ann_limit": 96,
+                    "rows": 95
+                  }
+                ],
+                "ann_query_count": 1,
+                "filtered_expansion": false
+              }
+            }
+          },
+          {
+            "stage": "05_channels",
+            "state": "fused",
+            "detail": {
+              "lexical": 34,
+              "vector": 48,
+              "graph": 1,
+              "graph_paths": 1,
+              "vector_pgvector_enabled": true,
+              "vector_status": "ok"
+            }
+          },
+          {
+            "stage": "06_rerank_window",
+            "state": "n/a",
+            "detail": {
+              "window": {
+                "enabled": true,
+                "radius": 1,
+                "seed_limit": 4,
+                "bundles": 4,
+                "chunks": 11,
+                "estimated_tokens": 1813,
+                "token_budget": 8000
+              },
+              "timing_ms": {
+                "graph": 305.588,
+                "rerank": 5.789,
+                "context_window": 10.928
+              }
+            }
+          },
+          {
+            "stage": "07_output",
+            "state": "ok",
+            "detail": {
+              "total": 8,
+              "strategy": "structured_hybrid_graph_rrf_rerank_window",
+              "ms": 5877.11,
+              "top3": [
+                {
+                  "title": "2012 NSSC 257 Coady v. Burton Canada Company",
+                  "score": 0.1038,
+                  "vector_score": 0.6371,
+                  "lexical_score": 0.005
+                },
+                {
+                  "title": "2020 ONCA 812 Ontario Securities Commission v. Money Gate Mortgage Inv",
+                  "score": 0.1027,
+                  "vector_score": 0.6298,
+                  "lexical_score": 0.0011
+                },
+                {
+                  "title": "2018 FC 229 Flaro v. Canada",
+                  "score": 0.09,
+                  "vector_score": 0.6596,
+                  "lexical_score": 0.0
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "edge_cases": [
+      {
+        "input": "",
+        "status": "empty_query",
+        "total": 0,
+        "ms": 0.0
+      },
+      {
+        "input": "   ",
+        "status": "empty_query",
+        "total": 0,
+        "ms": 0.01
+      },
+      {
+        "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "ok",
+        "total": 8,
+        "ms": 2346.55
+      },
+      {
+        "input": "《民法典》第 1165 条",
+        "status": "ok",
+        "total": 8,
+        "ms": 1436.16
+      },
+      {
+        "input": "🚗🚗🚗",
+        "status": "ok",
+        "total": 8,
+        "ms": 1335.96
+      }
+    ]
+  },
+  "updated_at": "2026-11-05T11:55:41"
+}

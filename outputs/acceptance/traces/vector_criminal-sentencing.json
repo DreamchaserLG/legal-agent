@@ -1,0 +1,95 @@
+{
+  "id": "criminal-sentencing",
+  "query": "加拿大刑事量刑中醉酒、过失与既往记录的加重减轻",
+  "steps": [
+    {
+      "stage": "01_input",
+      "state": "received",
+      "detail": {
+        "query": "加拿大刑事量刑中醉酒、过失与既往记录的加重减轻",
+        "limit": 24
+      }
+    },
+    {
+      "stage": "02_embedding",
+      "state": "encoded",
+      "detail": {
+        "model": "BAAI/bge-m3",
+        "dim": 1024,
+        "l2_norm": 1.0
+      }
+    },
+    {
+      "stage": "03_vector_search",
+      "state": "ok",
+      "detail": {
+        "ms": 1165.23,
+        "pgvector_enabled": true,
+        "index_type": "hnsw",
+        "items": 24,
+        "retrieval_stats": {
+          "ann_attempts": [
+            {
+              "ann_limit": 96,
+              "rows": 95
+            }
+          ],
+          "ann_query_count": 1,
+          "filtered_expansion": false
+        }
+      }
+    },
+    {
+      "stage": "04_ann_candidates",
+      "state": "bounded",
+      "detail": {
+        "ann_limit": 96,
+        "candidates": 96,
+        "uses_hnsw": true,
+        "has_seq_scan": false,
+        "plan_cost": 1506.12
+      }
+    },
+    {
+      "stage": "05_after_join_freshness",
+      "state": "filtered",
+      "detail": {
+        "rows": 24,
+        "note": "content_hash 相等 + 模块/source 过滤"
+      }
+    },
+    {
+      "stage": "06_deduped",
+      "state": "deduped",
+      "detail": {
+        "kept": 24,
+        "requested": 24,
+        "fill_rate": 1.0
+      }
+    },
+    {
+      "stage": "07_output",
+      "state": "ok",
+      "detail": {
+        "total_ms": 1234.33,
+        "top3": [
+          {
+            "title": "2020 BCCA 362 R. v. McGee",
+            "citation": "2020 BCCA 362",
+            "score": 0.639
+          },
+          {
+            "title": "2014 BCCA 79 Sivia v. British Columbia (Superintendent of Motor Vehicl",
+            "citation": "2014 BCCA 79",
+            "score": 0.6378
+          },
+          {
+            "title": "2010 BCCA 536 R. v. Truong",
+            "citation": "2010 BCCA 536",
+            "score": 0.6369
+          }
+        ]
+      }
+    }
+  ]
+}

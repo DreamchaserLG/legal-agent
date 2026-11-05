@@ -1,0 +1,176 @@
+{
+  "k": 10,
+  "exact_n": 100,
+  "queries": [
+    {
+      "id": "ontario-eviction",
+      "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+      "exact_ms": 45579.4,
+      "ann": {
+        "10": {
+          "ms": 356.11,
+          "returned": 10,
+          "recall_at_10": 0.8,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.39364
+        },
+        "40": {
+          "ms": 41.9,
+          "returned": 40,
+          "recall_at_10": 0.8,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.39364
+        },
+        "96": {
+          "ms": 94.82,
+          "returned": 96,
+          "recall_at_10": 0.8,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.39364
+        },
+        "200": {
+          "ms": 392.17,
+          "returned": 200,
+          "recall_at_10": 0.9,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.39288
+        }
+      },
+      "exact_mean_distance": 0.3927
+    },
+    {
+      "id": "criminal-sentencing",
+      "query": "加拿大刑事量刑中醉酒、过失与既往记录的加重减轻",
+      "exact_ms": 42002.7,
+      "ann": {
+        "10": {
+          "ms": 429.88,
+          "returned": 10,
+          "recall_at_10": 0.3,
+          "recall_at_10_tol1pct": 0.5,
+          "mean_distance": 0.38
+        },
+        "40": {
+          "ms": 40.89,
+          "returned": 40,
+          "recall_at_10": 0.3,
+          "recall_at_10_tol1pct": 0.5,
+          "mean_distance": 0.38
+        },
+        "96": {
+          "ms": 162.7,
+          "returned": 92,
+          "recall_at_10": 0.4,
+          "recall_at_10_tol1pct": 0.6,
+          "mean_distance": 0.37752
+        },
+        "200": {
+          "ms": 303.18,
+          "returned": 195,
+          "recall_at_10": 0.6,
+          "recall_at_10_tol1pct": 0.8,
+          "mean_distance": 0.3744
+        }
+      },
+      "exact_mean_distance": 0.36834
+    },
+    {
+      "id": "contract",
+      "query": "显失公平交易与不当影响合同撤销",
+      "exact_ms": 40744.0,
+      "ann": {
+        "10": {
+          "ms": 297.03,
+          "returned": 10,
+          "recall_at_10": 0.6,
+          "recall_at_10_tol1pct": 0.9,
+          "mean_distance": 0.36335
+        },
+        "40": {
+          "ms": 33.82,
+          "returned": 40,
+          "recall_at_10": 0.6,
+          "recall_at_10_tol1pct": 0.9,
+          "mean_distance": 0.36335
+        },
+        "96": {
+          "ms": 108.59,
+          "returned": 96,
+          "recall_at_10": 0.7,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.3625
+        },
+        "200": {
+          "ms": 424.61,
+          "returned": 200,
+          "recall_at_10": 0.7,
+          "recall_at_10_tol1pct": 1.0,
+          "mean_distance": 0.3624
+        }
+      },
+      "exact_mean_distance": 0.36047
+    },
+    {
+      "id": "summary-judgment",
+      "query": "Ontario summary judgment threshold no genuine issue requiring trial",
+      "exact_ms": 41389.8,
+      "ann": {
+        "10": {
+          "ms": 319.66,
+          "returned": 10,
+          "recall_at_10": 0.0,
+          "recall_at_10_tol1pct": 0.0,
+          "mean_distance": 0.40716
+        },
+        "40": {
+          "ms": 28.35,
+          "returned": 40,
+          "recall_at_10": 0.0,
+          "recall_at_10_tol1pct": 0.0,
+          "mean_distance": 0.40716
+        },
+        "96": {
+          "ms": 102.7,
+          "returned": 96,
+          "recall_at_10": 0.0,
+          "recall_at_10_tol1pct": 0.0,
+          "mean_distance": 0.40697
+        },
+        "200": {
+          "ms": 319.63,
+          "returned": 200,
+          "recall_at_10": 0.0,
+          "recall_at_10_tol1pct": 0.0,
+          "mean_distance": 0.40643
+        }
+      },
+      "exact_mean_distance": 0.34159
+    }
+  ],
+  "summary": {
+    "10": {
+      "recall_at_10_mean": 0.425,
+      "recall_at_10_min": 0.0,
+      "recall_at_10_tol1pct_mean": 0.6,
+      "p50_ms": 337.88
+    },
+    "40": {
+      "recall_at_10_mean": 0.425,
+      "recall_at_10_min": 0.0,
+      "recall_at_10_tol1pct_mean": 0.6,
+      "p50_ms": 37.36
+    },
+    "96": {
+      "recall_at_10_mean": 0.475,
+      "recall_at_10_min": 0.0,
+      "recall_at_10_tol1pct_mean": 0.65,
+      "p50_ms": 105.65
+    },
+    "200": {
+      "recall_at_10_mean": 0.55,
+      "recall_at_10_min": 0.0,
+      "recall_at_10_tol1pct_mean": 0.7,
+      "p50_ms": 355.9
+    }
+  }
+}

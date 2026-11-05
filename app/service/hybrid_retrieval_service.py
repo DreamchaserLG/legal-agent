@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from time import perf_counter
 
 from app.core.config import settings
 from app.service.common_service import repair_text
@@ -172,6 +173,7 @@ def hybrid_search(
     vector_status = ""
     vector_pgvector_enabled = False
     for partition_name, partition_source, partition_query in _retrieval_partitions(source_filter, query_plan):
+        lexical_started = perf_counter()
         try:
             lexical_result = rag_search(
                 partition_query or lexical_query,
@@ -183,6 +185,8 @@ def hybrid_search(
             )
         except Exception as exc:
             lexical_result = {"status": "error", "items": [], "error": repair_text(str(exc))[:300]}
+        lexical_ms = round((perf_counter() - lexical_started) * 1000, 3)
+        vector_started = perf_counter()
         if include_vector:
             try:
                 vector_result = vector_search(
@@ -202,6 +206,7 @@ def hybrid_search(
                 "status": "skipped_by_research_budget", "items": [],
                 "embedding": {}, "pgvector_enabled": False,
             }
+        vector_ms = round((perf_counter() - vector_started) * 1000, 3)
         for item in lexical_result.get("items") or []:
             current = dict(item)
             current["retrieval_partition"] = partition_name
@@ -224,9 +229,13 @@ def hybrid_search(
                 "vector_status": vector_result.get("status", "ok"),
                 "lexical_error": lexical_result.get("error", ""),
                 "vector_error": vector_result.get("error", ""),
+                "lexical_ms": lexical_ms,
+                "vector_ms": vector_ms,
+                "vector_retrieval_stats": vector_result.get("retrieval_stats") or {},
             }
         )
     graph_result: dict = {"status": "disabled", "items": [], "total": 0}
+    graph_started = perf_counter()
     if bool(getattr(settings, "rag_graph_enabled", True)) and normalize_module(module) == "canada":
         try:
             graph_result = search_legal_graph(
@@ -245,6 +254,7 @@ def hybrid_search(
                 "total": 0,
                 "error": repair_text(str(exc))[:300],
             }
+    graph_ms = round((perf_counter() - graph_started) * 1000, 3)
     vector_provider = repair_text(vector_embedding.get("provider")).lower()
     vector_diagnostic_only = vector_provider == "hash"
     effective_vector_weight = 0.0 if vector_diagnostic_only else vector_weight
@@ -320,13 +330,17 @@ def hybrid_search(
         ),
         reverse=True,
     )
+    rerank_started = perf_counter()
     items = rerank_legal_evidence(rerank_query, fused_items, plan=query_plan, limit=final_limit)
+    rerank_ms = round((perf_counter() - rerank_started) * 1000, 3)
+    window_started = perf_counter()
     try:
         window_result = expand_context_windows(items)
         items = window_result.get("items") or items
         window_stats = window_result.get("stats") or {}
     except Exception as exc:
         window_stats = {"enabled": True, "status": "error", "error": repair_text(str(exc))[:300]}
+    window_ms = round((perf_counter() - window_started) * 1000, 3)
 
     return {
         "query": clean_query,
@@ -367,6 +381,11 @@ def hybrid_search(
             },
             "context_window": window_stats,
             "partitions": partition_stats,
+            "timing_ms": {
+                "graph": graph_ms,
+                "rerank": rerank_ms,
+                "context_window": window_ms,
+            },
         },
     }
 

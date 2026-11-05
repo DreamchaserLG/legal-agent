@@ -1,0 +1,142 @@
+{
+  "id": "summary-judgment",
+  "query": "Ontario summary judgment threshold no genuine issue requiring trial",
+  "total_ms": 5877.11,
+  "steps": [
+    {
+      "stage": "01_input",
+      "state": "received",
+      "detail": {
+        "query": "Ontario summary judgment threshold no genuine issue requiring trial",
+        "limit": 8
+      }
+    },
+    {
+      "stage": "02_translate",
+      "state": "translated",
+      "detail": {
+        "source_lang": "en",
+        "translated": "Ontario summary judgment threshold no genuine issue requiring trial"
+      }
+    },
+    {
+      "stage": "03_plan",
+      "state": "planned",
+      "detail": {
+        "law_query": "Ontario Ontario summary judgment threshold no genuine issue requiring trial summary judgment thresho",
+        "case_query": "Ontario Ontario summary judgment threshold no genuine issue requiring trial summary judgment thresho",
+        "preferred_sources": [
+          "law",
+          "case"
+        ]
+      }
+    },
+    {
+      "stage": "04_partition:law",
+      "state": "lex=ok/vec=ok",
+      "detail": {
+        "lexical_total": 24,
+        "vector_total": 24,
+        "vector_error": "",
+        "lexical_ms": 493.362,
+        "vector_ms": 4863.027,
+        "vector_retrieval_stats": {
+          "ann_attempts": [
+            {
+              "ann_limit": 96,
+              "rows": 1
+            },
+            {
+              "ann_limit": 20000,
+              "rows": 192
+            }
+          ],
+          "ann_query_count": 2,
+          "filtered_expansion": true
+        }
+      }
+    },
+    {
+      "stage": "04_partition:case",
+      "state": "lex=ok/vec=ok",
+      "detail": {
+        "lexical_total": 10,
+        "vector_total": 24,
+        "vector_error": "",
+        "lexical_ms": 93.253,
+        "vector_ms": 93.224,
+        "vector_retrieval_stats": {
+          "ann_attempts": [
+            {
+              "ann_limit": 96,
+              "rows": 95
+            }
+          ],
+          "ann_query_count": 1,
+          "filtered_expansion": false
+        }
+      }
+    },
+    {
+      "stage": "05_channels",
+      "state": "fused",
+      "detail": {
+        "lexical": 34,
+        "vector": 48,
+        "graph": 1,
+        "graph_paths": 1,
+        "vector_pgvector_enabled": true,
+        "vector_status": "ok"
+      }
+    },
+    {
+      "stage": "06_rerank_window",
+      "state": "n/a",
+      "detail": {
+        "window": {
+          "enabled": true,
+          "radius": 1,
+          "seed_limit": 4,
+          "bundles": 4,
+          "chunks": 11,
+          "estimated_tokens": 1813,
+          "token_budget": 8000
+        },
+        "timing_ms": {
+          "graph": 305.588,
+          "rerank": 5.789,
+          "context_window": 10.928
+        }
+      }
+    },
+    {
+      "stage": "07_output",
+      "state": "ok",
+      "detail": {
+        "total": 8,
+        "strategy": "structured_hybrid_graph_rrf_rerank_window",
+        "ms": 5877.11,
+        "top3": [
+          {
+            "title": "2012 NSSC 257 Coady v. Burton Canada Company",
+            "score": 0.1038,
+            "vector_score": 0.6371,
+            "lexical_score": 0.005
+          },
+          {
+            "title": "2020 ONCA 812 Ontario Securities Commission v. Money Gate Mortgage Inv",
+            "score": 0.1027,
+            "vector_score": 0.6298,
+            "lexical_score": 0.0011
+          },
+          {
+            "title": "2018 FC 229 Flaro v. Canada",
+            "score": 0.09,
+            "vector_score": 0.6596,
+            "lexical_score": 0.0
+          }
+        ]
+      }
+    }
+  ]
+}

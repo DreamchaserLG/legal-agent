@@ -419,3 +419,57 @@ p50_ms=8.421 p95_ms=19.716 rows=96
 ```
 
 两次均使用 HNSW 且没有顺序扫描。重启后 HNSW 仍为 valid/ready，两个业务表行数与调整前一致。
+
+## 2026-11-04 检索修复完整验收（34 条用例）
+
+### 范围与方法
+
+对 `5b28659`（ANN-first 计划）与 `1cb897e`（参数调优）做独立验收。只读：未重建索引、未写入业务表、未回填。分六层：A 环境基线 8 条、B 计划矩阵 48 组（合并 5 条）、C 性能与并发 10 条、D 语义质量 6 条、E 端到端与边界 7 条、F 回归 2 条。完整报告见 `docs/RETRIEVAL_ACCEPTANCE_REPORT.md`。
+
+### 可复现命令
+
+```powershell
+python -m unittest discover -s tests -v
+python scripts\run_retrieval_acceptance.py --section A,B,C
+python scripts\run_retrieval_acceptance.py --section D,E
+python scripts\eval_recall_vs_annlimit.py --queries 4
+python scripts\make_acceptance_charts.py
+```
+
+### 预期与实际
+
+- 预期：48 种过滤/limit 组合全部命中 HNSW。实际：48/48，无 Seq Scan、无 Hash Join。
+- 预期：纯 SQL P50 < 50 ms。实际：11.57 ms，P95 19.42 ms；基线 306,380.6 ms，约 26,500 倍。
+- 预期：候选填充率 100%。实际：limit 8/24/40/100 全部填满。
+- 预期：并发 4 线程无错误。实际：**应用层 11/24 失败（46%）**，8 线程 17/24（71%），全部为 `DeadlockDetected`；绕开 `ensure_vector_tables()` 后同样的 SQL 0 错误（4 线程 312 QPS）。
+- 预期：`source_filter='law'` 返回 24 条。实际：**0 条且 status=ok**；该查询前 5,000 个近邻中 0 条法条，第 1 条法条约在第 20,000 位。
+- 预期：生产配置 `ann_limit=96` 下 Recall@10 ≥ 0.90。实际：4 条查询均值 0.475（0.0 / 0.3 / 0.6 / 0.8）；容差 1% 口径 0.65。
+- 预期：提高 ef_search 可恢复召回。实际：某查询 ef 40/80/200 均为 0，ef=500 为 0.9，ef=1000 为 1.0，暖态耗时 21 ms。
+- 预期：边界输入不抛异常。实际：空串返回 `empty_query`，3,000 字符、中文法条名、emoji 均返回 `ok`。
+- 预期：`hybrid_search` 三通道齐全。实际：齐全，但法条分区 `vector_total=0`；单查询端到端 1,746–4,506 ms。
+- 预期：58 项回归通过。实际：58/58，0.913 s。
+
+### 中间状态链
+
+`vector_search`：输入 → BGE-M3 编码（1024 维，L2=1.0）→ 索引守卫与查询（`pgvector_enabled=true`）→ ANN 候选（ann_limit=96，`uses_hnsw=true`，成本 1506）→ 新鲜度过滤（24 行）→ 去重（24/24）→ 输出（Top-1 score 0.6261）。
+`hybrid_search`：输入 → 中英改写 → 查询计划 → 分区 case（词法 24 / 向量 24）+ 分区 law（词法 24 / **向量 0**）→ RRF 融合（48 + 24 + 图谱 0）→ 重排与窗口（4 bundle / 11 chunk / 2,558 tokens）→ 输出 8 条。6 条完整链路已存 `outputs/acceptance/traces/`。
+
+### 结论
+
+计划修复有效，延迟指标成立；但验收同时暴露三处未覆盖路径：强过滤分区被 `ann_limit` 截断导致语义归零、并发 DDL 死锁、`m=16/ef_construction=64` 在 658 万规模下图可达性不足。34 条用例中 26 通过、8 不通过。修复建议见报告第 6 节。
+
+## 2026-11-05 DeepSeek 验收缺陷修复复测
+
+在不重建索引、不修改向量、不写业务表的边界内完成三项修复：schema/extension DDL 进程内只执行一次；强 source/结构化过滤不足时第二次且仅第二次扩展到20,000个 HNSW 候选；默认 `ef_search` 从80提高到500。新增请求级 `retrieval_stats` 和 hybrid 分区计时。
+
+相同脚本复测结果：
+
+- 法条向量分区：0 → 24；case/law 向量通道由24/0变为24/24。
+- 4线程：11/24错误 → 0/24；8线程：17/24错误 → 0/24。
+- 48/48 计划继续命中 HNSW，无 Seq Scan/Hash Join。
+- 8查询 Recall@10：0.675 → 0.9625；MRR：0.875 → 1.0。
+- 4查询生产 `ann_limit=96`：Recall@10 0.475 → 0.925。
+- Ontario eviction 混合检索：4,506ms且law向量0 → 1,485.78ms且law向量24。
+- 专项7/7、全量62/62通过。
+
+残余边界：8条中合同查询Recall@10仍为0.8，summary judgment为0.9；`ef=1000`未稳定修复合同样本，根因仍是现有 `m=16/ef_construction=64` 图结构。本轮按约束未重建。limit=100在ef=500下P95为247.44ms，记录为质量换延迟的明确代价。完整数据见 `docs/RETRIEVAL_ACCEPTANCE_REPORT.md` 第9节。

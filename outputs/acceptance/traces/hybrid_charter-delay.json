@@ -1,0 +1,142 @@
+{
+  "id": "charter-delay",
+  "query": "Charter s.11(b) unreasonable delay stay of proceedings",
+  "total_ms": 7263.25,
+  "steps": [
+    {
+      "stage": "01_input",
+      "state": "received",
+      "detail": {
+        "query": "Charter s.11(b) unreasonable delay stay of proceedings",
+        "limit": 8
+      }
+    },
+    {
+      "stage": "02_translate",
+      "state": "translated",
+      "detail": {
+        "source_lang": "en",
+        "translated": "Charter s.11(b) unreasonable delay stay of proceedings"
+      }
+    },
+    {
+      "stage": "03_plan",
+      "state": "planned",
+      "detail": {
+        "law_query": "Charter s.11(b) unreasonable delay stay of proceedings charter s.11 unreasonable delay stay proceedi",
+        "case_query": "Charter s.11(b) unreasonable delay stay of proceedings charter s.11 unreasonable delay stay proceedi",
+        "preferred_sources": [
+          "law",
+          "case"
+        ]
+      }
+    },
+    {
+      "stage": "04_partition:law",
+      "state": "lex=ok/vec=ok",
+      "detail": {
+        "lexical_total": 24,
+        "vector_total": 24,
+        "vector_error": "",
+        "lexical_ms": 216.302,
+        "vector_ms": 6495.242,
+        "vector_retrieval_stats": {
+          "ann_attempts": [
+            {
+              "ann_limit": 96,
+              "rows": 6
+            },
+            {
+              "ann_limit": 20000,
+              "rows": 192
+            }
+          ],
+          "ann_query_count": 2,
+          "filtered_expansion": true
+        }
+      }
+    },
+    {
+      "stage": "04_partition:case",
+      "state": "lex=ok/vec=ok",
+      "detail": {
+        "lexical_total": 17,
+        "vector_total": 24,
+        "vector_error": "",
+        "lexical_ms": 24.805,
+        "vector_ms": 96.604,
+        "vector_retrieval_stats": {
+          "ann_attempts": [
+            {
+              "ann_limit": 96,
+              "rows": 89
+            }
+          ],
+          "ann_query_count": 1,
+          "filtered_expansion": false
+        }
+      }
+    },
+    {
+      "stage": "05_channels",
+      "state": "fused",
+      "detail": {
+        "lexical": 41,
+        "vector": 48,
+        "graph": 20,
+        "graph_paths": 80,
+        "vector_pgvector_enabled": true,
+        "vector_status": "ok"
+      }
+    },
+    {
+      "stage": "06_rerank_window",
+      "state": "n/a",
+      "detail": {
+        "window": {
+          "enabled": true,
+          "radius": 1,
+          "seed_limit": 4,
+          "bundles": 4,
+          "chunks": 10,
+          "estimated_tokens": 1383,
+          "token_budget": 8000
+        },
+        "timing_ms": {
+          "graph": 404.277,
+          "rerank": 5.815,
+          "context_window": 8.878
+        }
+      }
+    },
+    {
+      "stage": "07_output",
+      "state": "ok",
+      "detail": {
+        "total": 8,
+        "strategy": "structured_hybrid_graph_rrf_rerank_window",
+        "ms": 7263.25,
+        "top3": [
+          {
+            "title": "2001 BCSC 1599 R. v. Wilder",
+            "score": 0.0845,
+            "vector_score": 0.6662,
+            "lexical_score": 0.0005
+          },
+          {
+            "title": "2004 BCSC 987 HMTQ v. R.E.M.",
+            "score": 0.0828,
+            "vector_score": 0.6617,
+            "lexical_score": 0.0
+          },
+          {
+            "title": "2013 BCSC 1431 R. v. Goodkey",
+            "score": 0.0812,
+            "vector_score": 0.6559,
+            "lexical_score": 0.0
+          }
+        ]
+      }
+    }
+  ]
+}

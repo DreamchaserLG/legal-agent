@@ -200,7 +200,14 @@ class Settings:
         self.vector_backend = os.getenv("VECTOR_BACKEND", "pgvector_hnsw").strip().lower()
         self.rag_hnsw_m = int(os.getenv("RAG_HNSW_M", "16"))
         self.rag_hnsw_ef_construction = int(os.getenv("RAG_HNSW_EF_CONSTRUCTION", "64"))
-        self.rag_hnsw_ef_search = int(os.getenv("RAG_HNSW_EF_SEARCH", "80"))
+        # The 6.5M-row m=16 graph has query clusters that are unreachable at
+        # ef=80/200. Full-scale validation found ef=500 to raise mean Recall@10
+        # substantially at acceptable warm latency. It does not eliminate the
+        # remaining graph-construction recall gap, which is reported separately.
+        self.rag_hnsw_ef_search = int(os.getenv("RAG_HNSW_EF_SEARCH", "500"))
+        self.rag_hnsw_filtered_scan_tuples = int(
+            os.getenv("RAG_HNSW_FILTERED_SCAN_TUPLES", "20000")
+        )
         self.embedding_provider = os.getenv("EMBEDDING_PROVIDER", "hash").strip().lower()
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "local-hash-embedding").strip()
         self.embedding_dimension = int(os.getenv("EMBEDDING_DIMENSION", "384"))

@@ -1,0 +1,95 @@
+{
+  "id": "immigration",
+  "query": "inadmissibility for organized criminality and appeal rights",
+  "steps": [
+    {
+      "stage": "01_input",
+      "state": "received",
+      "detail": {
+        "query": "inadmissibility for organized criminality and appeal rights",
+        "limit": 24
+      }
+    },
+    {
+      "stage": "02_embedding",
+      "state": "encoded",
+      "detail": {
+        "model": "BAAI/bge-m3",
+        "dim": 1024,
+        "l2_norm": 1.0
+      }
+    },
+    {
+      "stage": "03_vector_search",
+      "state": "ok",
+      "detail": {
+        "ms": 826.78,
+        "pgvector_enabled": true,
+        "index_type": "hnsw",
+        "items": 24,
+        "retrieval_stats": {
+          "ann_attempts": [
+            {
+              "ann_limit": 96,
+              "rows": 96
+            }
+          ],
+          "ann_query_count": 1,
+          "filtered_expansion": false
+        }
+      }
+    },
+    {
+      "stage": "04_ann_candidates",
+      "state": "bounded",
+      "detail": {
+        "ann_limit": 96,
+        "candidates": 96,
+        "uses_hnsw": true,
+        "has_seq_scan": false,
+        "plan_cost": 1506.12
+      }
+    },
+    {
+      "stage": "05_after_join_freshness",
+      "state": "filtered",
+      "detail": {
+        "rows": 24,
+        "note": "content_hash 相等 + 模块/source 过滤"
+      }
+    },
+    {
+      "stage": "06_deduped",
+      "state": "deduped",
+      "detail": {
+        "kept": 24,
+        "requested": 24,
+        "fill_rate": 1.0
+      }
+    },
+    {
+      "stage": "07_output",
+      "state": "ok",
+      "detail": {
+        "total_ms": 905.88,
+        "top3": [
+          {
+            "title": "2021 FCA 163 Canada (Public Safety and Emergency Preparedness) v. Gayt",
+            "citation": "2021 FCA 163",
+            "score": 0.6879
+          },
+          {
+            "title": "2025 FC 797 Blanco Rubian v. Canada (Citizenship and Immigration)",
+            "citation": "2025 FC 797",
+            "score": 0.6595
+          },
+          {
+            "title": "2023 FCA 151 Obazughanmwen v. Canada (Public Safety and Emergency Prep",
+            "citation": "2023 FCA 151",
+            "score": 0.6593
+          }
+        ]
+      }
+    }
+  ]
+}

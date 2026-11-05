@@ -1,0 +1,142 @@
+{
+  "id": "ontario-eviction",
+  "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+  "total_ms": 9655.22,
+  "steps": [
+    {
+      "stage": "01_input",
+      "state": "received",
+      "detail": {
+        "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+        "limit": 8
+      }
+    },
+    {
+      "stage": "02_translate",
+      "state": "translated",
+      "detail": {
+        "source_lang": "zh",
+        "translated": "Ontario landlord tenant eviction remedy"
+      }
+    },
+    {
+      "stage": "03_plan",
+      "state": "planned",
+      "detail": {
+        "law_query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenanc",
+        "case_query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenanc",
+        "preferred_sources": [
+          "case",
+          "law"
+        ]
+      }
+    },
+    {
+      "stage": "04_partition:case",
+      "state": "lex=ok/vec=ok",
+      "detail": {
+        "lexical_total": 24,
+        "vector_total": 24,
+        "vector_error": "",
+        "lexical_ms": 2965.162,
+        "vector_ms": 684.755,
+        "vector_retrieval_stats": {
+          "ann_attempts": [
+            {
+              "ann_limit": 96,
+              "rows": 96
+            }
+          ],
+          "ann_query_count": 1,
+          "filtered_expansion": false
+        }
+      }
+    },
+    {
+      "stage": "04_partition:law",
+      "state": "lex=ok/vec=ok",
+      "detail": {
+        "lexical_total": 24,
+        "vector_total": 24,
+        "vector_error": "",
+        "lexical_ms": 245.708,
+        "vector_ms": 5348.663,
+        "vector_retrieval_stats": {
+          "ann_attempts": [
+            {
+              "ann_limit": 96,
+              "rows": 0
+            },
+            {
+              "ann_limit": 20000,
+              "rows": 192
+            }
+          ],
+          "ann_query_count": 2,
+          "filtered_expansion": true
+        }
+      }
+    },
+    {
+      "stage": "05_channels",
+      "state": "fused",
+      "detail": {
+        "lexical": 48,
+        "vector": 48,
+        "graph": 0,
+        "graph_paths": 24,
+        "vector_pgvector_enabled": true,
+        "vector_status": "ok"
+      }
+    },
+    {
+      "stage": "06_rerank_window",
+      "state": "n/a",
+      "detail": {
+        "window": {
+          "enabled": true,
+          "radius": 1,
+          "seed_limit": 4,
+          "bundles": 4,
+          "chunks": 11,
+          "estimated_tokens": 2558,
+          "token_budget": 8000
+        },
+        "timing_ms": {
+          "graph": 373.28,
+          "rerank": 6.551,
+          "context_window": 15.893
+        }
+      }
+    },
+    {
+      "stage": "07_output",
+      "state": "ok",
+      "detail": {
+        "total": 8,
+        "strategy": "structured_hybrid_graph_rrf_rerank_window",
+        "ms": 9655.22,
+        "top3": [
+          {
+            "title": "1994 NSCA 124 Reference re Residential Tenancies Act",
+            "score": 0.1988,
+            "vector_score": 0.7223,
+            "lexical_score": 0.1392
+          },
+          {
+            "title": "2008 BCSC 727 Glandon v. (British Columbia) Residential Tenancy Branch",
+            "score": 0.1752,
+            "vector_score": 0.7118,
+            "lexical_score": 0.0
+          },
+          {
+            "title": "C40655 1162994 Ontario Inc. v. Bakker",
+            "score": 0.1702,
+            "vector_score": 0.7294,
+            "lexical_score": 0.0
+          }
+        ]
+      }
+    }
+  ]
+}
