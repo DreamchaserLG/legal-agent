@@ -1,0 +1,651 @@
+{
+  "generated_at": "2026-11-05T14:42:24",
+  "vector_runs": [
+    {
+      "id": "ontario-eviction",
+      "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+      "runs": [
+        {
+          "total_ms": 8709.375,
+          "items": 0,
+          "status": "lexical_fallback_required",
+          "stats": {
+            "ann_attempts": [],
+            "ann_query_count": 0,
+            "source_rerank": {
+              "attempted": true,
+              "candidate_limit": 500,
+              "rows": 407,
+              "ms": 182.847,
+              "timed_out": false,
+              "error": "",
+              "candidate_query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy residential tenancy residential tenancies tenancy tenancies tenant tenants landlord landlords",
+              "jurisdiction_priority_rows": 0,
+              "jurisdiction_filter_required": true,
+              "fallback_channel": "lexical",
+              "fallback_reason": "insufficient_fresh_jurisdiction_vectors"
+            },
+            "query_count": 1,
+            "strategy": "source_rerank",
+            "filtered_expansion": false
+          },
+          "top5": []
+        },
+        {
+          "total_ms": 147.791,
+          "items": 0,
+          "status": "lexical_fallback_required",
+          "stats": {
+            "ann_attempts": [],
+            "ann_query_count": 0,
+            "source_rerank": {
+              "attempted": true,
+              "candidate_limit": 500,
+              "rows": 407,
+              "ms": 117.741,
+              "timed_out": false,
+              "error": "",
+              "candidate_query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy residential tenancy residential tenancies tenancy tenancies tenant tenants landlord landlords",
+              "jurisdiction_priority_rows": 0,
+              "jurisdiction_filter_required": true,
+              "fallback_channel": "lexical",
+              "fallback_reason": "insufficient_fresh_jurisdiction_vectors"
+            },
+            "query_count": 1,
+            "strategy": "source_rerank",
+            "filtered_expansion": false
+          },
+          "top5": []
+        }
+      ]
+    },
+    {
+      "id": "criminal-sentencing",
+      "query": "加拿大刑事量刑中醉酒、过失与既往记录的加重减轻",
+      "runs": [
+        {
+          "total_ms": 712.47,
+          "items": 24,
+          "status": "ok",
+          "stats": {
+            "ann_attempts": [],
+            "ann_query_count": 0,
+            "source_rerank": {
+              "attempted": true,
+              "candidate_limit": 500,
+              "rows": 450,
+              "ms": 400.921,
+              "timed_out": false,
+              "error": "",
+              "candidate_query": "Canada negligence duty of care causation damages prior criminal record aggravating and mitigating factors Canada negligence criminal sentencing intoxication prior criminal record aggravating mitigating factors sentencing intoxication prior criminal record criminal record prior conviction record of convictions sentencing sentence aggravating factor mitigating factor",
+              "jurisdiction_priority_rows": 0
+            },
+            "query_count": 1,
+            "strategy": "source_rerank",
+            "filtered_expansion": false
+          },
+          "top5": [
+            {
+              "title": "An Act to amend the Canada Pension Plan and the Old Age Security Act (pension and benefits)",
+              "citation": "17 2015",
+              "source_code": "legal_rule",
+              "score": 0.5786
+            },
+            {
+              "title": "An Act to amend the Canada Marine Act, the Canada Transportation Act, the Pilotage Act and other Acts in consequence",
+              "citation": "21 2008",
+              "source_code": "ca_federal_act",
+              "score": 0.5597
+            },
+            {
+              "title": "An Act to amend the Criminal Code (criminal procedure, language of the accused, sentencing and other amendments)",
+              "citation": "18 2008",
+              "source_code": "legal_rule",
+              "score": 0.5578
+            },
+            {
+              "title": "An Act to provide no-cost, expedited record suspensions for simple possession of cannabis",
+              "citation": "20 2019",
+              "source_code": "ca_federal_act",
+              "score": 0.5576
+            },
+            {
+              "title": "Canada Marine Act",
+              "citation": "C-6.7 10 1998",
+              "source_code": "ca_federal_act",
+              "score": 0.5518
+            }
+          ]
+        },
+        {
+          "total_ms": 604.122,
+          "items": 24,
+          "status": "ok",
+          "stats": {
+            "ann_attempts": [],
+            "ann_query_count": 0,
+            "source_rerank": {
+              "attempted": true,
+              "candidate_limit": 500,
+              "rows": 450,
+              "ms": 300.525,
+              "timed_out": false,
+              "error": "",
+              "candidate_query": "Canada negligence duty of care causation damages prior criminal record aggravating and mitigating factors Canada negligence criminal sentencing intoxication prior criminal record aggravating mitigating factors sentencing intoxication prior criminal record criminal record prior conviction record of convictions sentencing sentence aggravating factor mitigating factor",
+              "jurisdiction_priority_rows": 0
+            },
+            "query_count": 1,
+            "strategy": "source_rerank",
+            "filtered_expansion": false
+          },
+          "top5": [
+            {
+              "title": "An Act to amend the Canada Pension Plan and the Old Age Security Act (pension and benefits)",
+              "citation": "17 2015",
+              "source_code": "legal_rule",
+              "score": 0.5786
+            },
+            {
+              "title": "An Act to amend the Canada Marine Act, the Canada Transportation Act, the Pilotage Act and other Acts in consequence",
+              "citation": "21 2008",
+              "source_code": "ca_federal_act",
+              "score": 0.5597
+            },
+            {
+              "title": "An Act to amend the Criminal Code (criminal procedure, language of the accused, sentencing and other amendments)",
+              "citation": "18 2008",
+              "source_code": "legal_rule",
+              "score": 0.5578
+            },
+            {
+              "title": "An Act to provide no-cost, expedited record suspensions for simple possession of cannabis",
+              "citation": "20 2019",
+              "source_code": "ca_federal_act",
+              "score": 0.5576
+            },
+            {
+              "title": "Canada Marine Act",
+              "citation": "C-6.7 10 1998",
+              "source_code": "ca_federal_act",
+              "score": 0.5518
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "contract",
+      "query": "显失公平交易与不当影响合同撤销",
+      "runs": [
+        {
+          "total_ms": 375.299,
+          "items": 24,
+          "status": "ok",
+          "stats": {
+            "ann_attempts": [],
+            "ann_query_count": 0,
+            "source_rerank": {
+              "attempted": true,
+              "candidate_limit": 500,
+              "rows": 101,
+              "ms": 216.403,
+              "timed_out": false,
+              "error": "",
+              "candidate_query": "contract breach damages unconscionability undue influence rescission of contract unconscionability undue influence rescission unconscionability unconscionable bargain inequality of bargaining power improvident bargain undue influence influence relationship of dependency rescission",
+              "jurisdiction_priority_rows": 0
+            },
+            "query_count": 1,
+            "strategy": "source_rerank",
+            "filtered_expansion": false
+          },
+          "top5": [
+            {
+              "title": "Payment Clearing and Settlement Act",
+              "citation": "P-4.4 6, Sch. 1996",
+              "source_code": "ca_federal_act",
+              "score": 0.5438
+            },
+            {
+              "title": "Government Contracts Regulations",
+              "citation": "SOR/87-402",
+              "source_code": "ca_federal_regulation",
+              "score": 0.5432
+            },
+            {
+              "title": "Canada Business Corporations Act and Canada Cooperatives Act and to amend other Acts in consequence, An Act to amend the",
+              "citation": "14 2001",
+              "source_code": "ca_federal_act",
+              "score": 0.5376
+            },
+            {
+              "title": "Wage Earner Protection Program Act, to amend the Bankruptcy and Insolvency Act and the Companies’ Creditors Arrangement Act and to make consequential amendments to other Acts, An Act to establish the",
+              "citation": "47 2005",
+              "source_code": "ca_federal_act",
+              "score": 0.5229
+            },
+            {
+              "title": "An Act to amend the Access to Information Act and the Privacy Act and to make consequential amendments to other Acts",
+              "citation": "18 2019",
+              "source_code": "ca_federal_act",
+              "score": 0.4926
+            }
+          ]
+        },
+        {
+          "total_ms": 263.981,
+          "items": 24,
+          "status": "ok",
+          "stats": {
+            "ann_attempts": [],
+            "ann_query_count": 0,
+            "source_rerank": {
+              "attempted": true,
+              "candidate_limit": 500,
+              "rows": 101,
+              "ms": 117.747,
+              "timed_out": false,
+              "error": "",
+              "candidate_query": "contract breach damages unconscionability undue influence rescission of contract unconscionability undue influence rescission unconscionability unconscionable bargain inequality of bargaining power improvident bargain undue influence influence relationship of dependency rescission",
+              "jurisdiction_priority_rows": 0
+            },
+            "query_count": 1,
+            "strategy": "source_rerank",
+            "filtered_expansion": false
+          },
+          "top5": [
+            {
+              "title": "Payment Clearing and Settlement Act",
+              "citation": "P-4.4 6, Sch. 1996",
+              "source_code": "ca_federal_act",
+              "score": 0.5438
+            },
+            {
+              "title": "Government Contracts Regulations",
+              "citation": "SOR/87-402",
+              "source_code": "ca_federal_regulation",
+              "score": 0.5432
+            },
+            {
+              "title": "Canada Business Corporations Act and Canada Cooperatives Act and to amend other Acts in consequence, An Act to amend the",
+              "citation": "14 2001",
+              "source_code": "ca_federal_act",
+              "score": 0.5376
+            },
+            {
+              "title": "Wage Earner Protection Program Act, to amend the Bankruptcy and Insolvency Act and the Companies’ Creditors Arrangement Act and to make consequential amendments to other Acts, An Act to establish the",
+              "citation": "47 2005",
+              "source_code": "ca_federal_act",
+              "score": 0.5229
+            },
+            {
+              "title": "An Act to amend the Access to Information Act and the Privacy Act and to make consequential amendments to other Acts",
+              "citation": "18 2019",
+              "source_code": "ca_federal_act",
+              "score": 0.4926
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "plan": {
+    "has_seq_scan": false,
+    "indexes": [
+      "idx_rag_chunks_source_kind",
+      "idx_rag_chunks_vector",
+      "rag_chunk_embeddings_pkey",
+      "rag_chunks_pkey"
+    ],
+    "node_types": [
+      "Append",
+      "Bitmap Heap Scan",
+      "Bitmap Index Scan",
+      "BitmapAnd",
+      "CTE Scan",
+      "Hash",
+      "Hash Join",
+      "Index Scan",
+      "Limit",
+      "Nested Loop",
+      "Sort"
+    ]
+  },
+  "hybrid_ontario_runs": [
+    {
+      "total_ms": 1122.543,
+      "retrieval_wall_ms": 391.692,
+      "partitions": [
+        {
+          "partition": "case",
+          "source_filter": "case",
+          "query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act ONLTB Landlord and Tenant Board lease and tenancy eviction ordered relief from eviction termination for cause Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy",
+          "lexical_total": 24,
+          "vector_total": 24,
+          "lexical_status": "ok",
+          "vector_status": "ok",
+          "lexical_error": "",
+          "vector_error": "",
+          "lexical_ms": 255.17,
+          "vector_ms": 116.133,
+          "vector_retrieval_stats": {
+            "ann_attempts": [
+              {
+                "ann_limit": 96,
+                "rows": 96
+              }
+            ],
+            "ann_query_count": 1,
+            "source_rerank": {
+              "attempted": false,
+              "candidate_limit": 0,
+              "rows": 0,
+              "ms": 0.0,
+              "timed_out": false,
+              "error": ""
+            },
+            "query_count": 1,
+            "strategy": "global_ann",
+            "filtered_expansion": false
+          },
+          "fallback_channel": "",
+          "effective_partition_total": 24
+        },
+        {
+          "partition": "law",
+          "source_filter": "law",
+          "query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy",
+          "lexical_total": 24,
+          "vector_total": 0,
+          "lexical_status": "ok",
+          "vector_status": "lexical_fallback_required",
+          "lexical_error": "",
+          "vector_error": "",
+          "lexical_ms": 185.518,
+          "vector_ms": 388.996,
+          "vector_retrieval_stats": {
+            "ann_attempts": [],
+            "ann_query_count": 0,
+            "source_rerank": {
+              "attempted": true,
+              "candidate_limit": 500,
+              "rows": 407,
+              "ms": 176.583,
+              "timed_out": false,
+              "error": "",
+              "candidate_query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy residential tenancy tenancies obligations remedies order notice good faith remedy residential tenancy residential tenancies tenancy tenancies tenant tenants landlord landlords",
+              "jurisdiction_priority_rows": 0,
+              "jurisdiction_filter_required": true,
+              "fallback_channel": "lexical",
+              "fallback_reason": "insufficient_fresh_jurisdiction_vectors"
+            },
+            "query_count": 1,
+            "strategy": "source_rerank",
+            "filtered_expansion": false
+          },
+          "fallback_channel": "lexical",
+          "effective_partition_total": 24
+        }
+      ],
+      "source_kinds": [
+        "case",
+        "law"
+      ],
+      "top5": [
+        {
+          "title": "2023 ONCA 789 Elkins v. Van Wissen",
+          "citation": "2023 ONCA 789",
+          "source_kind": "case",
+          "jurisdiction_match": true
+        },
+        {
+          "title": "C40655 1162994 Ontario Inc. v. Bakker",
+          "citation": "C40655",
+          "source_kind": "case",
+          "jurisdiction_match": true
+        },
+        {
+          "title": "1994 NSCA 124 Reference re Residential Tenancies Act",
+          "citation": "1994 NSCA 124",
+          "source_kind": "case",
+          "jurisdiction_match": false
+        },
+        {
+          "title": "C36729 Ontario Rental Housing Tribunal v. Metropolitan Toronto Housing Authority",
+          "citation": "C36729",
+          "source_kind": "case",
+          "jurisdiction_match": true
+        },
+        {
+          "title": "2023 NSSM 22 Shahisavandi v. Ballantyne",
+          "citation": "2023 NSSM 22",
+          "source_kind": "case",
+          "jurisdiction_match": false
+        }
+      ]
+    },
+    {
+      "total_ms": 938.814,
+      "retrieval_wall_ms": 226.54,
+      "partitions": [
+        {
+          "partition": "case",
+          "source_filter": "case",
+          "query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act ONLTB Landlord and Tenant Board lease and tenancy eviction ordered relief from eviction termination for cause Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy",
+          "lexical_total": 24,
+          "vector_total": 24,
+          "lexical_status": "ok",
+          "vector_status": "ok",
+          "lexical_error": "",
+          "vector_error": "",
+          "lexical_ms": 198.912,
+          "vector_ms": 100.194,
+          "vector_retrieval_stats": {
+            "ann_attempts": [
+              {
+                "ann_limit": 96,
+                "rows": 96
+              }
+            ],
+            "ann_query_count": 1,
+            "source_rerank": {
+              "attempted": false,
+              "candidate_limit": 0,
+              "rows": 0,
+              "ms": 0.0,
+              "timed_out": false,
+              "error": ""
+            },
+            "query_count": 1,
+            "strategy": "global_ann",
+            "filtered_expansion": false
+          },
+          "fallback_channel": "",
+          "effective_partition_total": 24
+        },
+        {
+          "partition": "law",
+          "source_filter": "law",
+          "query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy",
+          "lexical_total": 24,
+          "vector_total": 0,
+          "lexical_status": "ok",
+          "vector_status": "lexical_fallback_required",
+          "lexical_error": "",
+          "vector_error": "",
+          "lexical_ms": 107.316,
+          "vector_ms": 223.84,
+          "vector_retrieval_stats": {
+            "ann_attempts": [],
+            "ann_query_count": 0,
+            "source_rerank": {
+              "attempted": true,
+              "candidate_limit": 500,
+              "rows": 407,
+              "ms": 176.127,
+              "timed_out": false,
+              "error": "",
+              "candidate_query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy residential tenancy tenancies obligations remedies order notice good faith remedy residential tenancy residential tenancies tenancy tenancies tenant tenants landlord landlords",
+              "jurisdiction_priority_rows": 0,
+              "jurisdiction_filter_required": true,
+              "fallback_channel": "lexical",
+              "fallback_reason": "insufficient_fresh_jurisdiction_vectors"
+            },
+            "query_count": 1,
+            "strategy": "source_rerank",
+            "filtered_expansion": false
+          },
+          "fallback_channel": "lexical",
+          "effective_partition_total": 24
+        }
+      ],
+      "source_kinds": [
+        "case",
+        "law"
+      ],
+      "top5": [
+        {
+          "title": "2023 ONCA 789 Elkins v. Van Wissen",
+          "citation": "2023 ONCA 789",
+          "source_kind": "case",
+          "jurisdiction_match": true
+        },
+        {
+          "title": "C40655 1162994 Ontario Inc. v. Bakker",
+          "citation": "C40655",
+          "source_kind": "case",
+          "jurisdiction_match": true
+        },
+        {
+          "title": "1994 NSCA 124 Reference re Residential Tenancies Act",
+          "citation": "1994 NSCA 124",
+          "source_kind": "case",
+          "jurisdiction_match": false
+        },
+        {
+          "title": "C36729 Ontario Rental Housing Tribunal v. Metropolitan Toronto Housing Authority",
+          "citation": "C36729",
+          "source_kind": "case",
+          "jurisdiction_match": true
+        },
+        {
+          "title": "2023 NSSM 22 Shahisavandi v. Ballantyne",
+          "citation": "2023 NSSM 22",
+          "source_kind": "case",
+          "jurisdiction_match": false
+        }
+      ]
+    },
+    {
+      "total_ms": 906.809,
+      "retrieval_wall_ms": 195.586,
+      "partitions": [
+        {
+          "partition": "case",
+          "source_filter": "case",
+          "query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act ONLTB Landlord and Tenant Board lease and tenancy eviction ordered relief from eviction termination for cause Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy",
+          "lexical_total": 24,
+          "vector_total": 24,
+          "lexical_status": "ok",
+          "vector_status": "ok",
+          "lexical_error": "",
+          "vector_error": "",
+          "lexical_ms": 142.52,
+          "vector_ms": 82.819,
+          "vector_retrieval_stats": {
+            "ann_attempts": [
+              {
+                "ann_limit": 96,
+                "rows": 96
+              }
+            ],
+            "ann_query_count": 1,
+            "source_rerank": {
+              "attempted": false,
+              "candidate_limit": 0,
+              "rows": 0,
+              "ms": 0.0,
+              "timed_out": false,
+              "error": ""
+            },
+            "query_count": 1,
+            "strategy": "global_ann",
+            "filtered_expansion": false
+          },
+          "fallback_channel": "",
+          "effective_partition_total": 24
+        },
+        {
+          "partition": "law",
+          "source_filter": "law",
+          "query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy",
+          "lexical_total": 24,
+          "vector_total": 0,
+          "lexical_status": "ok",
+          "vector_status": "lexical_fallback_required",
+          "lexical_error": "",
+          "vector_error": "",
+          "lexical_ms": 117.297,
+          "vector_ms": 193.216,
+          "vector_retrieval_stats": {
+            "ann_attempts": [],
+            "ann_query_count": 0,
+            "source_rerank": {
+              "attempted": true,
+              "candidate_limit": 500,
+              "rows": 407,
+              "ms": 144.089,
+              "timed_out": false,
+              "error": "",
+              "candidate_query": "Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario residential tenancy tenant landlord lease eviction termination possession Residential Tenancies Act landlord obligations tenant remedies termination order notice of termination Ontario landlord tenant eviction landlord own use good faith remedy good faith remedy residential tenancy tenancies obligations remedies order notice good faith remedy residential tenancy residential tenancies tenancy tenancies tenant tenants landlord landlords",
+              "jurisdiction_priority_rows": 0,
+              "jurisdiction_filter_required": true,
+              "fallback_channel": "lexical",
+              "fallback_reason": "insufficient_fresh_jurisdiction_vectors"
+            },
+            "query_count": 1,
+            "strategy": "source_rerank",
+            "filtered_expansion": false
+          },
+          "fallback_channel": "lexical",
+          "effective_partition_total": 24
+        }
+      ],
+      "source_kinds": [
+        "case",
+        "law"
+      ],
+      "top5": [
+        {
+          "title": "2023 ONCA 789 Elkins v. Van Wissen",
+          "citation": "2023 ONCA 789",
+          "source_kind": "case",
+          "jurisdiction_match": true
+        },
+        {
+          "title": "C40655 1162994 Ontario Inc. v. Bakker",
+          "citation": "C40655",
+          "source_kind": "case",
+          "jurisdiction_match": true
+        },
+        {
+          "title": "1994 NSCA 124 Reference re Residential Tenancies Act",
+          "citation": "1994 NSCA 124",
+          "source_kind": "case",
+          "jurisdiction_match": false
+        },
+        {
+          "title": "C36729 Ontario Rental Housing Tribunal v. Metropolitan Toronto Housing Authority",
+          "citation": "C36729",
+          "source_kind": "case",
+          "jurisdiction_match": true
+        },
+        {
+          "title": "2023 NSSM 22 Shahisavandi v. Ballantyne",
+          "citation": "2023 NSSM 22",
+          "source_kind": "case",
+          "jurisdiction_match": false
+        }
+      ]
+    }
+  ]
+}

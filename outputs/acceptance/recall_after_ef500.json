@@ -1,0 +1,282 @@
+{
+  "k": 10,
+  "queries": [
+    {
+      "id": "ontario-eviction",
+      "exact_ms": 44154.4,
+      "ef": {
+        "80": {
+          "recall": 0.8,
+          "ms": 626.23,
+          "returned": 96
+        },
+        "200": {
+          "recall": 0.9,
+          "ms": 91.95,
+          "returned": 96
+        },
+        "500": {
+          "recall": 1.0,
+          "ms": 717.36,
+          "returned": 96
+        }
+      }
+    },
+    {
+      "id": "criminal-sentencing",
+      "exact_ms": 39965.1,
+      "ef": {
+        "80": {
+          "recall": 0.3,
+          "ms": 646.22,
+          "returned": 95
+        },
+        "200": {
+          "recall": 0.6,
+          "ms": 128.24,
+          "returned": 92
+        },
+        "500": {
+          "recall": 1.0,
+          "ms": 758.13,
+          "returned": 95
+        }
+      }
+    },
+    {
+      "id": "contract",
+      "exact_ms": 39188.6,
+      "ef": {
+        "80": {
+          "recall": 0.6,
+          "ms": 579.0,
+          "returned": 96
+        },
+        "200": {
+          "recall": 0.7,
+          "ms": 126.86,
+          "returned": 96
+        },
+        "500": {
+          "recall": 0.8,
+          "ms": 863.98,
+          "returned": 96
+        }
+      }
+    },
+    {
+      "id": "summary-judgment",
+      "exact_ms": 38609.3,
+      "ef": {
+        "80": {
+          "recall": 0.0,
+          "ms": 538.59,
+          "returned": 96
+        },
+        "200": {
+          "recall": 0.0,
+          "ms": 98.25,
+          "returned": 96
+        },
+        "500": {
+          "recall": 0.9,
+          "ms": 939.59,
+          "returned": 96
+        }
+      }
+    }
+  ],
+  "summary": {
+    "80": {
+      "recall_mean": 0.425,
+      "recall_min": 0.0,
+      "p50_ms": 602.6
+    },
+    "200": {
+      "recall_mean": 0.55,
+      "recall_min": 0.0,
+      "p50_ms": 112.6
+    },
+    "500": {
+      "recall_mean": 0.925,
+      "recall_min": 0.8,
+      "p50_ms": 811.1
+    }
+  },
+  "filtered_fill": [
+    {
+      "id": "ontario-eviction",
+      "source_filter": "all",
+      "items": 24,
+      "requested": 24,
+      "fill_rate": 1.0,
+      "ms": 1345.9,
+      "stats": {
+        "ann_attempts": [
+          {
+            "ann_limit": 96,
+            "rows": 96
+          }
+        ],
+        "ann_query_count": 1,
+        "filtered_expansion": false
+      }
+    },
+    {
+      "id": "ontario-eviction",
+      "source_filter": "law",
+      "items": 5,
+      "requested": 24,
+      "fill_rate": 0.208,
+      "ms": 10720.4,
+      "stats": {
+        "ann_attempts": [
+          {
+            "ann_limit": 96,
+            "rows": 0
+          },
+          {
+            "ann_limit": 20000,
+            "rows": 5
+          }
+        ],
+        "ann_query_count": 2,
+        "filtered_expansion": true
+      }
+    },
+    {
+      "id": "ontario-eviction",
+      "source_filter": "case",
+      "items": 24,
+      "requested": 24,
+      "fill_rate": 1.0,
+      "ms": 69.9,
+      "stats": {
+        "ann_attempts": [
+          {
+            "ann_limit": 96,
+            "rows": 96
+          }
+        ],
+        "ann_query_count": 1,
+        "filtered_expansion": false
+      }
+    },
+    {
+      "id": "criminal-sentencing",
+      "source_filter": "all",
+      "items": 24,
+      "requested": 24,
+      "fill_rate": 1.0,
+      "ms": 1047.8,
+      "stats": {
+        "ann_attempts": [
+          {
+            "ann_limit": 96,
+            "rows": 95
+          }
+        ],
+        "ann_query_count": 1,
+        "filtered_expansion": false
+      }
+    },
+    {
+      "id": "criminal-sentencing",
+      "source_filter": "law",
+      "items": 24,
+      "requested": 24,
+      "fill_rate": 1.0,
+      "ms": 4541.7,
+      "stats": {
+        "ann_attempts": [
+          {
+            "ann_limit": 96,
+            "rows": 6
+          },
+          {
+            "ann_limit": 20000,
+            "rows": 192
+          }
+        ],
+        "ann_query_count": 2,
+        "filtered_expansion": true
+      }
+    },
+    {
+      "id": "criminal-sentencing",
+      "source_filter": "case",
+      "items": 24,
+      "requested": 24,
+      "fill_rate": 1.0,
+      "ms": 70.3,
+      "stats": {
+        "ann_attempts": [
+          {
+            "ann_limit": 96,
+            "rows": 89
+          }
+        ],
+        "ann_query_count": 1,
+        "filtered_expansion": false
+      }
+    },
+    {
+      "id": "contract",
+      "source_filter": "all",
+      "items": 24,
+      "requested": 24,
+      "fill_rate": 1.0,
+      "ms": 604.4,
+      "stats": {
+        "ann_attempts": [
+          {
+            "ann_limit": 96,
+            "rows": 96
+          }
+        ],
+        "ann_query_count": 1,
+        "filtered_expansion": false
+      }
+    },
+    {
+      "id": "contract",
+      "source_filter": "law",
+      "items": 24,
+      "requested": 24,
+      "fill_rate": 1.0,
+      "ms": 9228.3,
+      "stats": {
+        "ann_attempts": [
+          {
+            "ann_limit": 96,
+            "rows": 0
+          },
+          {
+            "ann_limit": 20000,
+            "rows": 76
+          }
+        ],
+        "ann_query_count": 2,
+        "filtered_expansion": true
+      }
+    },
+    {
+      "id": "contract",
+      "source_filter": "case",
+      "items": 24,
+      "requested": 24,
+      "fill_rate": 1.0,
+      "ms": 72.8,
+      "stats": {
+        "ann_attempts": [
+          {
+            "ann_limit": 96,
+            "rows": 96
+          }
+        ],
+        "ann_query_count": 1,
+        "filtered_expansion": false
+      }
+    }
+  ]
+}

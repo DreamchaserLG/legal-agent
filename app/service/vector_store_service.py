@@ -9,13 +9,16 @@ from datetime import datetime
 from time import perf_counter
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
 from app.core.database import engine, is_sqlite
 from app.service.common_service import plain_text_preview, repair_text
 from app.service.embedding_service import create_embedding, create_embeddings, embedding_metadata
 from app.service.module_service import normalize_module
-from app.service.rag_service import _structured_filter_clause, ensure_rag_tables
+from app.service.legal_query_planner_service import build_legal_query_plan
+from app.service.query_translation_service import synonym_terms, translate_query
+from app.service.rag_service import _structured_filter_clause, _tsquery_or_terms, ensure_rag_tables
 
 
 CANADA_SOURCE_CODES = {
@@ -70,6 +73,20 @@ def _hnsw_filtered_scan_tuples() -> int:
     return max(
         1000,
         min(int(getattr(settings, "rag_hnsw_filtered_scan_tuples", 20000) or 20000), 200000),
+    )
+
+
+def _filtered_rerank_candidates() -> int:
+    return max(
+        100,
+        min(int(getattr(settings, "rag_filtered_rerank_candidates", 500) or 500), 2000),
+    )
+
+
+def _filtered_rerank_timeout_ms() -> int:
+    return max(
+        100,
+        min(int(getattr(settings, "rag_filtered_rerank_timeout_ms", 1500) or 1500), 10000),
     )
 
 
@@ -1010,14 +1027,201 @@ def _configure_hnsw_search(conn, *, ann_limit: int) -> int:
     return effective_ef
 
 
-def _needs_filtered_expansion(source_filter: str, filters: dict | None) -> bool:
-    source_is_selective = repair_text(source_filter or "all").lower() not in {
-        "", "all", "canada",
-    }
-    structured_is_selective = any(
-        repair_text(value) for value in (filters or {}).values() if value is not None
+def _needs_source_rerank(source_filter: str, filters: dict | None) -> bool:
+    """Return whether a query needs candidates generated inside its filter.
+
+    Case law dominates the global corpus, so a law or metadata filter applied
+    *after* global ANN can legitimately see no qualifying neighbour.  A
+    source-local lexical pool avoids that starvation without a second HNSW or
+    a 20,000-row cold scan.
+    """
+    source = repair_text(source_filter or "all").lower()
+    return source not in {"", "all", "canada", "case"} or bool(
+        any(repair_text(value) for value in (filters or {}).values() if value is not None)
     )
-    return source_is_selective or structured_is_selective
+
+
+def _source_rerank_text(query: str, source_filter: str) -> tuple[str, str, str]:
+    translation = translate_query(query)
+    corpus_query = repair_text(translation.get("translated")) or repair_text(query)
+    source = repair_text(source_filter).lower()
+    meaningful_terms: list[str] = []
+    if source == "law":
+        plan = build_legal_query_plan(corpus_query)
+        corpus_query = repair_text(plan.get("law_query")) or corpus_query
+        meaningful_terms = [
+            repair_text(term) for term in (plan.get("meaningful_terms") or []) if repair_text(term)
+        ]
+    elif source == "case":
+        plan = build_legal_query_plan(corpus_query)
+        corpus_query = repair_text(plan.get("case_query")) or corpus_query
+        meaningful_terms = [
+            repair_text(term) for term in (plan.get("meaningful_terms") or []) if repair_text(term)
+        ]
+    keywords = synonym_terms(corpus_query, limit=8)
+    merged_query = " ".join([corpus_query] + keywords).strip()
+    lowered_corpus = corpus_query.lower()
+    # The focused fallback intentionally keeps a rare concept mandatory.  A
+    # second, broader domain anchor prevents that precision choice from
+    # starving doctrines that appear sparsely in legislation (for example
+    # unconscionability) while still staying inside the requested source.
+    broad_anchor = next(
+        (
+            anchor
+            for anchor in (
+                "residential", "tenancy", "landlord", "criminal", "sentencing",
+                "contract", "employment", "immigration", "refugee", "negligence",
+                "appeal", "evidence",
+            )
+            if anchor in lowered_corpus
+        ),
+        "",
+    )
+    broad_text = broad_anchor or " ".join(meaningful_terms[:4]).strip() or corpus_query
+    return (
+        merged_query,
+        _tsquery_or_terms(merged_query, keywords),
+        _tsquery_or_terms(broad_text, []),
+    )
+
+
+def _jurisdiction_priority_clause(query: str, candidate_query: str, params: dict, alias: str) -> str:
+    lowered = f"{query} {candidate_query}".lower()
+    if "ontario" in lowered or "安大略" in query:
+        params["rerank_jurisdiction"] = "%ontario%"
+        return (
+            "CASE WHEN LOWER({a}.jurisdiction) LIKE :rerank_jurisdiction "
+            "OR LOWER({a}.court_level) LIKE :rerank_jurisdiction "
+            "OR {a}.source_code IN ('on_statute', 'on_regulation') "
+            "OR LOWER({a}.citation) ~ '(^|[^a-z])(onca|onsc|oncj|onltb)([^a-z]|$)' "
+            "THEN 1 ELSE 0 END"
+        ).format(a=alias)
+    return "0"
+
+
+def _build_pgvector_source_rerank_query(
+    query: str,
+    query_vector: list[float],
+    *,
+    meta: dict,
+    module: str,
+    source_filter: str,
+    filters: dict | None,
+    candidate_limit: int,
+    outer_limit: int,
+) -> tuple[str, dict]:
+    """Build source-local FTS candidate generation plus exact vector rerank.
+
+    The GIN full-text index narrows the requested source before vector scoring.
+    This is intentionally a different plan from global ANN: it preserves the
+    filter, bounds exact distance work, and does not touch 20,000 HNSW pages.
+    """
+    bounded_candidates = max(100, min(int(candidate_limit), 2000))
+    bounded_outer = max(1, min(int(outer_limit), 1000))
+    candidate_query, ts_or_query, broad_ts_query = _source_rerank_text(query, source_filter)
+    params = {
+        "candidate_query": candidate_query,
+        "ts_or_query": ts_or_query,
+        "broad_ts_query": broad_ts_query,
+        "candidate_limit": bounded_candidates,
+        "outer_limit": bounded_outer,
+        "embedding_model": meta["model"],
+        "embedding_provider": meta["provider"],
+        "query_vector": _vector_text(query_vector),
+    }
+    where_clause = _chunk_filter_clause(source_filter, module, params, alias="rc")
+    structured_clause, structured_params = _structured_filter_clause(filters, alias="rc")
+    params.update(structured_params)
+    scope_priority = _jurisdiction_priority_clause(query, candidate_query, params, "rc")
+    sql = f"""
+        WITH exact_candidates AS MATERIALIZED (
+            SELECT
+                rc.id,
+                ts_rank_cd(
+                    rc.search_vector,
+                    websearch_to_tsquery('english', :candidate_query)
+                ) AS lexical_score,
+                {scope_priority} AS scope_priority
+            FROM rag_chunks rc
+            WHERE rc.search_vector @@ websearch_to_tsquery('english', :candidate_query)
+              AND {where_clause}
+              {structured_clause}
+            ORDER BY scope_priority DESC, lexical_score DESC,
+                     rc.published_at DESC NULLS LAST, rc.updated_at DESC
+            LIMIT :candidate_limit
+        ), fallback_candidates AS MATERIALIZED (
+            SELECT
+                rc.id,
+                ts_rank_cd(rc.search_vector, to_tsquery('english', :ts_or_query)) AS lexical_score,
+                {scope_priority} AS scope_priority
+            FROM rag_chunks rc
+            WHERE rc.search_vector @@ to_tsquery('english', :ts_or_query)
+              AND {where_clause}
+              {structured_clause}
+              AND NOT EXISTS (
+                  SELECT 1 FROM exact_candidates exact WHERE exact.id = rc.id
+              )
+            ORDER BY scope_priority DESC, lexical_score DESC,
+                     rc.published_at DESC NULLS LAST, rc.updated_at DESC
+            LIMIT :candidate_limit
+        ), candidates AS MATERIALIZED (
+            SELECT id, lexical_score, scope_priority FROM exact_candidates
+            UNION ALL
+            SELECT id, lexical_score, scope_priority FROM fallback_candidates
+        ), broad_candidates AS MATERIALIZED (
+            SELECT
+                rc.id,
+                ts_rank_cd(rc.search_vector, to_tsquery('english', :broad_ts_query)) AS lexical_score,
+                {scope_priority} AS scope_priority
+            FROM rag_chunks rc
+            WHERE rc.search_vector @@ to_tsquery('english', :broad_ts_query)
+              AND {where_clause}
+              {structured_clause}
+              AND NOT EXISTS (
+                  SELECT 1 FROM candidates existing WHERE existing.id = rc.id
+              )
+            ORDER BY scope_priority DESC, lexical_score DESC,
+                     rc.published_at DESC NULLS LAST, rc.updated_at DESC
+            LIMIT :candidate_limit
+        ), all_candidates AS MATERIALIZED (
+            SELECT id, lexical_score, scope_priority FROM candidates
+            UNION ALL
+            SELECT id, lexical_score, scope_priority FROM broad_candidates
+        )
+        SELECT
+            rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
+            rc.source_uid, rc.title, rc.source_url, rc.published_at, rc.chunk_index,
+            rc.jurisdiction, rc.document_type, rc.court_level, rc.language, rc.citation,
+            rc.text_content, rc.metadata_json,
+            1 - (rce.embedding_vector <=> CAST(:query_vector AS vector)) AS score,
+            all_candidates.lexical_score,
+            all_candidates.scope_priority
+        FROM all_candidates
+        JOIN rag_chunks rc ON rc.id = all_candidates.id
+        JOIN rag_chunk_embeddings rce ON rce.chunk_id = all_candidates.id
+        WHERE rce.embedding_provider = :embedding_provider
+          AND rce.embedding_model = :embedding_model
+          AND rce.embedding_vector IS NOT NULL
+          AND rce.content_hash = rc.content_hash
+        ORDER BY all_candidates.scope_priority DESC,
+                 rce.embedding_vector <=> CAST(:query_vector AS vector),
+                 all_candidates.lexical_score DESC
+        LIMIT :outer_limit
+    """
+    return sql, params
+
+
+def _execute_pgvector_source_rerank(
+    sql: str,
+    params: dict,
+    *,
+    timeout_ms: int,
+) -> tuple[list[dict], float]:
+    started = perf_counter()
+    with engine.connect() as conn:
+        conn.execute(text(f"SET LOCAL statement_timeout = {int(timeout_ms)}"))
+        rows = [dict(row) for row in conn.execute(text(sql), params).mappings().all()]
+    return rows, round((perf_counter() - started) * 1000, 3)
 
 
 def _execute_pgvector_ann(conn, sql: str, params: dict, *, ann_limit: int) -> list[dict]:
@@ -1038,7 +1242,6 @@ def vector_search(
     if not clean_query:
         return {"query": clean_query, "items": [], "total": 0, "status": "empty_query"}
     if _pgvector_column_available():
-        used_filtered_expansion = False
         from app.service.vector_index_management_service import get_hnsw_index_state
 
         index_state = get_hnsw_index_state()
@@ -1064,44 +1267,134 @@ def vector_search(
     params.update(structured_params)
 
     if _pgvector_column_available():
-        sql, ann_params = _build_pgvector_ann_query(
-            query_vector,
-            meta=meta,
-            module=module,
-            source_filter=source_filter,
-            filters=filters,
-            ann_limit=raw_limit,
+        ann_attempts = []
+        source_rerank_stats = {
+            "attempted": False,
+            "candidate_limit": 0,
+            "rows": 0,
+            "ms": 0.0,
+            "timed_out": False,
+            "error": "",
+        }
+        source_rerank_rows: list[dict] = []
+        use_source_rerank = _needs_source_rerank(source_filter, filters)
+
+        if use_source_rerank:
+            candidate_limit = max(_filtered_rerank_candidates(), max_items * 12)
+            rerank_sql, rerank_params = _build_pgvector_source_rerank_query(
+                clean_query,
+                query_vector,
+                meta=meta,
+                module=module,
+                source_filter=source_filter,
+                filters=filters,
+                candidate_limit=candidate_limit,
+                outer_limit=min(candidate_limit * 2, 1000),
+            )
+            source_rerank_stats.update(
+                {
+                    "attempted": True,
+                    "candidate_limit": candidate_limit,
+                    "candidate_query": rerank_params.get("candidate_query", ""),
+                }
+            )
+            try:
+                source_rerank_rows, rerank_ms = _execute_pgvector_source_rerank(
+                    rerank_sql,
+                    rerank_params,
+                    timeout_ms=_filtered_rerank_timeout_ms(),
+                )
+                source_rerank_stats.update(
+                    {
+                        "rows": len(source_rerank_rows),
+                        "jurisdiction_priority_rows": sum(
+                            1 for row in source_rerank_rows if int(row.get("scope_priority") or 0) > 0
+                        ),
+                        "ms": rerank_ms,
+                    }
+                )
+                if "rerank_jurisdiction" in rerank_params:
+                    scoped_rows = [
+                        row
+                        for row in source_rerank_rows
+                        if int(row.get("scope_priority") or 0) > 0
+                    ]
+                    source_rerank_stats["jurisdiction_filter_required"] = True
+                    source_rerank_stats["fallback_channel"] = (
+                        "lexical" if len(scoped_rows) < max_items else ""
+                    )
+                    source_rerank_stats["fallback_reason"] = (
+                        "insufficient_fresh_jurisdiction_vectors"
+                        if len(scoped_rows) < max_items
+                        else ""
+                    )
+                    # Never fill an Ontario request with semantically nearby
+                    # federal or out-of-province statutes merely to satisfy a
+                    # count.  Hybrid retrieval already has the source-local
+                    # lexical results and will keep them in the final evidence.
+                    source_rerank_rows = scoped_rows
+            except SQLAlchemyError as exc:
+                error = repair_text(str(exc))[:300]
+                source_rerank_stats.update(
+                    {
+                        "timed_out": "statement timeout" in error.lower()
+                        or "querycanceled" in error.lower(),
+                        "error": error,
+                        "ms": float(_filtered_rerank_timeout_ms()),
+                    }
+                )
+
+        source_items = [
+            _row_to_item(row, float(row.get("score") or 0)) for row in source_rerank_rows
+        ]
+        lexical_fallback_required = bool(
+            source_rerank_stats.get("fallback_channel") == "lexical"
         )
-        with engine.connect() as conn:
-            rows = _execute_pgvector_ann(conn, sql, ann_params, ann_limit=raw_limit)
-            ann_attempts = [{"ann_limit": raw_limit, "rows": len(rows)}]
-            first_items = [_row_to_item(row, float(row.get("score") or 0)) for row in rows]
-            if len(_dedupe_vector_items(first_items, max_items)) < max_items:
-                needs_expanded_retry = _needs_filtered_expansion(source_filter, filters)
-                retry_limit = (
-                    max(raw_limit * 2, _hnsw_filtered_scan_tuples())
-                    if needs_expanded_retry
-                    else raw_limit * 2
-                )
-                used_filtered_expansion = needs_expanded_retry
-                retry_outer_limit = min(raw_limit * 2, 1000)
-                retry_sql, retry_params = _build_pgvector_ann_query(
-                    query_vector,
-                    meta=meta,
-                    module=module,
-                    source_filter=source_filter,
-                    filters=filters,
-                    ann_limit=retry_limit,
-                    outer_limit=retry_outer_limit,
-                )
-                rows = _execute_pgvector_ann(
-                    conn, retry_sql, retry_params, ann_limit=retry_limit,
-                )
-                ann_attempts.append({"ann_limit": retry_limit, "rows": len(rows)})
+        needs_ann_fallback = not lexical_fallback_required and (
+            not use_source_rerank
+            or len(_dedupe_vector_items(source_items, max_items)) < max_items
+        )
+        ann_rows: list[dict] = []
+        if needs_ann_fallback:
+            sql, ann_params = _build_pgvector_ann_query(
+                query_vector,
+                meta=meta,
+                module=module,
+                source_filter=source_filter,
+                filters=filters,
+                ann_limit=raw_limit,
+            )
+            with engine.connect() as conn:
+                ann_rows = _execute_pgvector_ann(conn, sql, ann_params, ann_limit=raw_limit)
+                ann_attempts.append({"ann_limit": raw_limit, "rows": len(ann_rows)})
+                first_items = source_items + [
+                    _row_to_item(row, float(row.get("score") or 0)) for row in ann_rows
+                ]
+                if not use_source_rerank and len(
+                    _dedupe_vector_items(first_items, max_items)
+                ) < max_items:
+                    retry_limit = raw_limit * 2
+                    retry_sql, retry_params = _build_pgvector_ann_query(
+                        query_vector,
+                        meta=meta,
+                        module=module,
+                        source_filter=source_filter,
+                        filters=filters,
+                        ann_limit=retry_limit,
+                        outer_limit=min(raw_limit * 2, 1000),
+                    )
+                    ann_rows = _execute_pgvector_ann(
+                        conn, retry_sql, retry_params, ann_limit=retry_limit,
+                    )
+                    ann_attempts.append({"ann_limit": retry_limit, "rows": len(ann_rows)})
+        rows = source_rerank_rows + ann_rows
         items = [_row_to_item(row, float(row.get("score") or 0)) for row in rows]
     else:
         ann_attempts = []
-        used_filtered_expansion = False
+        source_rerank_stats = {
+            "attempted": False, "candidate_limit": 0, "rows": 0,
+            "ms": 0.0, "timed_out": False, "error": "",
+        }
         sql = f"""
         SELECT
             rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
@@ -1139,7 +1432,15 @@ def vector_search(
         "filters": filters or {},
         "items": items,
         "total": len(items),
-        "status": "ok" if items else "no_results",
+        "status": (
+            "partial_with_lexical_fallback"
+            if items and source_rerank_stats.get("fallback_channel") == "lexical"
+            else "lexical_fallback_required"
+            if not items and source_rerank_stats.get("fallback_channel") == "lexical"
+            else "ok"
+            if items
+            else "no_results"
+        ),
         "embedding": meta,
         "diagnostic_only": diagnostic_only,
         "pgvector_enabled": _pgvector_column_available(),
@@ -1148,7 +1449,16 @@ def vector_search(
         "retrieval_stats": {
             "ann_attempts": ann_attempts,
             "ann_query_count": len(ann_attempts),
-            "filtered_expansion": used_filtered_expansion,
+            "source_rerank": source_rerank_stats,
+            "query_count": len(ann_attempts) + int(bool(source_rerank_stats.get("attempted"))),
+            "strategy": (
+                "source_rerank_then_bounded_ann"
+                if source_rerank_stats.get("attempted") and ann_attempts
+                else "source_rerank"
+                if source_rerank_stats.get("attempted")
+                else "global_ann"
+            ),
+            "filtered_expansion": False,
         },
         "quantization": repair_text(getattr(settings, "rag_vector_quantization", "none")) or "none",
     }

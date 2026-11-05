@@ -23,7 +23,7 @@
       "stage": "03_vector_search",
       "state": "ok",
       "detail": {
-        "ms": 826.78,
+        "ms": 1196.07,
         "pgvector_enabled": true,
         "index_type": "hnsw",
         "items": 24,
@@ -71,7 +71,7 @@
       "stage": "07_output",
       "state": "ok",
       "detail": {
-        "total_ms": 905.88,
+        "total_ms": 1272.91,
         "top3": [
           {
             "title": "2021 FCA 163 Canada (Public Safety and Emergency Preparedness) v. Gayt",

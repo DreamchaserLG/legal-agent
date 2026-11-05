@@ -176,6 +176,7 @@ class Settings:
         self.rag_vector_weight = float(os.getenv("RAG_VECTOR_WEIGHT", "0.45"))
         self.rag_vector_candidate_limit = int(os.getenv("RAG_VECTOR_CANDIDATE_LIMIT", "24"))
         self.rag_lexical_candidate_limit = int(os.getenv("RAG_LEXICAL_CANDIDATE_LIMIT", "24"))
+        self.rag_partition_parallelism = int(os.getenv("RAG_PARTITION_PARALLELISM", "4"))
         self.rag_context_window_enabled = (
             os.getenv("RAG_CONTEXT_WINDOW_ENABLED", "true").strip().lower()
             in {"1", "true", "yes", "on"}
@@ -207,6 +208,15 @@ class Settings:
         self.rag_hnsw_ef_search = int(os.getenv("RAG_HNSW_EF_SEARCH", "500"))
         self.rag_hnsw_filtered_scan_tuples = int(
             os.getenv("RAG_HNSW_FILTERED_SCAN_TUPLES", "20000")
+        )
+        # Selective law/metadata searches cannot be satisfied reliably by
+        # filtering a small global ANN neighbourhood.  Build a bounded
+        # source-local lexical pool and apply exact vector reranking instead.
+        self.rag_filtered_rerank_candidates = int(
+            os.getenv("RAG_FILTERED_RERANK_CANDIDATES", "500")
+        )
+        self.rag_filtered_rerank_timeout_ms = int(
+            os.getenv("RAG_FILTERED_RERANK_TIMEOUT_MS", "1500")
         )
         self.embedding_provider = os.getenv("EMBEDDING_PROVIDER", "hash").strip().lower()
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "local-hash-embedding").strip()

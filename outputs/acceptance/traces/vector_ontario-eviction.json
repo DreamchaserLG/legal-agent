@@ -23,7 +23,7 @@
       "stage": "03_vector_search",
       "state": "ok",
       "detail": {
-        "ms": 1541.05,
+        "ms": 229.85,
         "pgvector_enabled": true,
         "index_type": "hnsw",
         "items": 24,
@@ -71,7 +71,7 @@
       "stage": "07_output",
       "state": "ok",
       "detail": {
-        "total_ms": 11427.87,
+        "total_ms": 12041.98,
         "top3": [
           {
             "title": "2025 NSSM 68 K.N. v. A.N.",

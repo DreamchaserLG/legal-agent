@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from time import perf_counter
 
@@ -96,6 +97,62 @@ def _retrieval_partitions(source_filter: str, plan: dict) -> list[tuple[str, str
     return ordered
 
 
+def _run_lexical_partition(
+    query: str,
+    *,
+    keywords: list[str],
+    module: str,
+    source_filter: str,
+    limit: int,
+    filters: dict | None,
+) -> tuple[dict, float]:
+    started = perf_counter()
+    try:
+        result = rag_search(
+            query,
+            keywords=keywords,
+            module=module,
+            source_filter=source_filter,
+            limit=limit,
+            filters=filters,
+        )
+    except Exception as exc:
+        result = {"status": "error", "items": [], "error": repair_text(str(exc))[:300]}
+    return result, round((perf_counter() - started) * 1000, 3)
+
+
+def _run_vector_partition(
+    query: str,
+    *,
+    module: str,
+    source_filter: str,
+    limit: int,
+    filters: dict | None,
+    include_vector: bool,
+) -> tuple[dict, float]:
+    started = perf_counter()
+    if not include_vector:
+        result = {
+            "status": "skipped_by_research_budget", "items": [],
+            "embedding": {}, "pgvector_enabled": False,
+        }
+    else:
+        try:
+            result = vector_search(
+                query,
+                module=module,
+                source_filter=source_filter,
+                limit=limit,
+                filters=filters,
+            )
+        except Exception as exc:
+            result = {
+                "status": "timeout_or_error", "items": [], "embedding": {},
+                "pgvector_enabled": False, "error": repair_text(str(exc))[:300],
+            }
+    return result, round((perf_counter() - started) * 1000, 3)
+
+
 def _authority_boost(item: dict, query_terms: set[str]) -> float:
     boost = 0.0
     source_kind = repair_text(item.get("source_kind")).lower()
@@ -172,68 +229,84 @@ def hybrid_search(
     vector_embedding = {}
     vector_status = ""
     vector_pgvector_enabled = False
-    for partition_name, partition_source, partition_query in _retrieval_partitions(source_filter, query_plan):
-        lexical_started = perf_counter()
-        try:
-            lexical_result = rag_search(
-                partition_query or lexical_query,
-                keywords=keywords or [],
-                module=module,
-                source_filter=partition_source,
-                limit=lexical_limit,
-                filters=filters,
-            )
-        except Exception as exc:
-            lexical_result = {"status": "error", "items": [], "error": repair_text(str(exc))[:300]}
-        lexical_ms = round((perf_counter() - lexical_started) * 1000, 3)
-        vector_started = perf_counter()
-        if include_vector:
-            try:
-                vector_result = vector_search(
+    partitions = _retrieval_partitions(source_filter, query_plan)
+    retrieval_started = perf_counter()
+    max_workers = max(
+        1,
+        min(
+            int(getattr(settings, "rag_partition_parallelism", 4) or 4),
+            max(1, len(partitions) * 2),
+        ),
+    )
+    partition_results: dict[int, dict] = {}
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="legal-retrieval") as pool:
+        for index, (_, partition_source, partition_query) in enumerate(partitions):
+            effective_query = partition_query or lexical_query
+            partition_results[index] = {
+                "lexical": pool.submit(
+                    _run_lexical_partition,
+                    effective_query,
+                    keywords=keywords or [],
+                    module=module,
+                    source_filter=partition_source,
+                    limit=lexical_limit,
+                    filters=filters,
+                ),
+                "vector": pool.submit(
+                    _run_vector_partition,
                     partition_query,
                     module=module,
                     source_filter=partition_source,
                     limit=vector_limit,
                     filters=filters,
-                )
-            except Exception as exc:
-                vector_result = {
-                    "status": "timeout_or_error", "items": [], "embedding": {},
-                    "pgvector_enabled": False, "error": repair_text(str(exc))[:300],
+                    include_vector=include_vector,
+                ),
+            }
+        for index, (partition_name, partition_source, partition_query) in enumerate(partitions):
+            lexical_result, lexical_ms = partition_results[index]["lexical"].result()
+            vector_result, vector_ms = partition_results[index]["vector"].result()
+            for item in lexical_result.get("items") or []:
+                current = dict(item)
+                current["retrieval_partition"] = partition_name
+                lexical_items.append(current)
+            for item in vector_result.get("items") or []:
+                current = dict(item)
+                current["retrieval_partition"] = partition_name
+                vector_items.append(current)
+            vector_embedding = vector_result.get("embedding") or vector_embedding
+            vector_status = vector_result.get("status", vector_status)
+            vector_pgvector_enabled = bool(vector_result.get("pgvector_enabled", vector_pgvector_enabled))
+            partition_stats.append(
+                {
+                    "partition": partition_name,
+                    "source_filter": partition_source,
+                    "query": partition_query,
+                    "lexical_total": len(lexical_result.get("items") or []),
+                    "vector_total": len(vector_result.get("items") or []),
+                    "lexical_status": lexical_result.get("status", "ok"),
+                    "vector_status": vector_result.get("status", "ok"),
+                    "lexical_error": lexical_result.get("error", ""),
+                    "vector_error": vector_result.get("error", ""),
+                    "lexical_ms": lexical_ms,
+                    "vector_ms": vector_ms,
+                    "vector_retrieval_stats": vector_result.get("retrieval_stats") or {},
+                    "fallback_channel": (
+                        (vector_result.get("retrieval_stats") or {})
+                        .get("source_rerank", {})
+                        .get("fallback_channel", "")
+                    ),
+                    "effective_partition_total": (
+                        len(lexical_result.get("items") or [])
+                        if (
+                            (vector_result.get("retrieval_stats") or {})
+                            .get("source_rerank", {})
+                            .get("fallback_channel") == "lexical"
+                        )
+                        else len(vector_result.get("items") or [])
+                    ),
                 }
-        else:
-            vector_result = {
-                "status": "skipped_by_research_budget", "items": [],
-                "embedding": {}, "pgvector_enabled": False,
-            }
-        vector_ms = round((perf_counter() - vector_started) * 1000, 3)
-        for item in lexical_result.get("items") or []:
-            current = dict(item)
-            current["retrieval_partition"] = partition_name
-            lexical_items.append(current)
-        for item in vector_result.get("items") or []:
-            current = dict(item)
-            current["retrieval_partition"] = partition_name
-            vector_items.append(current)
-        vector_embedding = vector_result.get("embedding") or vector_embedding
-        vector_status = vector_result.get("status", vector_status)
-        vector_pgvector_enabled = bool(vector_result.get("pgvector_enabled", vector_pgvector_enabled))
-        partition_stats.append(
-            {
-                "partition": partition_name,
-                "source_filter": partition_source,
-                "query": partition_query,
-                "lexical_total": len(lexical_result.get("items") or []),
-                "vector_total": len(vector_result.get("items") or []),
-                "lexical_status": lexical_result.get("status", "ok"),
-                "vector_status": vector_result.get("status", "ok"),
-                "lexical_error": lexical_result.get("error", ""),
-                "vector_error": vector_result.get("error", ""),
-                "lexical_ms": lexical_ms,
-                "vector_ms": vector_ms,
-                "vector_retrieval_stats": vector_result.get("retrieval_stats") or {},
-            }
-        )
+            )
+    retrieval_ms = round((perf_counter() - retrieval_started) * 1000, 3)
     graph_result: dict = {"status": "disabled", "items": [], "total": 0}
     graph_started = perf_counter()
     if bool(getattr(settings, "rag_graph_enabled", True)) and normalize_module(module) == "canada":
@@ -382,6 +455,7 @@ def hybrid_search(
             "context_window": window_stats,
             "partitions": partition_stats,
             "timing_ms": {
+                "partition_retrieval_wall": retrieval_ms,
                 "graph": graph_ms,
                 "rerank": rerank_ms,
                 "context_window": window_ms,

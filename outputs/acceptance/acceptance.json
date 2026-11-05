@@ -1153,44 +1153,44 @@
   "C_perf": {
     "limit_sweep": {
       "8": {
-        "p50_ms": 52.2,
-        "p95_ms": 933.14,
-        "p99_ms": 933.14,
-        "min_ms": 48.59,
-        "max_ms": 933.14,
+        "p50_ms": 60.03,
+        "p95_ms": 1106.15,
+        "p99_ms": 1106.15,
+        "min_ms": 56.51,
+        "max_ms": 1106.15,
         "avg_items": 8.0,
         "requested": 8
       },
       "24": {
-        "p50_ms": 63.89,
-        "p95_ms": 90.84,
-        "p99_ms": 90.84,
-        "min_ms": 60.86,
-        "max_ms": 90.84,
+        "p50_ms": 71.32,
+        "p95_ms": 117.64,
+        "p99_ms": 117.64,
+        "min_ms": 66.61,
+        "max_ms": 117.64,
         "avg_items": 24.0,
         "requested": 24
       },
       "40": {
-        "p50_ms": 78.42,
-        "p95_ms": 119.16,
-        "p99_ms": 119.16,
-        "min_ms": 75.71,
-        "max_ms": 119.16,
+        "p50_ms": 87.42,
+        "p95_ms": 126.97,
+        "p99_ms": 126.97,
+        "min_ms": 83.7,
+        "max_ms": 126.97,
         "avg_items": 40.0,
         "requested": 40
       },
       "100": {
-        "p50_ms": 155.07,
-        "p95_ms": 247.44,
-        "p99_ms": 247.44,
-        "min_ms": 151.7,
-        "max_ms": 247.44,
+        "p50_ms": 149.25,
+        "p95_ms": 264.76,
+        "p99_ms": 264.76,
+        "min_ms": 142.54,
+        "max_ms": 264.76,
         "avg_items": 100.0,
         "requested": 100
       }
     },
     "cold_first": {
-      "ms": 638.43,
+      "ms": 339.23,
       "items": 24,
       "note": "进程内首查，含索引页首次加载"
     },
@@ -1198,56 +1198,56 @@
       "1": {
         "requests": 24,
         "errors": 0,
-        "qps": 8.75,
-        "p50_ms": 67.52,
-        "p95_ms": 77.75,
+        "qps": 12.85,
+        "p50_ms": 75.13,
+        "p95_ms": 81.2,
         "error_sample": []
       },
       "4": {
         "requests": 24,
         "errors": 0,
-        "qps": 20.52,
-        "p50_ms": 188.83,
-        "p95_ms": 263.68,
+        "qps": 19.01,
+        "p50_ms": 204.99,
+        "p95_ms": 317.75,
         "error_sample": []
       },
       "8": {
         "requests": 24,
         "errors": 0,
-        "qps": 18.86,
-        "p50_ms": 408.22,
-        "p95_ms": 485.32,
+        "qps": 18.97,
+        "p50_ms": 399.88,
+        "p95_ms": 438.03,
         "error_sample": []
       }
     },
     "db_only": {
-      "p50_ms": 29.7,
-      "p95_ms": 32.79,
+      "p50_ms": 18.21,
+      "p95_ms": 50.92,
       "note": "仅 SQL 往返，不含 embedding 与 ensure_vector_tables"
     },
     "concurrency_sql": {
       "1": {
         "requests": 24,
         "errors": 0,
-        "qps": 70.84,
-        "p50_ms": 13.49,
-        "p95_ms": 17.26,
+        "qps": 55.38,
+        "p50_ms": 17.86,
+        "p95_ms": 20.72,
         "error_sample": []
       },
       "4": {
         "requests": 24,
         "errors": 0,
-        "qps": 231.74,
-        "p50_ms": 16.93,
-        "p95_ms": 18.11,
+        "qps": 207.73,
+        "p50_ms": 18.63,
+        "p95_ms": 19.94,
         "error_sample": []
       },
       "8": {
         "requests": 24,
         "errors": 0,
-        "qps": 222.97,
-        "p50_ms": 20.2,
-        "p95_ms": 102.99,
+        "qps": 160.96,
+        "p50_ms": 24.35,
+        "p95_ms": 138.47,
         "error_sample": []
       }
     }
@@ -1411,7 +1411,7 @@
             "stage": "03_vector_search",
             "state": "ok",
             "detail": {
-              "ms": 1541.05,
+              "ms": 229.85,
               "pgvector_enabled": true,
               "index_type": "hnsw",
               "items": 24,
@@ -1459,7 +1459,7 @@
             "stage": "07_output",
             "state": "ok",
             "detail": {
-              "total_ms": 11427.87,
+              "total_ms": 12041.98,
               "top3": [
                 {
                   "title": "2025 NSSM 68 K.N. v. A.N.",
@@ -1506,7 +1506,7 @@
             "stage": "03_vector_search",
             "state": "ok",
             "detail": {
-              "ms": 1165.23,
+              "ms": 94.57,
               "pgvector_enabled": true,
               "index_type": "hnsw",
               "items": 24,
@@ -1554,7 +1554,7 @@
             "stage": "07_output",
             "state": "ok",
             "detail": {
-              "total_ms": 1234.33,
+              "total_ms": 158.75,
               "top3": [
                 {
                   "title": "2020 BCCA 362 R. v. McGee",
@@ -1601,7 +1601,7 @@
             "stage": "03_vector_search",
             "state": "ok",
             "detail": {
-              "ms": 826.78,
+              "ms": 1196.07,
               "pgvector_enabled": true,
               "index_type": "hnsw",
               "items": 24,
@@ -1649,7 +1649,7 @@
             "stage": "07_output",
             "state": "ok",
             "detail": {
-              "total_ms": 905.88,
+              "total_ms": 1272.91,
               "top3": [
                 {
                   "title": "2021 FCA 163 Canada (Public Safety and Emergency Preparedness) v. Gayt",
@@ -1676,7 +1676,7 @@
       {
         "id": "ontario-eviction",
         "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
-        "total_ms": 9655.22,
+        "total_ms": 7419.87,
         "steps": [
           {
             "stage": "01_input",
@@ -1713,8 +1713,8 @@
               "lexical_total": 24,
               "vector_total": 24,
               "vector_error": "",
-              "lexical_ms": 2965.162,
-              "vector_ms": 684.755,
+              "lexical_ms": 2589.988,
+              "vector_ms": 479.357,
               "vector_retrieval_stats": {
                 "ann_attempts": [
                   {
@@ -1734,8 +1734,8 @@
               "lexical_total": 24,
               "vector_total": 24,
               "vector_error": "",
-              "lexical_ms": 245.708,
-              "vector_ms": 5348.663,
+              "lexical_ms": 267.049,
+              "vector_ms": 3572.856,
               "vector_retrieval_stats": {
                 "ann_attempts": [
                   {
@@ -1778,9 +1778,9 @@
                 "token_budget": 8000
               },
               "timing_ms": {
-                "graph": 373.28,
-                "rerank": 6.551,
-                "context_window": 15.893
+                "graph": 466.307,
+                "rerank": 8.61,
+                "context_window": 14.513
               }
             }
           },
@@ -1790,7 +1790,7 @@
             "detail": {
               "total": 8,
               "strategy": "structured_hybrid_graph_rrf_rerank_window",
-              "ms": 9655.22,
+              "ms": 7419.87,
               "top3": [
                 {
                   "title": "1994 NSCA 124 Reference re Residential Tenancies Act",
@@ -1818,7 +1818,7 @@
       {
         "id": "charter-delay",
         "query": "Charter s.11(b) unreasonable delay stay of proceedings",
-        "total_ms": 7263.25,
+        "total_ms": 7682.51,
         "steps": [
           {
             "stage": "01_input",
@@ -1855,8 +1855,8 @@
               "lexical_total": 24,
               "vector_total": 24,
               "vector_error": "",
-              "lexical_ms": 216.302,
-              "vector_ms": 6495.242,
+              "lexical_ms": 205.041,
+              "vector_ms": 6880.142,
               "vector_retrieval_stats": {
                 "ann_attempts": [
                   {
@@ -1880,8 +1880,8 @@
               "lexical_total": 17,
               "vector_total": 24,
               "vector_error": "",
-              "lexical_ms": 24.805,
-              "vector_ms": 96.604,
+              "lexical_ms": 27.265,
+              "vector_ms": 104.938,
               "vector_retrieval_stats": {
                 "ann_attempts": [
                   {
@@ -1920,9 +1920,9 @@
                 "token_budget": 8000
               },
               "timing_ms": {
-                "graph": 404.277,
-                "rerank": 5.815,
-                "context_window": 8.878
+                "graph": 438.504,
+                "rerank": 7.118,
+                "context_window": 7.884
               }
             }
           },
@@ -1932,7 +1932,7 @@
             "detail": {
               "total": 8,
               "strategy": "structured_hybrid_graph_rrf_rerank_window",
-              "ms": 7263.25,
+              "ms": 7682.51,
               "top3": [
                 {
                   "title": "2001 BCSC 1599 R. v. Wilder",
@@ -1960,7 +1960,7 @@
       {
         "id": "summary-judgment",
         "query": "Ontario summary judgment threshold no genuine issue requiring trial",
-        "total_ms": 5877.11,
+        "total_ms": 5823.29,
         "steps": [
           {
             "stage": "01_input",
@@ -1997,8 +1997,8 @@
               "lexical_total": 24,
               "vector_total": 24,
               "vector_error": "",
-              "lexical_ms": 493.362,
-              "vector_ms": 4863.027,
+              "lexical_ms": 463.111,
+              "vector_ms": 4691.159,
               "vector_retrieval_stats": {
                 "ann_attempts": [
                   {
@@ -2022,8 +2022,8 @@
               "lexical_total": 10,
               "vector_total": 24,
               "vector_error": "",
-              "lexical_ms": 93.253,
-              "vector_ms": 93.224,
+              "lexical_ms": 211.579,
+              "vector_ms": 94.618,
               "vector_retrieval_stats": {
                 "ann_attempts": [
                   {
@@ -2062,9 +2062,9 @@
                 "token_budget": 8000
               },
               "timing_ms": {
-                "graph": 305.588,
-                "rerank": 5.789,
-                "context_window": 10.928
+                "graph": 336.189,
+                "rerank": 6.147,
+                "context_window": 9.971
               }
             }
           },
@@ -2074,7 +2074,7 @@
             "detail": {
               "total": 8,
               "strategy": "structured_hybrid_graph_rrf_rerank_window",
-              "ms": 5877.11,
+              "ms": 5823.29,
               "top3": [
                 {
                   "title": "2012 NSSC 257 Coady v. Burton Canada Company",
@@ -2117,21 +2117,21 @@
         "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "status": "ok",
         "total": 8,
-        "ms": 2346.55
+        "ms": 2663.14
       },
       {
         "input": "《民法典》第 1165 条",
         "status": "ok",
         "total": 8,
-        "ms": 1436.16
+        "ms": 1579.66
       },
       {
         "input": "🚗🚗🚗",
         "status": "ok",
         "total": 8,
-        "ms": 1335.96
+        "ms": 1700.7
       }
     ]
   },
-  "updated_at": "2026-11-05T11:55:41"
+  "updated_at": "2026-11-05T14:07:30"
 }

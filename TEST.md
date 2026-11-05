@@ -473,3 +473,43 @@ python scripts\make_acceptance_charts.py
 - 专项7/7、全量62/62通过。
 
 残余边界：8条中合同查询Recall@10仍为0.8，summary judgment为0.9；`ef=1000`未稳定修复合同样本，根因仍是现有 `m=16/ef_construction=64` 图结构。本轮按约束未重建。limit=100在ef=500下P95为247.44ms，记录为质量换延迟的明确代价。完整数据见 `docs/RETRIEVAL_ACCEPTANCE_REPORT.md` 第9节。
+
+## 2026-11-05 第二轮修复独立复测（c606579）
+
+### 范围
+
+对 `c606579`（filtered recall + 并发死锁修复）做独立复测，重点验证上一轮 8 条失败用例。只读：未重建索引、未写入业务表。完整报告：`docs/RETRIEVAL_FIX_V2_VERIFICATION.md`。
+
+### 可复现命令
+
+```powershell
+python -m unittest discover -s tests -v
+python scripts\run_retrieval_acceptance.py --section A,B,C
+python scripts\run_retrieval_acceptance.py --section E
+python scripts\eval_recall_ef500.py
+python scripts\make_acceptance_charts_v2.py
+```
+
+### 预期与实际
+
+- 预期：并发 4 线程不再死锁。实际：1/4/8 线程全部 0 失败（上轮 46% / 71%）；QPS 12.85 / 19.01 / 18.97，P50 75 / 205 / 400 ms。
+- 预期：`ef_search=500` 把 Recall@10 提到 0.9 以上。实际：4 条真实查询 1.0 / 1.0 / 0.8 / 0.9，均值 **0.925**，最低 0.8（ef=80 时为 0.425 / 0.0）。
+- 预期：`source_filter='law'` 返回 24 条。实际：**2/3 查询填满，1 条仍只有 5 条**；平均填充率 73.6%。该查询前 20,000 近邻中仅 5 条法条，是单索引结构上限，非参数问题。
+- 预期：法条分区耗时可接受。实际：暖态 144–351 ms；冷态 3.5–12.7 s。
+- 预期：48 种过滤/limit 组合仍全部命中 HNSW。实际：48/48，无 Seq Scan、无 Hash Join。
+- 预期：`ef_search` 提高会带来延迟代价。实际：纯 SQL P50 11.57 → 18.21 ms，P95 19.42 → 50.92 ms。
+- 预期：端到端不退化。实际：hybrid 首次 5.8–7.7 s、暖态 0.75–0.82 s；分段计时显示 3.5–6.9 s 集中在法条分区的 20,000 候选扫描。
+- 预期：回归全过。实际：62/62，17.3 s。
+
+### 结论
+
+并发死锁与图可达性两项已彻底解决；法条分区从 0 条恢复到平均 73.6% 填充，但仍有查询结构上填不满，且冷启动秒级。新测试 `test_law_partition_*` 使用库内法条向量作查询，必然命中法条邻域，对真实自由文本的代表性不足，建议改为本次的真实查询样本。34 条用例重跑：31 通过、3 不通过。
+
+## 2026-11-05 第三轮来源内过滤检索修复
+
+- 真实中文自由文本替换库内向量夹具；普通查询继续使用全局 HNSW，强法条/结构化过滤改用来源内 GIN 候选加精确向量重排。
+- 删除运行时 `96 → 20,000` 扩展；来源重排最多500候选、预算1.5秒，超时最多补一次96候选 ANN。
+- criminal/contract 法条向量均24/24；Ontario 检测到 fresh Ontario 向量为0后返回 `lexical_fallback_required`，Hybrid 使用24条词法法条，避免用跨辖区法规凑数。
+- Ontario Hybrid Top-1 为 `2023 ONCA 789`，Top-8 包含 `Residential Tenancies Act, 2006`；case/law 来源均保留。
+- 四个分区任务并行且启用诚实词法兜底后，Ontario 暖态约907–939ms，检索墙钟约196–227ms；来源内计划无 Seq Scan。
+- 全量65/65通过，完整报告见 `docs/RETRIEVAL_FIX_V3_REPORT.md`，原始结果见 `outputs/acceptance/filtered_rerank_v3.json`。

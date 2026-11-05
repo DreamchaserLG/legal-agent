@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from app.service.common_service import repair_text
 
@@ -62,6 +63,76 @@ def _domain_signals(plan: dict) -> set[str]:
     return signals
 
 
+def _jurisdiction_match(item: dict, jurisdictions: list[str]) -> bool:
+    if not jurisdictions:
+        return False
+    haystack = " ".join(
+        [
+            repair_text(item.get("jurisdiction")),
+            repair_text(item.get("court_level")),
+            repair_text(item.get("citation")),
+            repair_text(item.get("source_code")),
+            repair_text(item.get("title")),
+        ]
+    ).lower()
+    for jurisdiction in jurisdictions:
+        lowered = repair_text(jurisdiction).lower()
+        if lowered and lowered in haystack:
+            return True
+        if lowered == "ontario" and (
+            repair_text(item.get("source_code")).lower() in {"on_statute", "on_regulation"}
+            or re.search(r"(^|[^a-z])(onca|onsc|oncj|onltb)([^a-z]|$)", haystack)
+        ):
+            return True
+    return False
+
+
+def _ensure_preferred_source_coverage(
+    ranked: list[dict], preferred_sources: list[str], limit: int
+) -> list[dict]:
+    """Keep at least one result from every requested legal source partition."""
+    selected = list(ranked[:limit])
+    if not selected:
+        return selected
+    present = {repair_text(item.get("source_kind")).lower() for item in selected}
+    counts = Counter(repair_text(item.get("source_kind")).lower() for item in selected)
+    selected_ids = {id(item) for item in selected}
+    for source_kind in preferred_sources:
+        if not source_kind or source_kind in present:
+            continue
+        replacement = next(
+            (
+                item
+                for item in ranked
+                if repair_text(item.get("source_kind")).lower() == source_kind
+                and id(item) not in selected_ids
+            ),
+            None,
+        )
+        if replacement is None:
+            continue
+        replacement_index = next(
+            (
+                index
+                for index in range(len(selected) - 1, -1, -1)
+                if counts[repair_text(selected[index].get("source_kind")).lower()] > 1
+                or repair_text(selected[index].get("source_kind")).lower() not in preferred_sources
+            ),
+            None,
+        )
+        if replacement_index is None:
+            continue
+        removed = selected[replacement_index]
+        removed_kind = repair_text(removed.get("source_kind")).lower()
+        selected_ids.discard(id(removed))
+        selected[replacement_index] = replacement
+        selected_ids.add(id(replacement))
+        counts[removed_kind] -= 1
+        counts[source_kind] += 1
+        present.add(source_kind)
+    return selected
+
+
 def rerank_legal_evidence(query: str, items: list[dict], plan: dict | None = None, limit: int | None = None) -> list[dict]:
     plan = plan or {}
     query_terms = _terms(
@@ -76,6 +147,7 @@ def rerank_legal_evidence(query: str, items: list[dict], plan: dict | None = Non
     )
     domain_signals = _domain_signals(plan)
     preferred_sources = [repair_text(value).lower() for value in (plan.get("preferred_sources") or [])]
+    jurisdictions = [repair_text(value) for value in (plan.get("jurisdictions") or []) if repair_text(value)]
 
     reranked = []
     for item in items:
@@ -98,6 +170,9 @@ def rerank_legal_evidence(query: str, items: list[dict], plan: dict | None = Non
             score += min(max(float(current.get("graph_score") or 0.0), 0.0) * 0.025, 0.02)
         if source_kind in preferred_sources:
             score += 0.006 if preferred_sources.index(source_kind) == 0 else 0.003
+        jurisdiction_matched = _jurisdiction_match(current, jurisdictions)
+        if jurisdiction_matched:
+            score += 0.04
         if source_kind == "case" and {"tenant", "landlord", "eviction", "lease"} & query_terms:
             score += 0.012
         if source_kind == "law" and {"act", "statute", "section", "regulation"} & title_terms:
@@ -126,6 +201,7 @@ def rerank_legal_evidence(query: str, items: list[dict], plan: dict | None = Non
             "term_overlap": sorted(overlap)[:12],
             "domain_overlap": sorted(domain_overlap)[:12],
             "graph_supported": "graph" in channels,
+            "jurisdiction_match": jurisdiction_matched,
             "penalty": round(penalty, 6),
         }
         reranked.append(current)
@@ -139,5 +215,6 @@ def rerank_legal_evidence(query: str, items: list[dict], plan: dict | None = Non
         reverse=True,
     )
     if limit:
-        return reranked[: max(1, int(limit))]
+        bounded_limit = max(1, int(limit))
+        return _ensure_preferred_source_coverage(reranked, preferred_sources, bounded_limit)
     return reranked

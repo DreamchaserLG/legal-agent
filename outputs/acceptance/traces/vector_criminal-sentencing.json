@@ -23,7 +23,7 @@
       "stage": "03_vector_search",
       "state": "ok",
       "detail": {
-        "ms": 1165.23,
+        "ms": 94.57,
         "pgvector_enabled": true,
         "index_type": "hnsw",
         "items": 24,
@@ -71,7 +71,7 @@
       "stage": "07_output",
       "state": "ok",
       "detail": {
-        "total_ms": 1234.33,
+        "total_ms": 158.75,
         "top3": [
           {
             "title": "2020 BCCA 362 R. v. McGee",

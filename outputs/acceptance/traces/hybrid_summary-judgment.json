@@ -1,7 +1,7 @@
 {
   "id": "summary-judgment",
   "query": "Ontario summary judgment threshold no genuine issue requiring trial",
-  "total_ms": 5877.11,
+  "total_ms": 5823.29,
   "steps": [
     {
       "stage": "01_input",
@@ -38,8 +38,8 @@
         "lexical_total": 24,
         "vector_total": 24,
         "vector_error": "",
-        "lexical_ms": 493.362,
-        "vector_ms": 4863.027,
+        "lexical_ms": 463.111,
+        "vector_ms": 4691.159,
         "vector_retrieval_stats": {
           "ann_attempts": [
             {
@@ -63,8 +63,8 @@
         "lexical_total": 10,
         "vector_total": 24,
         "vector_error": "",
-        "lexical_ms": 93.253,
-        "vector_ms": 93.224,
+        "lexical_ms": 211.579,
+        "vector_ms": 94.618,
         "vector_retrieval_stats": {
           "ann_attempts": [
             {
@@ -103,9 +103,9 @@
           "token_budget": 8000
         },
         "timing_ms": {
-          "graph": 305.588,
-          "rerank": 5.789,
-          "context_window": 10.928
+          "graph": 336.189,
+          "rerank": 6.147,
+          "context_window": 9.971
         }
       }
     },
@@ -115,7 +115,7 @@
       "detail": {
         "total": 8,
         "strategy": "structured_hybrid_graph_rrf_rerank_window",
-        "ms": 5877.11,
+        "ms": 5823.29,
         "top3": [
           {
             "title": "2012 NSSC 257 Coady v. Burton Canada Company",

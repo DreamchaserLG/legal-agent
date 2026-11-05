@@ -25,6 +25,24 @@ class CanadianChineseQueryPlanningTests(unittest.TestCase):
         self.assertIn("Ontario tenancy maintenance and remedies", domains)
         self.assertIn("Ontario N12 eviction and bad faith", domains)
 
+    def test_filtered_law_queries_keep_doctrinal_terms(self):
+        samples = {
+            "显失公平交易与不当影响合同撤销": (
+                "unconscionability", "undue influence", "rescission", "contract",
+            ),
+            "加拿大刑事量刑中醉酒、过失与既往记录的加重减轻": (
+                "sentencing", "intoxication", "prior criminal record",
+            ),
+            "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济": (
+                "ontario", "landlord own use", "good faith", "eviction",
+            ),
+        }
+        for query, expected_terms in samples.items():
+            with self.subTest(query=query):
+                translated = translate_query(query)["translated"].lower()
+                for term in expected_terms:
+                    self.assertIn(term, translated)
+
 
 if __name__ == "__main__":
     unittest.main()

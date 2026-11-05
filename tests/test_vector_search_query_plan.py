@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from app.core.database import engine, is_sqlite
 from app.service import vector_store_service as service
@@ -56,9 +57,14 @@ class VectorSearchQueryPlanIntegrationTests(unittest.TestCase):
                 },
             ).scalar_one()
         cls.query_vector = [float(value) for value in raw.strip("[]").split(",")]
-        cls.law_query_vector = service.create_embedding(
-            "Ontario landlord tenant eviction remedy"
-        )
+        cls.law_queries = {
+            "ontario-eviction": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
+            "criminal-sentencing": "加拿大刑事量刑中醉酒、过失与既往记录的加重减轻",
+            "contract": "显失公平交易与不当影响合同撤销",
+        }
+        cls.law_query_vectors = {
+            key: service.create_embedding(query) for key, query in cls.law_queries.items()
+        }
 
     def test_ann_first_plan_uses_hnsw_without_large_sequential_plan(self):
         meta = embedding_metadata()
@@ -82,28 +88,29 @@ class VectorSearchQueryPlanIntegrationTests(unittest.TestCase):
         self.assertNotIn("Parallel Seq Scan", node_types)
         self.assertNotIn("Hash Join", node_types)
 
-    def test_filtered_expansion_plan_still_uses_hnsw(self):
-        sql, params = service._build_pgvector_ann_query(
-            self.law_query_vector,
+    def test_source_local_rerank_plan_uses_bounded_indexes_without_seq_scan(self):
+        query = self.law_queries["ontario-eviction"]
+        sql, params = service._build_pgvector_source_rerank_query(
+            query,
+            self.law_query_vectors["ontario-eviction"],
             meta=embedding_metadata(),
             module="canada",
             source_filter="law",
             filters=None,
-            ann_limit=20000,
-            outer_limit=192,
+            candidate_limit=500,
+            outer_limit=1000,
         )
-        with engine.begin() as conn:
-            effective_ef = service._configure_hnsw_search(conn, ann_limit=20000)
+        with engine.connect() as conn:
             raw_plan = conn.execute(text("EXPLAIN (FORMAT JSON) " + sql), params).scalar()
         plan = raw_plan if isinstance(raw_plan, list) else json.loads(raw_plan)
         nodes = _plan_nodes(plan)
         node_types = {str(node.get("Node Type")) for node in nodes}
         used_indexes = {str(node.get("Index Name")) for node in nodes if node.get("Index Name")}
-        self.assertEqual(effective_ef, 1000)
-        self.assertIn(HNSW_INDEX_NAME, used_indexes)
+        self.assertEqual(params["candidate_limit"], 500)
+        self.assertIn("idx_rag_chunks_vector", used_indexes)
+        self.assertIn("rag_chunk_embeddings_pkey", used_indexes)
         self.assertNotIn("Seq Scan", node_types)
         self.assertNotIn("Parallel Seq Scan", node_types)
-        self.assertNotIn("Hash Join", node_types)
 
     def test_limit_40_returns_at_least_40_fresh_deduplicated_items(self):
         with patch.object(service, "ensure_vector_tables"), patch.object(
@@ -127,29 +134,41 @@ class VectorSearchQueryPlanIntegrationTests(unittest.TestCase):
                 filters={"jurisdiction": "__no_such_jurisdiction__"},
             )
         self.assertEqual(result["items"], [])
-        self.assertEqual(result["retrieval_stats"]["ann_query_count"], 2)
+        self.assertEqual(result["retrieval_stats"]["query_count"], 2)
+        self.assertEqual(result["retrieval_stats"]["ann_query_count"], 1)
+        self.assertTrue(result["retrieval_stats"]["source_rerank"]["attempted"])
         self.assertEqual(
             [attempt["ann_limit"] for attempt in result["retrieval_stats"]["ann_attempts"]],
-            [40, 20000],
+            [40],
         )
 
-    def test_law_partition_expands_once_and_returns_semantic_results(self):
-        with patch.object(service, "ensure_vector_tables"), patch.object(
-            service, "create_embedding", return_value=self.law_query_vector
-        ):
-            result = service.vector_search(
-                "Ontario landlord tenant eviction remedy",
-                module="canada",
-                source_filter="law",
-                limit=24,
-            )
-        self.assertEqual(result["status"], "ok")
-        self.assertGreaterEqual(len(result["items"]), 24)
-        self.assertLessEqual(result["retrieval_stats"]["ann_query_count"], 2)
-        self.assertEqual(
-            result["retrieval_stats"]["ann_attempts"][-1]["ann_limit"], 20000
-        )
-        self.assertTrue(all(item.get("source_kind") == "law" for item in result["items"]))
+    def test_real_free_text_law_queries_fill_or_request_lexical_fallback_without_20k_scan(self):
+        for key, query in self.law_queries.items():
+            with self.subTest(query=key), patch.object(
+                service, "ensure_vector_tables"
+            ), patch.object(
+                service, "create_embedding", return_value=self.law_query_vectors[key]
+            ):
+                result = service.vector_search(
+                    query,
+                    module="canada",
+                    source_filter="law",
+                    limit=24,
+                )
+            stats = result["retrieval_stats"]
+            self.assertEqual(stats["strategy"], "source_rerank")
+            self.assertEqual(stats["query_count"], 1)
+            self.assertEqual(stats["ann_attempts"], [])
+            self.assertLess(stats["source_rerank"]["ms"], 1500)
+            if key == "ontario-eviction":
+                self.assertEqual(result["status"], "lexical_fallback_required")
+                self.assertEqual(result["items"], [])
+                self.assertEqual(stats["source_rerank"]["fallback_channel"], "lexical")
+                self.assertEqual(stats["source_rerank"]["jurisdiction_priority_rows"], 0)
+                continue
+            self.assertEqual(result["status"], "ok")
+            self.assertGreaterEqual(len(result["items"]), 24)
+            self.assertTrue(all(item.get("source_kind") == "law" for item in result["items"]))
 
 
 class VectorSchemaInitializationTests(unittest.TestCase):
@@ -181,6 +200,39 @@ class VectorSchemaInitializationTests(unittest.TestCase):
             service.ensure_vector_tables()
             self.assertEqual(initialize.call_count, 2)
             self.assertTrue(service._VECTOR_SCHEMA_READY)
+
+
+class FilteredRerankFallbackTests(unittest.TestCase):
+    def test_statement_timeout_falls_back_to_one_small_ann_query(self):
+        timeout = OperationalError(
+            "source rerank",
+            {},
+            RuntimeError("canceling statement due to statement timeout"),
+        )
+        with patch.object(service, "ensure_vector_tables"), patch.object(
+            service, "_pgvector_column_available", return_value=True
+        ), patch(
+            "app.service.vector_index_management_service.get_hnsw_index_state",
+            return_value={"valid": True, "ready": True},
+        ), patch.object(
+            service, "create_embedding", return_value=[0.0, 1.0]
+        ), patch.object(
+            service, "_execute_pgvector_source_rerank", side_effect=timeout
+        ), patch.object(
+            service, "_execute_pgvector_ann", return_value=[]
+        ):
+            result = service.vector_search(
+                "Ontario landlord eviction",
+                module="canada",
+                source_filter="law",
+                limit=24,
+            )
+
+        stats = result["retrieval_stats"]
+        self.assertEqual(result["status"], "no_results")
+        self.assertTrue(stats["source_rerank"]["timed_out"])
+        self.assertEqual(stats["query_count"], 2)
+        self.assertEqual(stats["ann_attempts"], [{"ann_limit": 96, "rows": 0}])
 
 
 if __name__ == "__main__":

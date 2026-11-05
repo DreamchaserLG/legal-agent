@@ -1,7 +1,7 @@
 {
   "id": "ontario-eviction",
   "query": "安大略房东以自住为由驱逐租客，善意要求与 s.57 救济",
-  "total_ms": 9655.22,
+  "total_ms": 7419.87,
   "steps": [
     {
       "stage": "01_input",
@@ -38,8 +38,8 @@
         "lexical_total": 24,
         "vector_total": 24,
         "vector_error": "",
-        "lexical_ms": 2965.162,
-        "vector_ms": 684.755,
+        "lexical_ms": 2589.988,
+        "vector_ms": 479.357,
         "vector_retrieval_stats": {
           "ann_attempts": [
             {
@@ -59,8 +59,8 @@
         "lexical_total": 24,
         "vector_total": 24,
         "vector_error": "",
-        "lexical_ms": 245.708,
-        "vector_ms": 5348.663,
+        "lexical_ms": 267.049,
+        "vector_ms": 3572.856,
         "vector_retrieval_stats": {
           "ann_attempts": [
             {
@@ -103,9 +103,9 @@
           "token_budget": 8000
         },
         "timing_ms": {
-          "graph": 373.28,
-          "rerank": 6.551,
-          "context_window": 15.893
+          "graph": 466.307,
+          "rerank": 8.61,
+          "context_window": 14.513
         }
       }
     },
@@ -115,7 +115,7 @@
       "detail": {
         "total": 8,
         "strategy": "structured_hybrid_graph_rrf_rerank_window",
-        "ms": 9655.22,
+        "ms": 7419.87,
         "top3": [
           {
             "title": "1994 NSCA 124 Reference re Residential Tenancies Act",

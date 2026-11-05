@@ -1,7 +1,7 @@
 {
   "id": "charter-delay",
   "query": "Charter s.11(b) unreasonable delay stay of proceedings",
-  "total_ms": 7263.25,
+  "total_ms": 7682.51,
   "steps": [
     {
       "stage": "01_input",
@@ -38,8 +38,8 @@
         "lexical_total": 24,
         "vector_total": 24,
         "vector_error": "",
-        "lexical_ms": 216.302,
-        "vector_ms": 6495.242,
+        "lexical_ms": 205.041,
+        "vector_ms": 6880.142,
         "vector_retrieval_stats": {
           "ann_attempts": [
             {
@@ -63,8 +63,8 @@
         "lexical_total": 17,
         "vector_total": 24,
         "vector_error": "",
-        "lexical_ms": 24.805,
-        "vector_ms": 96.604,
+        "lexical_ms": 27.265,
+        "vector_ms": 104.938,
         "vector_retrieval_stats": {
           "ann_attempts": [
             {
@@ -103,9 +103,9 @@
           "token_budget": 8000
         },
         "timing_ms": {
-          "graph": 404.277,
-          "rerank": 5.815,
-          "context_window": 8.878
+          "graph": 438.504,
+          "rerank": 7.118,
+          "context_window": 7.884
         }
       }
     },
@@ -115,7 +115,7 @@
       "detail": {
         "total": 8,
         "strategy": "structured_hybrid_graph_rrf_rerank_window",
-        "ms": 7263.25,
+        "ms": 7682.51,
         "top3": [
           {
             "title": "2001 BCSC 1599 R. v. Wilder",
