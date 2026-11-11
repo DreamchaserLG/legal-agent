@@ -16,6 +16,8 @@ from sqlalchemy.exc import IntegrityError
 from app.core.config import settings
 from app.core.database import engine
 from app.service.common_service import repair_text
+from app.service.legal_skill_service import guard_case_keywords, is_sale_of_land_case, is_tenancy_case
+from app.service.module_service import retrieved_case_name
 
 SESSION_USER_ID_KEY = "user_id"
 SESSION_LAST_QUERY_URL_KEY = "last_query_url"
@@ -825,7 +827,54 @@ def build_case_hash(query_text: str, case_type: str = "", country: str = "", cou
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _overview_issues(query_text: str, analysis: dict) -> list[str]:
+    deep = analysis.get("deep_analysis") or {}
+    plan = analysis.get("deep_query_plan") or {}
+    intake = analysis.get("intake_outline") or {}
+    summary = analysis.get("analysis") or {}
+    for candidates in (
+        [row.get("issue") for row in deep.get("dispute_details") or []],
+        [row.get("issue") for row in plan.get("dispute_issues") or []],
+        deep.get("unresolved_issues"),
+        intake.get("disputed_issues"),
+        summary.get("disputed_issues"),
+    ):
+        issues = guard_case_keywords(query_text, _safe_list(candidates or [], limit=12))
+        if issues:
+            return issues[:5]
+    return []
+
+
+def _tenancy_overview(query_text: str) -> bool:
+    return is_tenancy_case(query_text) and not is_sale_of_land_case(query_text)
+
+
+def _overview_rules(query_text: str, analysis: dict) -> list[dict]:
+    details = (analysis.get("deep_analysis") or {}).get("dispute_details") or []
+    rules = []
+    seen = set()
+    for detail in details:
+        for rule in detail.get("legal_basis") or []:
+            title = repair_text(rule.get("title"))
+            if not title:
+                continue
+            if _tenancy_overview(query_text) and not re.search(
+                r"\b(?:residential tenanc(?:y|ies)|landlord and tenant|tenancy act|tenancies act)\b|住宅租赁|房东与租客",
+                title, re.I,
+            ):
+                continue
+            key = (title.casefold(), repair_text(rule.get("article_no")))
+            if key not in seen:
+                seen.add(key)
+                rules.append(rule)
+    return rules
+
+
 def _derive_case_type_label(*parts: str, legal_topics: list[str] | None = None) -> str:
+    if parts and _tenancy_overview(parts[0]):
+        return "住宅租赁" if re.search(r"[\u4e00-\u9fff]", parts[0]) else "Residential Tenancy"
+    if parts and is_sale_of_land_case(parts[0]):
+        return "房屋买卖" if re.search(r"[\u4e00-\u9fff]", parts[0]) else "Real Estate Sale"
     topics = _safe_list(legal_topics or [], limit=4)
     combined = normalize_case_text(" ".join([*topics, *[repair_text(part) for part in parts]]))
     rules = [
@@ -973,6 +1022,8 @@ def _law_ref_from_module_law(law: dict, default_country: str) -> dict:
 def _case_ref_from_module_case(case: dict, linked_law_titles: list[str] | None = None) -> dict:
     return {
         "case_id": case.get("case_id"),
+        "case_name": retrieved_case_name(case),
+        "source_uid": case.get("source_uid"),
         "external_id": repair_text(case.get("external_id")),
         "title": repair_text(case.get("title")),
         "court_level": repair_text(case.get("court_level")),
@@ -1321,6 +1372,9 @@ def _build_legal_relation_entries(
 ) -> list[str]:
     relations: list[str] = []
     compact_case_type = _compact_case_type(case_type)
+    if case_type in {"Residential Tenancy", "住宅租赁"}:
+        relations.append("住宅租赁关系：出租人与承租人之间的权利义务")
+        compact_case_type = ""
 
     # 基于案件类型生成核心法律关系
     if compact_case_type:
@@ -1345,9 +1399,9 @@ def _build_legal_relation_entries(
         article_no = repair_text(rule.get("article_no"))
         if title:
             if article_no:
-                relations.append(f"适用《{title}》第{article_no}条的规定")
+                relations.append(f"争点关联法源（待核验）：《{title}》 {article_no}")
             else:
-                relations.append(f"与《{title}》的适用直接相关")
+                relations.append(f"争点关联法源（待核验）：《{title}》")
 
     # 基于争议焦点生成法律关系维度
     if disputed_issues:
@@ -1554,6 +1608,65 @@ def build_history_graph(
     return {"nodes": nodes, "edges": edges}
 
 
+def _agentic_research_snapshot(research: dict) -> dict:
+    """压缩 agentic_research，供历史记录与结果页复用。"""
+    if not isinstance(research, dict) or not research:
+        return {}
+    evidence = []
+    for item in (research.get("evidence") or [])[:16]:
+        if not isinstance(item, dict):
+            continue
+        title = repair_text(item.get("title"))
+        if not title:
+            continue
+        evidence.append({
+            "title": title[:200],
+            "source_kind": repair_text(item.get("source_kind")),
+            "citation": repair_text(item.get("citation"))[:120],
+            "source_url": repair_text(item.get("source_url")),
+            "score": round(float(item.get("score") or 0), 4),
+        })
+    return {
+        "status": repair_text(research.get("status")),
+        "stop_reason": repair_text(research.get("stop_reason")),
+        "round_count": len(research.get("rounds") or []),
+        "rounds": [
+            {
+                "round_no": row.get("round_no"),
+                "new_evidence_count": row.get("new_evidence_count"),
+                "total_evidence_count": row.get("total_evidence_count"),
+                "unresolved_gap_count": row.get("unresolved_gap_count"),
+                "duration_ms": row.get("duration_ms"),
+                "queries": [
+                    {"query": repair_text(q.get("query"))[:200], "status": q.get("status"), "hits": q.get("hits")}
+                    for q in (row.get("queries") or []) if isinstance(q, dict)
+                ][:10],
+            }
+            for row in (research.get("rounds") or [])[:6] if isinstance(row, dict)
+        ],
+        "coverage": research.get("coverage") or [],
+        "unresolved_gaps": [repair_text(gap)[:200] for gap in (research.get("unresolved_gaps") or [])[:10]],
+        "evidence": evidence,
+        "evidence_total": len(research.get("evidence") or []),
+    }
+
+
+def _research_trace_snapshot(trace: list) -> list:
+    """压缩研究轨迹事件流，仅保留回放所需字段。"""
+    rows = []
+    for event in (trace or [])[:120]:
+        if not isinstance(event, dict):
+            continue
+        rows.append({
+            "seq": event.get("seq"),
+            "event_type": repair_text(event.get("event_type")),
+            "message": repair_text(event.get("message"))[:300],
+            "progress": event.get("progress"),
+            "timestamp": event.get("timestamp"),
+        })
+    return rows
+
+
 def build_case_history_payload(
     *,
     query_text: str,
@@ -1569,7 +1682,7 @@ def build_case_history_payload(
     module_packet = module_packet or {}
 
     facts = _safe_list(_split_case_sentences(intake_outline.get("facts") or analysis_block.get("facts") or ""), limit=5)
-    issues = _safe_list(intake_outline.get("disputed_issues") or analysis_block.get("disputed_issues") or [], limit=5)
+    issues = _overview_issues(query_text, analysis)
     rule_ids = _extract_rule_ids(module_packet)
     legal_topics = _safe_list(analysis_block.get("legal_topics") or [], limit=3)
     case_type = _derive_case_type_label(
@@ -1593,6 +1706,11 @@ def build_case_history_payload(
     )
     snapshot_linked_laws = prediction.get("linked_laws") or analysis.get("linked_laws") or rules
     risk_points = _build_risk_point_entries(analysis_block, prediction)
+    deep_risks = (analysis.get("deep_analysis") or {}).get("risk_predictions") or []
+    if deep_risks:
+        risk_points = _build_risk_point_entries(
+            {"risk_flags": [risk.get("description") for risk in deep_risks]}, prediction,
+        )
 
     case_title = _derive_case_title(query_text, analysis_block.get("summary") or prediction.get("predicted_outcome") or "")
     case_summary = repair_text(analysis_block.get("summary") or prediction.get("reasoning") or intake_outline.get("facts") or "")
@@ -1630,7 +1748,7 @@ def build_case_history_payload(
     legal_relations = _build_legal_relation_entries(
         case_type=case_type,
         legal_topics=legal_topics,
-        rules=rules,
+        rules=_overview_rules(query_text, analysis),
         module_code=module_code,
         requested_relief=requested_relief,
         disputed_issues=issues,
@@ -1708,6 +1826,15 @@ def build_case_history_payload(
             "evidence_focus": evidence_focus,
             "suggested_actions": suggested_actions,
             "has_prediction": has_prediction,
+            "overview_version": 1,
+            **{
+                field: analysis[field]
+                for field in ("deep_analysis", "deep_query_plan", "deep_analysis_status", "quality_gate", "case_prediction")
+                if field in analysis
+            },
+            "agentic_research": _agentic_research_snapshot(analysis.get("agentic_research") or {}),
+            "research_trace": _research_trace_snapshot(analysis.get("research_trace") or []),
+            "research_trace_meta": analysis.get("research_trace_meta") or {},
         },
     }
 
@@ -2779,6 +2906,7 @@ def list_user_histories(
     user_id: int,
     query_type: str = "",
     case_type: str = "",
+    case_title: str = "",
     country: str = "",
     court_level: str = "",
     legal_type: str = "",
@@ -2793,6 +2921,9 @@ def list_user_histories(
     if query_type:
         conditions.append("LOWER(sh.query_type) = LOWER(:query_type)")
         params["query_type"] = repair_text(query_type)
+    if case_title:
+        conditions.append("sh.case_title = :case_title")
+        params["case_title"] = case_title
     if case_type:
         conditions.append("LOWER(sh.case_type) LIKE LOWER(:case_type)")
         params["case_type"] = f"%{repair_text(case_type)}%"
@@ -3028,7 +3159,9 @@ def _normalize_support_case_entry(item: Any) -> dict | None:
     court_rank = _to_int(item.get("court_rank"))
     scope = _history_case_scope({"scope": item.get("scope"), "court_rank": court_rank})
     return {
-        "case_id": case_id,
+        "case_id": case_id or None,
+        "case_name": retrieved_case_name(item),
+        "source_uid": item.get("source_uid"),
         "title": title or f"案例 {case_id}",
         "court_level": repair_text(item.get("court_level")),
         "court_rank": court_rank,
@@ -3231,7 +3364,9 @@ def _history_supporting_case_rows(history: dict, groups: list[dict] | None = Non
             case_key = str(case.get("case_id") or case.get("title")).lower()
             if case_key not in case_map:
                 case_map[case_key] = {
-                    "case_id": _to_int(case.get("case_id")),
+                    "case_id": _to_int(case.get("case_id")) or None,
+                    "case_name": retrieved_case_name(case),
+                    "source_uid": case.get("source_uid"),
                     "title": repair_text(case.get("title")),
                     "court_level": repair_text(case.get("court_level")),
                     "court_rank": _to_int(case.get("court_rank")),
@@ -3340,11 +3475,9 @@ def _history_key_facts(history: dict) -> list[str]:
 
 
 def _history_dispute_focus(history: dict) -> list[str]:
-    focus = _safe_list(history.get("dispute_focus_json") or [], limit=6)
-    if focus:
-        return focus
     snapshot = history.get("result_snapshot") or {}
-    return _safe_list((snapshot.get("analysis") or {}).get("disputed_issues") or [], limit=6)
+    focus = history.get("dispute_focus_json") or (snapshot.get("analysis") or {}).get("disputed_issues") or []
+    return guard_case_keywords(repair_text(history.get("query_text")), _safe_list(focus, limit=6))
 
 
 def _history_case_summary(history: dict) -> str:
@@ -3403,6 +3536,9 @@ def _history_node_label(history: dict) -> str:
 
 
 def _history_display_case_type(history: dict) -> str:
+    query_text = repair_text(history.get("query_text"))
+    if _tenancy_overview(query_text):
+        return "住宅租赁"
     direct = _compact_case_type(repair_text(history.get("case_type")))
     if direct and not (re.fullmatch(r"[A-Za-z0-9 ._/-]+", direct) and len(direct.strip()) > 3):
         return direct
@@ -3490,13 +3626,14 @@ def _history_legal_relations(history: dict) -> list[str]:
         (snapshot.get("legal_relations") or (snapshot.get("analysis") or {}).get("legal_relations") or []),
         limit=6,
     )
-    if relations:
+    if relations and snapshot.get("overview_version"):
         return relations
-    rules = _history_rules(history)
+    query_text = repair_text(history.get("query_text"))
     return _build_legal_relation_entries(
-        case_type=repair_text(history.get("case_type")),
+        case_type=_derive_case_type_label(query_text) if _tenancy_overview(query_text) else repair_text(history.get("case_type")),
         legal_topics=_safe_list((snapshot.get("analysis") or {}).get("legal_topics") or [], limit=4),
-        rules=rules,
+        rules=[],
+        disputed_issues=_history_dispute_focus(history),
         module_code=repair_text(snapshot.get("module_code")),
         requested_relief=repair_text((snapshot.get("analysis") or {}).get("requested_relief")),
     )
@@ -3596,6 +3733,8 @@ def build_history_display_payload(history: dict) -> dict:
         "node_label": _history_node_label(history),
         "has_prediction": has_prediction,
         "module_code": module_code,
+        # 保留原始快照：研究轨迹、多轮研究与深度解析都从这里还原。
+        "result_snapshot": snapshot,
     }
 
 

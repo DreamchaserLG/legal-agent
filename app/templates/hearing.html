@@ -260,7 +260,8 @@
         event.preventDefault(); createStatus.hidden = true;
         const form = new FormData(createForm);
         try {
-            await request('/api/hearing/runs', {method: 'POST', body: JSON.stringify({case_summary: form.get('case_summary'), module: form.get('module'), jurisdiction: form.get('jurisdiction')})});
+            const run = await request('/api/hearing/runs', {method: 'POST', body: JSON.stringify({case_summary: form.get('case_summary'), module: form.get('module'), jurisdiction: form.get('jurisdiction')})});
+            history.replaceState(history.state, '', `/hearing?run_id=${encodeURIComponent(run.id)}`);
             workbench.scrollIntoView({behavior: 'smooth', block: 'start'});
         } catch (error) { createStatus.textContent = error.message; createStatus.hidden = false; }
     });
@@ -277,6 +278,14 @@
             document.getElementById('hearing-turn-content').value = '';
         } catch (error) { turnStatus.textContent = error.message; turnStatus.hidden = false; }
     });
+
+    const savedRunId = new URLSearchParams(location.search).get('run_id');
+    if (savedRunId) {
+        request(`/api/hearing/runs/${encodeURIComponent(savedRunId)}`).catch((error) => {
+            createStatus.textContent = error.message;
+            createStatus.hidden = false;
+        });
+    }
 
     document.querySelectorAll('[data-insight-tab]').forEach((button) => button.addEventListener('click', () => {
         document.querySelectorAll('[data-insight-tab]').forEach((item) => item.classList.toggle('active', item === button));

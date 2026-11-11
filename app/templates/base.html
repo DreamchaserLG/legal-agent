@@ -18,7 +18,8 @@
     })();
     </script>
     <title>{% block title %}{{ app_name }}{% endblock %}</title>
-    <link rel="stylesheet" href="/static/style.css?v=20261029h" />
+    <link rel="stylesheet" href="/static/style.css?v=20261111-analysis" />
+    <link rel="stylesheet" href="/static/workspace.css?v=20261111" />
     <script>
         window.APP_LANG = "{{ 'zh' if lang == 'zh' else 'en' }}";
     </script>
@@ -56,7 +57,7 @@
                 <div class="lang-switch" role="group" aria-label="{{ tr('shell.lang_label') }}">
                     {% for opt in lang_options %}
                     <a class="lang-option{% if opt.active %} is-active{% endif %}"
-                       href="/lang/{{ opt.code }}?next={{ request.url.path }}"
+                       href="/lang/{{ opt.code }}?next={{ (request.url.path ~ ('?' ~ request.url.query if request.url.query else '')) | urlencode }}"
                        hreflang="{{ 'zh-CN' if opt.code == 'zh' else 'en-CA' }}"
                        {% if opt.active %}aria-current="true"{% endif %}>{{ opt.label }}</a>
                     {% endfor %}
@@ -463,11 +464,21 @@
 
     document.querySelectorAll('form[data-loading-mode]').forEach((form) => {
         form.addEventListener('submit', (event) => {
+            // 流式表单（SSE）自带真实进度面板，不再启动虚拟进度条，避免假动画遮挡真实过程。
+            if (form.dataset.streamEnabled === 'true') return;
             const submitter = event.submitter;
             const targetUrl = sameOriginAction(submitter?.getAttribute('formaction') || form.getAttribute('action') || window.location.pathname);
             const inferredMode = targetUrl ? modeFromPath(targetUrl.pathname) : (form.dataset.loadingMode || 'search');
             showLoading(inferredMode);
         });
+    });
+
+    document.querySelectorAll('.lang-option').forEach((link) => {
+        link.addEventListener('click', () => {
+            const url = new URL(link.href);
+            url.searchParams.set('next', location.pathname + location.search + location.hash);
+            link.href = url.href;
+        }, {capture: true});
     });
 
     document.querySelectorAll('a[href]').forEach((link) => {
@@ -561,6 +572,7 @@
         initCaseSliders();
     }
     window.addEventListener('pageshow', initCaseSliders);
+    document.addEventListener('analysis:render', initCaseSliders);
 })();
 </script>
 

@@ -150,6 +150,10 @@ def _pgvector_available() -> bool:
 
 
 def _pgvector_column_available() -> bool:
+    # 远端模式：public.rag_chunk_embeddings 是兼容视图（含 embedding_vector 投影），
+    # 无需检查本地表结构，直接视为可用。
+    if _corpus_remote_enabled():
+        return _pgvector_available()
     if not _pgvector_available():
         return False
     try:
@@ -391,6 +395,10 @@ def _ensure_active_hnsw_index() -> None:
 
 
 def _ensure_vector_tables_impl() -> None:
+    # 远端模式：public 层是兼容视图，应用不得对其执行 DDL（会报 "not a table"）。
+    if _corpus_remote_enabled():
+        ensure_rag_tables()
+        return
     ensure_rag_tables()
     use_pgvector = _try_enable_pgvector()
     vector_dimension = int(getattr(settings, "embedding_dimension", 384))
@@ -958,6 +966,163 @@ def _dedupe_vector_items(items: list[dict], limit: int) -> list[dict]:
     return deduped
 
 
+# [local-patch:corpus-remote]
+# 远端 legal_corpus 语料直查模式：DB_SOURCE_MODE=remote 时由 db_source.py 注入
+# RAG_CORPUS_REMOTE=true。此时 public.rag_chunks / rag_chunk_embeddings 是
+# legal_corpus.* 的兼容视图（词法通道自动下推 GIN），向量通道必须用专用 SQL
+# （ann CTE 直查 legal_chunk_embedding 分区表以命中远端 HNSW 索引）。
+def _corpus_remote_enabled() -> bool:
+    return os.getenv("RAG_CORPUS_REMOTE", "").strip().lower() == "true"
+
+
+_CORPUS_REMOTE_MODEL_ID = os.getenv("CORPUS_REMOTE_EMBEDDING_MODEL_ID", "bge-m3-5617a9f6")
+
+_CORPUS_REMOTE_RC_FROM = """
+FROM (
+    SELECT
+        cm.cid AS id,
+        CASE WHEN c.document_kind = 'legislation' THEN 'law' ELSE 'case' END AS source_kind,
+        'legal_corpus' AS source_table,
+        dm.doc_id AS source_id,
+        CASE WHEN d.corpus_code = 'a2aj_case' THEN 'a2aj_case' ELSE 'laws_lois_xml' END AS source_code,
+        c.chunk_id AS source_uid,
+        COALESCE(d.canonical_title, '') AS title,
+        '' AS source_url,
+        COALESCE(d.jurisdiction, '') AS jurisdiction,
+        COALESCE(d.document_type, '') AS document_type,
+        COALESCE(d.court_level, '') AS court_level,
+        'en' AS language,
+        COALESCE(d.canonical_citation, '') AS citation,
+        d.publication_date::timestamp AS published_at,
+        LEAST(COALESCE(c.ordinal, 0), 2147483647)::int AS chunk_index,
+        c.body AS text_content,
+        jsonb_build_object('court_code', COALESCE(d.court_code, ''), 'jurisdiction', d.jurisdiction,
+                           'document_kind', c.document_kind, 'chunk_uid', c.chunk_id) AS metadata_json,
+        e.embedding
+    FROM legal_corpus.legal_chunk c
+    JOIN legal_corpus.legal_document d ON d.document_id = c.document_id
+    JOIN public.chunk_map cm ON cm.chunk_id = c.chunk_id
+    JOIN public.doc_map dm ON dm.document_id = d.document_id
+    JOIN legal_corpus.legal_chunk_embedding e
+      ON e.chunk_id = c.chunk_id AND e.embedding_model_id = '{model_id}'
+) rc
+""".replace("{model_id}", _CORPUS_REMOTE_MODEL_ID)
+
+
+def _build_corpus_remote_ann_query(
+    query_vector: list[float],
+    *,
+    module: str,
+    source_filter: str,
+    filters: dict | None,
+    ann_limit: int,
+    outer_limit: int | None = None,
+) -> tuple[str, dict]:
+    """远端 legal_corpus 的原生 HNSW 检索。
+
+    ann CTE 必须直查 legal_corpus.legal_chunk_embedding（分区父表），
+    JOIN 会阻止 HNSW 索引排序下推；精排在外层 rc 投影内完成。
+    """
+    coarse_limit = max(400, min(int(ann_limit) * 40, 3000))
+    bounded_outer_limit = max(1, min(int(outer_limit or ann_limit), 1000))
+    params = {
+        "ann_limit": coarse_limit,
+        "outer_limit": bounded_outer_limit,
+        "query_vector": _vector_text(query_vector),
+    }
+    where_clause = _chunk_filter_clause(source_filter, module, params, alias="rc")
+    structured_clause, structured_params = _structured_filter_clause(filters, alias="rc")
+    params.update(structured_params)
+    sql = f"""
+        WITH ann AS MATERIALIZED (
+            SELECT e.chunk_id
+            FROM legal_corpus.legal_chunk_embedding e
+            WHERE e.embedding_model_id = '{_CORPUS_REMOTE_MODEL_ID}'
+              AND e.embedding IS NOT NULL
+            ORDER BY e.embedding <=> CAST(:query_vector AS vector)
+            LIMIT :ann_limit
+        )
+        SELECT
+            rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
+            rc.source_uid, rc.title, rc.source_url, rc.published_at, rc.chunk_index,
+            rc.jurisdiction, rc.document_type, rc.court_level, rc.language, rc.citation,
+            rc.text_content, rc.metadata_json,
+            1 - (rc.embedding <=> CAST(:query_vector AS vector)) AS score
+        {_CORPUS_REMOTE_RC_FROM} JOIN ann a ON a.chunk_id = rc.source_uid
+        WHERE {where_clause}
+          {structured_clause}
+        ORDER BY rc.embedding <=> CAST(:query_vector AS vector)
+        LIMIT :outer_limit
+    """
+    return sql, params
+
+
+# [local-patch:ivfflat-compat]
+def _ann_compat() -> str:
+    """RAG_ANN_COMPAT=ivfflat_bq 时启用「汉明粗排 + 余弦精排」两阶段检索。"""
+    return os.getenv("RAG_ANN_COMPAT", "").strip().lower()
+
+
+def _ann_compat_ready() -> bool:
+    return _ann_compat() == "ivfflat_bq"
+
+
+def _build_pgvector_ann_query_hamming(
+    query_vector: list[float],
+    *,
+    meta: dict,
+    module: str,
+    source_filter: str,
+    filters: dict | None,
+    ann_limit: int,
+    outer_limit: int | None = None,
+) -> tuple[str, dict]:
+    """本地兜底库的两阶段检索：bit 汉明索引粗排，余弦精确重排。
+
+    粗排候选池必须放大（汉明只看符号位，精度低），否则外层的来源/结构化过滤
+    会把候选筛空；精排在候选池内做完整余弦，保证排序质量。
+    """
+    coarse_limit = max(400, min(int(ann_limit) * 40, 3000))
+    bounded_outer_limit = max(1, min(int(outer_limit or ann_limit), 1000))
+    params = {
+        "ann_limit": coarse_limit,
+        "outer_limit": bounded_outer_limit,
+        "embedding_model": meta["model"],
+        "embedding_provider": meta["provider"],
+        "query_vector": _vector_text(query_vector),
+    }
+    where_clause = _chunk_filter_clause(source_filter, module, params, alias="rc")
+    structured_clause, structured_params = _structured_filter_clause(filters, alias="rc")
+    params.update(structured_params)
+    sql = f"""
+        WITH ann AS MATERIALIZED (
+            SELECT chunk_id
+            FROM rag_chunk_embeddings
+            WHERE embedding_provider = :embedding_provider
+              AND embedding_model = :embedding_model
+              AND embedding_vector IS NOT NULL
+            ORDER BY (binary_quantize(embedding_vector))::bit(1024)
+                     <~> (binary_quantize(CAST(:query_vector AS vector)))::bit(1024)
+            LIMIT :ann_limit
+        )
+        SELECT
+            rc.id, rc.source_kind, rc.source_table, rc.source_id, rc.source_code,
+            rc.source_uid, rc.title, rc.source_url, rc.published_at, rc.chunk_index,
+            rc.jurisdiction, rc.document_type, rc.court_level, rc.language, rc.citation,
+            rc.text_content, rc.metadata_json,
+            1 - (rce.embedding_vector <=> CAST(:query_vector AS vector)) AS score
+        FROM ann a
+        JOIN rag_chunk_embeddings rce ON rce.chunk_id = a.chunk_id
+        JOIN rag_chunks rc ON rc.id = a.chunk_id
+        WHERE rc.content_hash = rce.content_hash
+          AND {where_clause}
+          {structured_clause}
+        ORDER BY rce.embedding_vector <=> CAST(:query_vector AS vector)
+        LIMIT :outer_limit
+    """
+    return sql, params
+
+
 def _build_pgvector_ann_query(
     query_vector: list[float],
     *,
@@ -974,6 +1139,27 @@ def _build_pgvector_ann_query(
     multi-million-row chunk table. Freshness and business filters belong to
     the bounded outer lookup, never to the partial-index scan.
     """
+    if _corpus_remote_enabled():
+        return _build_corpus_remote_ann_query(
+            query_vector,
+            module=module,
+            source_filter=source_filter,
+            filters=filters,
+            ann_limit=ann_limit,
+            outer_limit=outer_limit,
+        )
+
+    if _ann_compat_ready():
+        return _build_pgvector_ann_query_hamming(
+            query_vector,
+            meta=meta,
+            module=module,
+            source_filter=source_filter,
+            filters=filters,
+            ann_limit=ann_limit,
+            outer_limit=outer_limit,
+        )
+
     bounded_limit = max(1, min(int(ann_limit), _hnsw_filtered_scan_tuples()))
     bounded_outer_limit = max(1, min(int(outer_limit or ann_limit), 1000))
     params = {
@@ -1241,7 +1427,7 @@ def vector_search(
     clean_query = repair_text(query)
     if not clean_query:
         return {"query": clean_query, "items": [], "total": 0, "status": "empty_query"}
-    if _pgvector_column_available():
+    if _pgvector_column_available() and not _corpus_remote_enabled():
         from app.service.vector_index_management_service import get_hnsw_index_state
 
         index_state = get_hnsw_index_state()
@@ -1277,7 +1463,9 @@ def vector_search(
             "error": "",
         }
         source_rerank_rows: list[dict] = []
-        use_source_rerank = _needs_source_rerank(source_filter, filters)
+        use_source_rerank = (
+            _needs_source_rerank(source_filter, filters) and not _corpus_remote_enabled()
+        )
 
         if use_source_rerank:
             candidate_limit = max(_filtered_rerank_candidates(), max_items * 12)

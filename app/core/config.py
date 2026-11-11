@@ -62,6 +62,11 @@ class Settings:
         )
         self.deep_analysis_timeout_seconds = int(os.getenv("DEEP_ANALYSIS_TIMEOUT_SECONDS", "120"))
         self.deep_analysis_max_llm_calls = int(os.getenv("DEEP_ANALYSIS_MAX_LLM_CALLS", "5"))
+        self.deep_analysis_llm_model = os.getenv("DEEP_ANALYSIS_LLM_MODEL", "").strip()
+        self.deep_analysis_llm_non_thinking = (
+            os.getenv("DEEP_ANALYSIS_LLM_NON_THINKING", "false").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
         self.agentic_legal_research_enabled = (
             os.getenv("AGENTIC_LEGAL_RESEARCH_ENABLED", "true").strip().lower()
             in {"1", "true", "yes", "on"}
@@ -222,6 +227,7 @@ class Settings:
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "local-hash-embedding").strip()
         self.embedding_dimension = int(os.getenv("EMBEDDING_DIMENSION", "384"))
         self.embedding_base_url = os.getenv("EMBEDDING_BASE_URL", "").strip().rstrip("/")
+        self.embedding_query_bge_url = os.getenv("EMBEDDING_QUERY_BGE_URL", "").strip()
         self.embedding_api_key = os.getenv("EMBEDDING_API_KEY", "").strip()
         self.embedding_batch_size = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
         self.embedding_local_model_path = os.getenv("EMBEDDING_LOCAL_MODEL_PATH", "").strip()

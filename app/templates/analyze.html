@@ -1,35 +1,66 @@
 {% extends "base.html" %}
 
-{% block title %}{{ app_name }} | 案情分析{% endblock %}
+{% block title %}{{ app_name }} | {{ tr('nav.analysis') }}{% endblock %}
 
 {% block content %}
+{% set i18n_labels = {
+    "run_queued": tr('analysis.label.run_queued'),
+    "run_started": tr('analysis.label.run_started'),
+    "analysis_started": tr('analysis.label.analysis_started'),
+    "case_structured": tr('analysis.label.case_structured'),
+    "baseline_retrieval_started": tr('analysis.label.baseline_retrieval_started'),
+    "baseline_retrieval_completed": tr('analysis.label.baseline_retrieval_completed'),
+    "evidence_packet_built": tr('analysis.label.evidence_packet_built'),
+    "research_plan": tr('analysis.label.research_plan'),
+    "research_round_started": tr('analysis.label.research_round_started'),
+    "research_query_started": tr('analysis.label.research_query_started'),
+    "research_query_completed": tr('analysis.label.research_query_completed'),
+    "research_query_failed": tr('analysis.label.research_query_failed'),
+    "research_round_completed": tr('analysis.label.research_round_completed'),
+    "research_completed": tr('analysis.label.research_completed'),
+    "research_cancelled": tr('analysis.label.research_cancelled'),
+    "quality_gate_completed": tr('analysis.label.quality_gate_completed'),
+    "analysis_completed": tr('analysis.label.analysis_completed'),
+    "run_completed": tr('analysis.label.run_completed'),
+    "run_failed": tr('analysis.label.run_failed'),
+    "run_cancelled": tr('analysis.label.run_cancelled'),
+    "control_pause": tr('analysis.label.control_pause'),
+    "control_resume": tr('analysis.label.control_resume'),
+    "control_cancel": tr('analysis.label.control_cancel'),
+    "control_refine": tr('analysis.label.control_refine'),
+    "research_paused": tr('analysis.label.research_paused'),
+    "unknown_step": tr('analysis.label.unknown_step')
+} %}
 <section class="hero hero-analyze">
     <div class="shell hero-grid detail-grid">
+        {% if expired_run %}
+        <p class="notice-text" role="status">{{ '任务已过期。已保存的分析可在历史记录中查看。' if lang == 'zh' else 'This task has expired. Saved analyses are available in your history.' }}</p>
+        {% endif %}
         <div class="hero-copy">
             <p class="eyebrow">{{ module_profile.label }}</p>
-            <h1>结构化梳理案情，再进入庭审模拟</h1>
-            <p class="hero-text">这里优先整理案件概览、关键事实、争议焦点、法律关系、证据关注点和风险点，随后通过固定庭审阶段完成受控评估。</p>
-            <p class="muted">如果同一案情已经保存过结果，系统会直接复用已有记录，不再重复消耗分析时间。</p>
+            <h1>{{ tr('analysis.hero.title') }}</h1>
+            <p class="hero-text">{{ tr('analysis.hero.text') }}</p>
+            <p class="muted">{{ tr('analysis.hero.muted') }}</p>
         </div>
 
         <form class="tool-panel" method="get" action="/analysis" data-loading-mode="analysis" id="analysis-stream-form" data-stream-enabled="true">
-            <label for="module">研究模块</label>
+            <label for="module">{{ tr('analysis.form.module') }}</label>
             <select id="module" name="module">
                 {% for option in module_options %}
                 <option value="{{ option.value }}" {% if module_code == option.value %}selected{% endif %}>{{ option.picker_label or option.label }}</option>
                 {% endfor %}
             </select>
 
-            <label for="text">案情输入</label>
-            <textarea id="text" name="text" rows="8" placeholder="例如：租赁合同纠纷、劳动解除争议、侵权损害赔偿，或 OFAC 制裁合规风险。" required>{{ text_input }}</textarea>
+            <label for="text">{{ tr('analysis.form.text_label') }}</label>
+            <textarea id="text" name="text" rows="8" placeholder="{{ tr('analysis.form.text_placeholder') }}" required>{{ text_input }}</textarea>
 
             <div class="form-grid">
                 <div>
-                    <label for="limit">结果数量</label>
+                    <label for="limit">{{ tr('analysis.form.limit') }}</label>
                     <input type="number" id="limit" name="limit" value="{{ limit }}" min="1" max="100" />
                 </div>
                 <div>
-                    <label for="source">数据源</label>
+                    <label for="source">{{ tr('analysis.form.source') }}</label>
                     <select id="source" name="source">
                         {% for option in source_options %}
                         <option value="{{ option.value }}" {% if source == option.value %}selected{% endif %}>{{ option.picker_label or option.label }}</option>
@@ -37,312 +68,113 @@
                     </select>
                 </div>
                 <div class="field-span-full">
-                    <label for="sort">排序方式</label>
+                    <label for="sort">{{ tr('analysis.form.sort') }}</label>
                     <select id="sort" name="sort">
-                        <option value="relevance" {% if sort == "relevance" %}selected{% endif %}>相关度优先</option>
-                        <option value="recent" {% if sort == "recent" %}selected{% endif %}>时间优先</option>
+                        <option value="relevance" {% if sort == "relevance" %}selected{% endif %}>{{ tr('analysis.form.sort_relevance') }}</option>
+                        <option value="recent" {% if sort == "recent" %}selected{% endif %}>{{ tr('analysis.form.sort_recent') }}</option>
                     </select>
                 </div>
             </div>
 
             <div class="action-row">
-                <button type="submit">开始分析</button>
-                <a class="pager-link secondary" href="/hearing">进入庭审模拟</a>
+                <button type="submit">{{ tr('analysis.form.submit') }}</button>
+                <a class="pager-link secondary" href="/hearing">{{ tr('analysis.form.hearing') }}</a>
             </div>
         </form>
     </div>
-    <div class="shell analysis-stream-shell" id="analysis-stream-shell" hidden aria-live="polite">
-        <section class="analysis-stream-panel">
+    <div class="shell analysis-stream-shell" id="analysis-stream-shell" hidden>
+        <section class="analysis-stream-panel" id="analysis-stream-panel" data-status="idle">
             <div class="analysis-stream-head">
-                <div><p class="eyebrow">实时研究过程</p><h2>正在分析加拿大法律问题</h2></div>
-                <span class="task-status" id="analysis-stream-status">准备中</span>
+                <div><p class="eyebrow">{{ tr('analysis.stream.eyebrow') }}</p><h2>{{ tr('analysis.stream.title') }}</h2></div>
+                <span class="analysis-stream-live task-status"><i class="analysis-stream-live-dot" aria-hidden="true"></i><span id="analysis-stream-status" role="status">{{ tr('analysis.stream.preparing') }}</span><span class="muted" id="analysis-stream-elapsed"></span></span>
             </div>
-            <p class="muted" id="analysis-stream-summary">页面会逐步展示事实整理、争点拆分、法规检索、案例检索、缺口评估和质量检查。</p>
-            <div class="analysis-stream-progress" aria-label="分析进度">
+            <p class="muted" id="analysis-stream-summary">{{ tr('analysis.stream.idle_summary') }}</p>
+            <div class="analysis-stream-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="{{ tr('analysis.stream.eyebrow') }}">
                 <div class="analysis-stream-progress-bar" id="analysis-stream-progress-bar" style="width:0%"></div>
             </div>
             <div class="analysis-stream-state-grid">
-                <p><strong>当前阶段</strong><span id="analysis-stream-current-phase">等待开始</span></p>
-                <p><strong>下一动作</strong><span id="analysis-stream-next-action">拆分法律争点</span></p>
+                <p><strong>{{ tr('analysis.stream.phase_label') }}</strong><span id="analysis-stream-current-phase">{{ tr('analysis.stream.phase_wait') }}</span></p>
+                <p><strong>{{ tr('analysis.stream.next_label') }}</strong><span id="analysis-stream-next-action">{{ tr('analysis.stream.next_first') }}</span></p>
             </div>
-            <ol class="analysis-stream-timeline" id="analysis-stream-timeline"></ol>
+            <ol class="analysis-stream-timeline" id="analysis-stream-timeline" tabindex="0"></ol>
             <div class="analysis-stream-metrics" id="analysis-stream-metrics"></div>
+            <div class="analysis-stream-done" id="analysis-stream-done" hidden>
+                <div class="action-row">
+                    <a class="pager-link" id="analysis-stream-result-link" href="#analysis-result" hidden>{{ tr('analysis.stream.view_result') }}</a>
+                    <button type="button" class="pager-link secondary" id="analysis-stream-refine-again">{{ tr('analysis.stream.again') }}</button>
+                </div>
+                <p class="muted" id="analysis-stream-done-note"></p>
+            </div>
             <div class="analysis-stream-controls" id="analysis-stream-controls" hidden>
                 <div class="action-row">
-                    <button type="button" class="pager-link secondary" data-research-action="pause">暂停下一轮</button>
-                    <button type="button" class="pager-link secondary" data-research-action="resume">继续</button>
-                    <button type="button" class="pager-link secondary" data-research-action="cancel">终止研究</button>
+                    <button type="button" class="pager-link secondary" data-research-action="pause" id="analysis-stream-pause">{{ tr('analysis.stream.pause') }}</button>
+                    <button type="button" class="pager-link secondary" data-research-action="resume" id="analysis-stream-resume" hidden>{{ tr('analysis.stream.resume') }}</button>
+                    <button type="button" class="pager-link secondary" data-research-action="cancel" id="analysis-stream-cancel">{{ tr('analysis.stream.cancel') }}</button>
                 </div>
-                <label for="analysis-refinement-query">人工补充或纠正下一轮查询</label>
+                <label for="analysis-refinement-query">{{ tr('analysis.stream.refine_label') }}</label>
                 <div class="analysis-refinement-row">
-                    <input id="analysis-refinement-query" type="text" maxlength="500" placeholder="例如：仅检索 Ontario N12 恶意自用和 s.57 救济">
-                    <button type="button" class="pager-link" data-research-action="refine">加入下一轮</button>
+                    <input id="analysis-refinement-query" type="text" maxlength="500" placeholder="{{ tr('analysis.stream.refine_placeholder') }}">
+                    <button type="button" class="pager-link" data-research-action="refine" id="analysis-stream-refine">{{ tr('analysis.stream.refine_button') }}</button>
                 </div>
-                <p class="muted">控制信号在当前数据库查询结束后生效；页面展示检索轨迹，不展示模型私有思维链。</p>
+                <p class="muted"><span id="analysis-refinement-note">{{ tr('analysis.stream.refine_note_default') }}</span></p>
             </div>
         </section>
     </div>
 </section>
 
-{% if analysis_view %}
-{% set item = analysis_view %}
-{% set analysis_status = analysis_result.analysis_mode if analysis_result else 'local' %}
-{% set analysis_status_label = '历史复用' if analysis_status in ['history_reuse', 'reuse'] else ('本地分析' if analysis_status in ['local', 'local_only'] else ('已完成' if analysis_status in ['complete', 'ready'] else analysis_status)) %}
-<section class="band">
-    <div class="shell">
-        <div class="task-banner">
-            <div class="task-banner-head">
-                <div>
-                    <p class="eyebrow">分析结果</p>
-                    <h2>本次案情已完成结构化分析</h2>
-                </div>
-                <span class="task-status">{{ analysis_status_label }}</span>
-            </div>
-            <p class="task-copy">{{ analysis_result.coverage_note if analysis_result else '当前结果基于本地案例、法律法规和模型推理生成，不会实时抓取远程网页。' }}</p>
-            {% if analysis_result and analysis_result.data_readiness %}
-            <div class="chip-row">
-                <span class="chip">数据状态 {{ analysis_result.data_readiness.status }}</span>
-                <span class="chip">命中法规 {{ analysis_result.data_readiness.evidence.matched_laws }}</span>
-                <span class="chip">命中案例 {{ analysis_result.data_readiness.evidence.matched_cases }}</span>
-                <span class="chip">CanLII {{ analysis_result.data_readiness.corpus.canlii_total }}</span>
-            </div>
-            {% if analysis_result.data_readiness.recommended_actions %}
-            <p class="notice-text">{{ analysis_result.data_readiness.recommended_actions[0] }}</p>
-            {% endif %}
-            {% endif %}
-            {% if analysis_result and analysis_result.history_reused %}
-            <p class="notice-text">命中已有历史记录，系统已直接复用原记录，不会新增重复历史。</p>
-            {% endif %}
-        </div>
-    </div>
-</section>
-
-{% if analysis_result %}
-{% include "partials/agentic_research_sections.html" %}
-{% endif %}
-
-{% set deep_analysis = analysis_result.get('deep_analysis') if analysis_result else none %}
-{% if deep_analysis %}
-{% include "partials/deep_analysis_sections.html" %}
-{% else %}
-<section class="band band-alt">
-    <div class="shell analysis-report-shell">
-        <div class="analysis-report-head">
-            <div>
-                <p class="eyebrow">当前案情</p>
-                <h2>{{ item.case_title }}</h2>
-            </div>
-            <div class="status-cluster">
-                {% if history_id %}
-                <a class="meta-inline" href="/histories/{{ history_id }}">查看历史详情</a>
-                {% endif %}
-                <a class="meta-inline" href="/hearing">进入庭审模拟</a>
-                {% if memo_download_url %}
-                <a class="meta-inline" href="{{ memo_download_url }}">导出 PDF</a>
-                {% endif %}
-            </div>
-        </div>
-
-        <div class="analysis-report-grid">
-            <article class="info-panel wide analysis-overview-card">
-                <p class="panel-kicker">案情概览</p>
-                <div class="chip-row">
-                    {% if item.case_type %}<span class="chip">{{ item.case_type }}</span>{% endif %}
-                    {% if item.country %}<span class="chip">{{ item.country }}</span>{% endif %}
-                    {% if item.court_level %}<span class="chip">{{ item.court_level }}</span>{% endif %}
-                    <span class="chip">{{ item.risk_level or '未知风险' }}</span>
-                </div>
-                <p class="memo-copy">{{ item.case_summary or item.analysis_summary or item.query_text }}</p>
-                <p class="result-copy">{{ item.analysis_summary }}</p>
-                <details>
-                    <summary>查看原始案情输入</summary>
-                    <div class="detail-box">{{ item.query_text }}</div>
-                </details>
-            </article>
-
-            <article class="info-panel">
-                <p class="panel-kicker">关键事实</p>
-                {% if item.key_facts %}
-                <ul class="memo-list">
-                    {% for fact in item.key_facts %}
-                    <li>{{ fact }}</li>
-                    {% endfor %}
-                </ul>
-                {% else %}
-                <p class="muted">当前没有提取到稳定的关键事实。</p>
-                {% endif %}
-            </article>
-
-            <article class="info-panel">
-                <p class="panel-kicker">争议焦点</p>
-                {% if item.dispute_focus %}
-                <ul class="memo-list">
-                    {% for focus in item.dispute_focus %}
-                    <li>{{ focus }}</li>
-                    {% endfor %}
-                </ul>
-                {% else %}
-                <p class="muted">当前没有提炼出明确的争议焦点。</p>
-                {% endif %}
-            </article>
-
-            <article class="info-panel">
-                <p class="panel-kicker">法律关系</p>
-                {% if item.legal_relations %}
-                <ul class="memo-list">
-                    {% for relation in item.legal_relations %}
-                    <li>{{ relation }}</li>
-                    {% endfor %}
-                </ul>
-                {% else %}
-                <p class="muted">当前没有整理出明确的法律关系条目。</p>
-                {% endif %}
-            </article>
-
-            <article class="info-panel">
-                <p class="panel-kicker">证据关注点</p>
-                {% if item.evidence_focus %}
-                <ul class="memo-list">
-                    {% for evidence in item.evidence_focus %}
-                    <li>{{ evidence }}</li>
-                    {% endfor %}
-                </ul>
-                {% else %}
-                <p class="muted">当前没有额外的证据提示。</p>
-                {% endif %}
-            </article>
-
-            <article class="info-panel">
-                <p class="panel-kicker">风险点分析</p>
-                {% if item.risk_points %}
-                <div class="risk-point-stack">
-                    {% for risk in item.risk_points %}
-                    <div class="risk-point-card" data-risk-level="{{ risk.level }}">
-                        <div class="result-head">
-                            <strong>{{ risk.name }}</strong>
-                            <span class="meta-inline">{{ risk.level }}</span>
-                        </div>
-                        <p class="result-copy">{{ risk.description }}</p>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <p class="muted">当前没有单独提炼出的风险点。</p>
-                {% endif %}
-            </article>
-
-            <article class="info-panel prediction-cta-card">
-                <p class="panel-kicker">下一步</p>
-                <h3>结构化分析已完成</h3>
-                <p class="memo-copy">当前案情已完成结构化梳理，包括关键事实、争议焦点、法律关系和风险点。</p>
-                <p class="result-copy">如需形成最终辅助评估，请进入庭审模拟，完成陈述、举证、质证、辩论和评议。</p>
-                <div class="action-row">
-                    <a class="pager-link" href="/hearing">进入庭审模拟</a>
-                    {% if history_id %}
-                    <a class="pager-link secondary" href="/histories/{{ history_id }}">查看历史详情</a>
-                    {% endif %}
-                </div>
-            </article>
-        </div>
-    </div>
-</section>
-
-{% set module_packet = analysis_result.get('module_packet', {}) if analysis_result else {} %}
-{% set supporting_case_groups = analysis_result.get('supporting_case_groups', []) if analysis_result else [] %}
-{% set linked_laws = analysis_result.get('linked_laws', []) if analysis_result else [] %}
-
-{# Replaced by the shared React legal-relations explorer below. #}
-{% if false %}
-<section class="band">
-    <div class="shell">
-        <div class="band-head">
-            <div>
-                <p class="eyebrow">相关法律法规与案例</p>
-                <h2>与本案相关的法律法规和案例</h2>
-            </div>
-        </div>
-
-        {% if linked_laws %}
-        <div class="info-panel">
-            <p class="panel-kicker">关联法规</p>
-            <div class="legal-rules-grid">
-                {% for law in linked_laws[:6] %}
-                <div class="legal-rule-card">
-                    <div class="result-head">
-                        <strong>{{ law.title }}</strong>
-                        {% if law.article_no %}<span class="meta-inline">{{ law.article_no }}</span>{% endif %}
-                    </div>
-                    {% if law.article_summary %}
-                    <p class="result-copy">{{ law.article_summary[:200] }}{% if law.article_summary|length > 200 %}...{% endif %}</p>
-                    {% endif %}
-                    <div class="chip-row">
-                        {% if law.legal_type %}<span class="chip">{{ law.legal_type }}</span>{% endif %}
-                        {% if law.country %}<span class="chip">{{ law.country }}</span>{% endif %}
-                        {% if law.linked_case_count %}<span class="chip">关联案例 {{ law.linked_case_count }}</span>{% endif %}
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-        {% endif %}
-
-        {% if supporting_case_groups %}
-        <div class="info-panel">
-            <p class="panel-kicker">相关案例</p>
-            {% set analysis_case_cards = supporting_case_groups[:5] %}
-            <div class="case-slider compact" data-case-slider>
-                <div class="case-slider-toolbar">
-                    <span class="case-slider-count">共 {{ analysis_case_cards|length }} 条</span>
-                    <div class="case-slider-actions">
-                        <button type="button" class="case-slider-btn" data-slider-prev aria-label="上一条相关案例">‹</button>
-                        <span class="case-slider-status" data-slider-status>1 / {{ analysis_case_cards|length }}</span>
-                        <button type="button" class="case-slider-btn" data-slider-next aria-label="下一条相关案例">›</button>
-                    </div>
-                </div>
-                <div class="case-groups-grid case-slider-track compact" data-slider-track tabindex="0" aria-label="相关案例滑动列表">
-                {% for case in analysis_case_cards %}
-                <div class="case-group-card">
-                    <div class="result-head">
-                        <strong>{{ case.title }}</strong>
-                        {% if case.court_level %}<span class="meta-inline">{{ case.court_level }}</span>{% endif %}
-                    </div>
-                    {% if case.summary %}
-                    <p class="result-copy">{{ case.summary[:200] }}{% if case.summary|length > 200 %}...{% endif %}</p>
-                    {% endif %}
-                    {% if case.linked_law_titles %}
-                    <div class="chip-row">
-                        {% for law_title in case.linked_law_titles[:2] %}
-                        <span class="chip">{{ law_title }}</span>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
-                    {% if case.match_reason %}
-                    <p class="result-copy muted">匹配原因：{{ case.match_reason }}</p>
-                    {% endif %}
-                    {% set relevance_item = case %}
-                    {% include "partials/relevance_highlights.html" %}
-                </div>
-                {% endfor %}
-                </div>
-            </div>
-        </div>
-        {% endif %}
-    </div>
-</section>
-{% endif %}
-{% endif %}
-
-{% include "partials/module_sections.html" %}
-
-{% include "partials/agent_chat_panel.html" %}
-{% endif %}
+<div id="analysis-result">
+    {% include "partials/analysis_result.html" %}
+</div>
 
 <script>
+{% set i18n_texts = {
+    "hit_chip": tr('analysis.text.hit_chip'),
+    "round_chip": tr('analysis.text.round_chip'),
+    "timeout_chip": tr('analysis.text.timeout_chip'),
+    "fail_chip": tr('analysis.text.fail_chip'),
+    "law_chip": tr('analysis.text.law_chip'),
+    "case_chip": tr('analysis.text.case_chip'),
+    "new_evidence_chip": tr('analysis.text.new_evidence_chip'),
+    "total_evidence_chip": tr('analysis.text.total_evidence_chip'),
+    "gap_chip": tr('analysis.text.gap_chip'),
+    "duration_chip": tr('analysis.text.duration_chip'),
+    "research_round_chip": tr('analysis.text.research_round_chip'),
+    "kind_law": tr('analysis.text.kind_law'),
+    "kind_case": tr('analysis.text.kind_case'),
+    "gap_prefix": tr('analysis.text.gap_prefix'),
+    "next_prefix": tr('analysis.text.next_prefix'),
+    "waiting_user": tr('analysis.text.waiting_user'),
+    "refine_priority": tr('analysis.text.refine_priority'),
+    "evidence_metric": tr('analysis.text.evidence_metric'),
+    "preparing": tr('analysis.stream.preparing'),
+    "creating": tr('analysis.stream.creating'),
+    "running": tr('analysis.stream.running'),
+    "retry": tr('analysis.stream.retry'),
+    "sending": tr('analysis.stream.sending'),
+    "status_running": tr('analysis.status.running'),
+    "status_done": tr('analysis.status.done'),
+    "status_failed": tr('analysis.status.failed'),
+    "status_cancelled": tr('analysis.status.cancelled'),
+    "summary_completed": tr('analysis.stream.summary_completed'),
+    "summary_cancelled": tr('analysis.stream.summary_cancelled'),
+    "summary_failed": tr('analysis.stream.summary_failed'),
+    "done_completed": tr('analysis.stream.done_completed'),
+    "done_cancelled": tr('analysis.stream.done_cancelled'),
+    "done_failed": tr('analysis.stream.done_failed'),
+    "refine_note_default": tr('analysis.stream.refine_note_default'),
+    "refine_note_paused": tr('analysis.stream.refine_note_paused'),
+    "refine_note_cancel": tr('analysis.stream.refine_note_cancel'),
+    "refine_note_empty": tr('analysis.stream.refine_note_empty'),
+    "refine_note_sent": tr('analysis.stream.refine_note_sent'),
+    "refine_note_fail": tr('analysis.stream.refine_note_fail')
+} %}
 (() => {
     const form = document.getElementById("analysis-stream-form");
     const shell = document.getElementById("analysis-stream-shell");
+    const panel = document.getElementById("analysis-stream-panel");
     const timeline = document.getElementById("analysis-stream-timeline");
     const status = document.getElementById("analysis-stream-status");
+    const elapsedEl = document.getElementById("analysis-stream-elapsed");
     const summary = document.getElementById("analysis-stream-summary");
     const metrics = document.getElementById("analysis-stream-metrics");
     const progressBar = document.getElementById("analysis-stream-progress-bar");
@@ -350,98 +182,365 @@
     const nextAction = document.getElementById("analysis-stream-next-action");
     const controls = document.getElementById("analysis-stream-controls");
     const refinement = document.getElementById("analysis-refinement-query");
+    const donePanel = document.getElementById("analysis-stream-done");
+    const doneLink = document.getElementById("analysis-stream-result-link");
+    const doneAgain = document.getElementById("analysis-stream-refine-again");
+    const doneNote = document.getElementById("analysis-stream-done-note");
+    const refineNote = document.getElementById("analysis-refinement-note");
+    const btnPause = document.getElementById("analysis-stream-pause");
+    const btnResume = document.getElementById("analysis-stream-resume");
+    const btnCancel = document.getElementById("analysis-stream-cancel");
+    const btnRefine = document.getElementById("analysis-stream-refine");
     let activeRun = null;
     let activeSource = null;
     let submitting = false;
+    let creating = false;
+    let pendingLanguage = null;
+    const resultRoot = document.getElementById("analysis-result");
+    const resumeRunId = {{ (resume_run_id or '') | tojson }};
+    const languageLinks = document.querySelectorAll(".lang-option");
+    const resultError = {{ ('结果加载失败，请重试。' if lang == 'zh' else 'Could not load the result. Retry to continue.') | tojson }};
+    const retryResult = {{ ('重新加载结果' if lang == 'zh' else 'Reload result') | tojson }};
+    let runStartedAt = 0;
+    let elapsedTimer = null;
     const seenEvents = new Set();
     if (!form || !shell || !window.EventSource || !window.fetch) return;
 
-    const labels = {
-        run_queued: "任务排队", run_started: "后台任务启动", analysis_started: "确认加拿大法域",
-        case_structured: "整理事实与争点", baseline_retrieval_started: "基础法规与案例检索",
-        baseline_retrieval_completed: "基础检索完成", evidence_packet_built: "建立证据资料包",
-        research_plan: "制定多轮研究计划", research_round_started: "并行检索",
-        research_query_started: "查询开始", research_query_completed: "查询完成",
-        research_query_failed: "查询失败", research_completed: "多轮检索完成",
-        research_cancelled: "多轮检索已终止",
-        research_round_completed: "评估本轮证据缺口", quality_gate_completed: "执行质量门",
-        analysis_completed: "生成结构化分析", run_completed: "全部完成", run_failed: "任务失败",
-        run_cancelled: "任务已终止"
-        , control_pause: "人工暂停", control_resume: "人工继续", control_cancel: "人工终止",
-        control_refine: "人工补充查询", research_paused: "等待人工调整"
-    };
+    // 服务端注入的界面文案（跟随站点语言切换）。
+    const LABELS = {{ i18n_labels | tojson }};
+    const I18N = {{ i18n_texts | tojson }};
+    const fmt = (key, params) => String(I18N[key] || key).replace(/\{(\w+)\}/g, (_, k) => (params && params[k] !== undefined) ? params[k] : "");
+
+    let typingTimer = null;
+    let activeStep = null;
+
+    function finishTyping() {
+        if (typingTimer) { clearInterval(typingTimer); typingTimer = null; }
+        if (activeStep) {
+            activeStep.classList.remove("is-active", "is-new");
+            activeStep.classList.add("is-done");
+            const p = activeStep.querySelector(".analysis-stream-body p");
+            if (p) {
+                if (p.dataset.fullText) p.textContent = p.dataset.fullText;
+                p.classList.remove("is-typing");
+            }
+            activeStep = null;
+        }
+    }
+
+    function typeInto(p, text) {
+        finishTyping();
+        if (!text) return;
+        p.dataset.fullText = text;
+        p.classList.add("is-typing");
+        let i = 0;
+        typingTimer = window.setInterval(() => {
+            i = Math.min(text.length, i + 2);
+            p.textContent = text.slice(0, i);
+            if (i >= text.length) {
+                clearInterval(typingTimer); typingTimer = null;
+                p.classList.remove("is-typing");
+            }
+        }, 16);
+    }
+
+    function setPanelStatus(state, label) {
+        if (panel) panel.dataset.status = state;
+        status.textContent = label;
+    }
+
+    function startElapsed(startedAt = Date.now()) {
+        runStartedAt = startedAt;
+        if (elapsedTimer) window.clearInterval(elapsedTimer);
+        elapsedTimer = window.setInterval(() => {
+            const s = Math.max(0, Math.floor((Date.now() - runStartedAt) / 1000));
+            elapsedEl.textContent = `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+        }, 500);
+    }
+
+    function stopElapsed() {
+        if (elapsedTimer) { window.clearInterval(elapsedTimer); elapsedTimer = null; }
+    }
+
+    function el(tag, cls, text) {
+        const node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text) node.textContent = text;
+        return node;
+    }
+
+    function chipRow(entries) {
+        const wrap = el("div", "analysis-stream-chips");
+        (entries || []).forEach((entry) => {
+            if (!entry || !entry.text) return;
+            wrap.appendChild(el("span", `analysis-stream-chip${entry.tone ? " is-" + entry.tone : ""}`, entry.text));
+        });
+        return wrap.children.length ? wrap : null;
+    }
+
+    function evidenceList(preview) {
+        const list = el("ul", "analysis-stream-evidence");
+        (preview || []).forEach((item) => {
+            if (!item || !item.title) return;
+            const li = el("li");
+            const kind = String(item.kind || "");
+            li.appendChild(el("span", "analysis-stream-evidence-kind", kind.includes("law") ? I18N.kind_law : I18N.kind_case));
+            li.appendChild(el("span", "analysis-stream-evidence-title", item.title));
+            if (item.score) li.appendChild(el("span", "analysis-stream-evidence-score", Number(item.score).toFixed(3)));
+            list.appendChild(li);
+        });
+        return list.children.length ? list : null;
+    }
+
+    function setControlsState(state) {
+        // running / paused / cancel-requested / terminal
+        const running = state === "running";
+        const paused = state === "paused";
+        const cancelling = state === "cancel-requested";
+        btnPause.hidden = paused || cancelling;
+        btnResume.hidden = !paused;
+        btnPause.disabled = paused || cancelling;
+        btnResume.disabled = !paused;
+        btnCancel.disabled = cancelling;
+        btnRefine.disabled = cancelling;
+        refinement.disabled = cancelling;
+        if (cancelling) {
+            refineNote.textContent = I18N.refine_note_cancel;
+        } else if (paused) {
+            refineNote.textContent = I18N.refine_note_paused;
+        } else {
+            refineNote.textContent = I18N.refine_note_default;
+        }
+    }
+
+    function showDone(note, hasResult = false) {
+        controls.hidden = true;
+        doneLink.hidden = !hasResult;
+        doneNote.textContent = note || "";
+        donePanel.hidden = false;
+    }
+
+    function setPageUrl(params) {
+        const target = new URL("/analysis", window.location.origin);
+        for (const [name, value] of Object.entries(params)) target.searchParams.set(name, value);
+        history.replaceState(history.state, "", target);
+        languageLinks.forEach((link) => {
+            const url = new URL(link.href);
+            url.searchParams.set("next", target.pathname + target.search);
+            link.href = url.href;
+        });
+    }
+
+    languageLinks.forEach((link) => link.addEventListener("click", (event) => {
+        if (!creating) return;
+        event.preventDefault();
+        pendingLanguage = link;
+    }));
+
+    async function showResult(run) {
+        const response = await fetch(`/api/analysis-stream/runs/${run.run_id}/view`, {
+            headers: {"Accept": "text/html"},
+        });
+        if (!response.ok) throw new Error(resultError);
+        const html = await response.text();
+        if (activeRun !== run) return;
+        resultRoot.innerHTML = html;
+        for (const script of resultRoot.querySelectorAll("script:not([type='application/json'])")) {
+            const executable = document.createElement("script");
+            for (const attribute of script.attributes) executable.setAttribute(attribute.name, attribute.value);
+            executable.textContent = script.textContent;
+            script.replaceWith(executable);
+        }
+        document.dispatchEvent(new Event("analysis:render"));
+        const historyId = response.headers.get("X-Analysis-History-Id");
+        if (historyId) setPageUrl({history_id: historyId});
+        doneLink.textContent = {{ tr('analysis.stream.view_result') | tojson }};
+        doneLink.onclick = null;
+        showDone(run.cancelled ? I18N.done_cancelled : I18N.done_completed, true);
+    }
+
+    async function finishRun(run, item) {
+        activeSource?.close();
+        stopElapsed();
+        finishTyping();
+        const completed = item.event_type === "run_completed";
+        const cancelled = item.event_type === "run_cancelled";
+        run.cancelled = cancelled;
+        try {
+            summary.textContent = completed ? I18N.summary_completed : cancelled ? I18N.summary_cancelled : I18N.summary_failed;
+            showDone(cancelled ? I18N.done_cancelled : I18N.done_failed);
+            if (completed || (cancelled && item.payload?.result_available)) await showResult(run);
+        } catch (error) {
+            showDone(resultError, true);
+            doneLink.textContent = retryResult;
+            doneLink.onclick = (event) => {
+                event.preventDefault();
+                finishRun(run, item);
+            };
+        } finally {
+            submitting = false;
+        }
+    }
+
+    function connect(runId) {
+        const url = `/api/analysis-stream/runs/${encodeURIComponent(runId)}`;
+        const run = {run_id: runId, control_url: `${url}/control`};
+        activeRun = run;
+        controls.hidden = false;
+        activeSource = new EventSource(`${url}/events`);
+        activeSource.addEventListener("progress", (message) => {
+            if (activeRun !== run) return;
+            const item = JSON.parse(message.data);
+            addEvent(item);
+            if (["run_completed", "run_cancelled", "run_failed"].includes(item.event_type)) finishRun(run, item);
+        });
+        activeSource.onerror = async () => {
+            if (activeRun !== run || !submitting) return;
+            setPanelStatus("running", I18N.retry);
+            try {
+                const response = await fetch(url);
+                if (response.status === 404 && activeRun === run) {
+                    activeSource.close();
+                    stopElapsed();
+                    submitting = false;
+                    controls.hidden = true;
+                    setPanelStatus("failed", I18N.status_failed);
+                    summary.textContent = {{ ('任务已过期，请重新提交。' if lang == 'zh' else 'This task has expired. Submit again to continue.') | tojson }};
+                }
+            } catch (_) {
+                // EventSource retries interrupted connections automatically.
+            }
+        };
+    }
+
+    doneAgain.addEventListener("click", () => {
+        form.scrollIntoView({ behavior: "smooth", block: "start" });
+        const textarea = form.querySelector("textarea");
+        if (textarea) { textarea.focus(); textarea.select(); }
+    });
 
     function addEvent(event) {
         const eventKey = `${activeRun?.run_id || "run"}:${event.seq || 0}`;
         if (seenEvents.has(eventKey)) return;
         seenEvents.add(eventKey);
-        const li = document.createElement("li");
-        li.className = "analysis-stream-step";
+        finishTyping();
+        const li = el("li", "analysis-stream-step is-new is-active");
         const when = new Date((event.timestamp || Date.now() / 1000) * 1000).toLocaleTimeString();
-        const dot = document.createElement("span");
-        dot.className = "analysis-stream-dot";
-        const body = document.createElement("div");
-        const title = document.createElement("strong");
-        title.textContent = labels[event.event_type] || String(event.event_type || "研究步骤");
-        const message = document.createElement("p");
-        message.textContent = event.message || "";
-        const timestamp = document.createElement("small");
-        timestamp.textContent = when;
+        const dot = el("span", "analysis-stream-dot");
+        const body = el("div", "analysis-stream-body");
+        const title = el("strong", "", LABELS[event.event_type] || String(event.event_type || LABELS.unknown_step));
+        const message = el("p");
+        const timestamp = el("small", "", when);
         body.append(title, message, timestamp);
         li.append(dot, body);
+
         const payload = event.payload || {};
         const progress = Math.max(0, Math.min(100, Number(event.progress ?? payload.progress ?? 0)));
         progressBar.style.width = `${progress}%`;
         progressBar.parentElement.setAttribute("aria-valuenow", String(progress));
-        currentPhase.textContent = String(event.current_phase || payload.current_phase || "进行中");
-        nextAction.textContent = String(event.next_action || payload.next_action || "继续分析");
-        const queries = Array.isArray(payload.queries) ? payload.queries : [];
-        if (queries.length) {
-            const details = document.createElement("details");
-            const heading = document.createElement("summary");
-            heading.textContent = `查看本步骤的 ${queries.length} 个查询`;
-            const list = document.createElement("ul");
-            queries.forEach((entry) => {
-                const row = document.createElement("li");
-                if (typeof entry === "string") row.textContent = entry;
-                else row.textContent = `${entry.query || ""} · ${entry.status || ""} · 命中 ${entry.hits || 0}`;
-                list.appendChild(row);
-            });
-            details.append(heading, list);
-            body.appendChild(details);
+        currentPhase.textContent = String(event.current_phase || payload.current_phase || "…");
+        nextAction.textContent = String(event.next_action || payload.next_action || "…");
+
+        // 按事件类型渲染真实中间内容：查询、命中数、证据标题、缺口。
+        const kind = event.event_type;
+        if (kind === "research_paused" || kind === "control_pause") setControlsState("paused");
+        if (kind === "control_resume" || kind === "control_refine") setControlsState("running");
+        if (kind === "control_cancel") setControlsState("cancel-requested");
+        const roundChip = payload.round_no ? [{ text: fmt("round_chip", { n: payload.round_no }) }] : [];
+        if (kind === "case_structured" && Array.isArray(payload.keywords) && payload.keywords.length) {
+            body.appendChild(chipRow(payload.keywords.slice(0, 8).map((word) => ({ text: word }))));
         }
-        if (Array.isArray(payload.unresolved_gaps) && payload.unresolved_gaps.length) {
-            const gap = document.createElement("p");
-            gap.className = "analysis-stream-gap";
-            gap.textContent = `仍需解决：${payload.unresolved_gaps.join("；")}`;
-            body.appendChild(gap);
+        if ((kind === "research_plan" || kind === "research_round_started") && Array.isArray(payload.queries) && payload.queries.length) {
+            body.appendChild(chipRow(
+                payload.queries.slice(0, 6).map((q) => ({ text: typeof q === "string" ? q : q.query }))
+            ));
         }
-        if (Array.isArray(payload.next_queries) && payload.next_queries.length) {
-            const next = document.createElement("p");
-            next.className = "analysis-stream-next";
-            next.textContent = `下一步：${payload.next_queries.join("；")}`;
-            body.appendChild(next);
+        if (kind === "research_query_completed") {
+            const hits = Number(payload.hits || 0);
+            body.appendChild(chipRow([
+                { text: fmt("hit_chip", { n: hits }), tone: hits > 0 ? "ok" : "warn" }, ...roundChip,
+            ]));
+            const preview = evidenceList(payload.evidence_preview);
+            if (preview) body.appendChild(preview);
         }
+        if (kind === "research_query_failed") {
+            body.appendChild(chipRow([
+                { text: payload.status === "timeout" ? I18N.timeout_chip : I18N.fail_chip, tone: "warn" }, ...roundChip,
+            ]));
+        }
+        if (kind === "evidence_packet_built") {
+            body.appendChild(chipRow([
+                { text: fmt("law_chip", { n: payload.law_count || 0 }), tone: "ok" },
+                { text: fmt("case_chip", { n: payload.case_count || 0 }), tone: "ok" },
+            ]));
+        }
+        if (kind === "research_round_completed") {
+            body.appendChild(chipRow([
+                { text: fmt("new_evidence_chip", { n: payload.new_evidence_count || 0 }), tone: "ok" },
+                { text: fmt("total_evidence_chip", { n: payload.total_evidence_count || 0 }) },
+                { text: fmt("gap_chip", { n: payload.unresolved_gap_count || 0 }), tone: (payload.unresolved_gap_count || 0) > 0 ? "warn" : "ok" },
+                ...(payload.duration_ms ? [{ text: fmt("duration_chip", { s: (payload.duration_ms / 1000).toFixed(1) }) }] : []),
+            ]));
+            if (Array.isArray(payload.unresolved_gaps) && payload.unresolved_gaps.length) {
+                body.appendChild(el("p", "analysis-stream-gap", fmt("gap_prefix", { items: payload.unresolved_gaps.slice(0, 4).join("；") })));
+            }
+            if (Array.isArray(payload.next_queries) && payload.next_queries.length) {
+                body.appendChild(el("p", "analysis-stream-next", fmt("next_prefix", { items: payload.next_queries.slice(0, 3).join("；") })));
+            }
+        }
+        if (kind === "run_completed" && payload.result_summary) {
+            const s = payload.result_summary;
+            body.appendChild(chipRow([
+                { text: fmt("law_chip", { n: s.laws || 0 }), tone: "ok" },
+                { text: fmt("case_chip", { n: s.cases || 0 }), tone: "ok" },
+                { text: fmt("research_round_chip", { n: s.rounds || 0 }), tone: "ok" },
+            ]));
+        }
+        if (kind === "run_failed" && payload.error) {
+            body.appendChild(el("p", "analysis-stream-gap", String(payload.error).slice(0, 300)));
+        }
+        if (kind === "control_refine" && payload.query) {
+            body.appendChild(chipRow([{ text: fmt("refine_priority", { q: payload.query }), tone: "info" }]));
+        }
+        if (kind === "research_paused") {
+            body.appendChild(chipRow([{ text: I18N.waiting_user, tone: "info" }, ...roundChip]));
+        }
+
         timeline.appendChild(li);
-        li.scrollIntoView({behavior: "smooth", block: "nearest"});
+        timeline.scrollTop = timeline.scrollHeight;
+        // LLM 流式观感：当前步骤消息逐字浮现，历史步骤转灰并打绿点。
+        const displayMessage = event.message || "";
+        if (window.APP_LANG === "en" && /[\u3400-\u9fff]/.test(displayMessage)) message.hidden = true;
+        else typeInto(message, displayMessage);
+        activeStep = li;
         if (payload.new_evidence_count !== undefined) {
-            metrics.textContent = `新增证据 ${payload.new_evidence_count} · 累计 ${payload.total_evidence_count || 0} · 未解决问题 ${payload.unresolved_gap_count || 0}`;
+            metrics.textContent = fmt("evidence_metric", {
+                new: payload.new_evidence_count, total: payload.total_evidence_count || 0, gaps: payload.unresolved_gap_count || 0,
+            });
         }
-        status.textContent = event.event_type === "run_failed" ? "失败" : event.event_type === "run_completed" ? "完成" : event.event_type === "run_cancelled" ? "已终止" : "进行中";
+        if (event.event_type === "run_failed") setPanelStatus("failed", I18N.status_failed);
+        else if (event.event_type === "run_completed") setPanelStatus("completed", I18N.status_done);
+        else if (event.event_type === "run_cancelled") setPanelStatus("cancelled", I18N.status_cancelled);
+        else setPanelStatus("running", I18N.status_running);
     }
 
     form.addEventListener("submit", async (event) => {
-        if (form.querySelector('[name="module"]')?.value !== "canada") return;
         event.preventDefault();
         if (submitting) return;
         submitting = true;
+        creating = true;
+        resultRoot.replaceChildren();
         if (activeSource) activeSource.close();
         seenEvents.clear();
         const data = new FormData(form);
         shell.hidden = false; timeline.innerHTML = ""; metrics.textContent = "";
-        status.textContent = "创建任务"; summary.textContent = "正在创建后台研究任务……";
+        donePanel.hidden = true; controls.hidden = true;
+        setControlsState("running");
+        setPanelStatus("running", I18N.preparing); summary.textContent = I18N.creating;
+        startElapsed();
+        shell.scrollIntoView({ behavior: "smooth", block: "start" });
         const payload = {
-            text: String(data.get("text") || ""), module: "canada",
+            text: String(data.get("text") || ""), module: String(data.get("module") || "canada"),
             source: String(data.get("source") || "all"), sort: String(data.get("sort") || "relevance"),
             limit: Number(data.get("limit") || 10), offset: 0, refresh: false
         };
@@ -449,54 +548,74 @@
             const response = await fetch("/api/analysis-stream/runs", {
                 method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)
             });
-            if (!response.ok) throw new Error((await response.json()).detail || "无法创建分析任务");
+            if (!response.ok) throw new Error((await response.json()).detail || I18N.refine_note_fail);
             const run = await response.json();
-            activeRun = run; controls.hidden = false;
-            summary.textContent = "分析在后台运行；你可以实时查看每一步，不需要等待空白页面。";
-            activeSource = new EventSource(run.events_url);
-            activeSource.addEventListener("progress", async (message) => {
-                const item = JSON.parse(message.data); addEvent(item);
-                if (item.event_type === "run_completed") {
-                    activeSource.close();
-                    controls.hidden = true;
-                    // Finalize the completed result into the normal history
-                    // store before navigation, so the GET page renders it
-                    // immediately instead of starting the analysis a second time.
-                    try {
-                        await fetch(run.result_url, {headers: {"Accept": "application/json"}});
-                    } catch (_) {
-                        // The result remains available through the existing
-                        // analysis route even if history finalization is retried.
-                    }
-                    const target = new URL("/analysis", window.location.origin);
-                    for (const [key, value] of Object.entries(payload)) target.searchParams.set(key, String(value));
-                    setTimeout(() => window.location.assign(target.toString()), 700);
-                } else if (["run_failed", "run_cancelled"].includes(item.event_type)) {
-                    activeSource.close(); controls.hidden = true; submitting = false;
-                }
-            });
-            activeSource.onerror = () => { status.textContent = "连接重试中"; };
+            setPageUrl({run: run.run_id});
+            if (run.created_at) startElapsed(run.created_at * 1000);
+            summary.textContent = I18N.running;
+            if (pendingLanguage) {
+                window.location.assign(pendingLanguage.href);
+                return;
+            }
+            connect(run.run_id);
         } catch (error) {
-            submitting = false;
-            status.textContent = "失败"; summary.textContent = error.message || String(error);
+            submitting = false; stopElapsed();
+            setPanelStatus("failed", I18N.status_failed); summary.textContent = error.message || String(error);
+        } finally {
+            creating = false;
+            pendingLanguage = null;
         }
     });
+
+    if (resumeRunId) {
+        submitting = true;
+        shell.hidden = false;
+        setPanelStatus("running", I18N.running);
+        startElapsed({{ (resume_started_at or 0)|tojson }} * 1000 || Date.now());
+        connect(resumeRunId);
+    } else if ({{ (auto_start or false) | tojson }}) {
+        form.requestSubmit();
+    }
 
     controls.addEventListener("click", async (event) => {
         const button = event.target.closest("[data-research-action]");
         if (!button || !activeRun) return;
         const action = button.dataset.researchAction;
         const query = action === "refine" ? String(refinement.value || "").trim() : "";
-        if (action === "refine" && !query) return;
-        const response = await fetch(activeRun.control_url, {
-            method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({action, query})
-        });
-        if (!response.ok) {
-            summary.textContent = (await response.json()).detail || "无法调整当前研究任务";
+        if (action === "refine" && !query) {
+            refineNote.textContent = I18N.refine_note_empty;
             return;
         }
-        if (action === "refine") refinement.value = "";
+        const original = button.textContent;
+        button.disabled = true;
+        button.textContent = I18N.sending;
+        try {
+            const response = await fetch(activeRun.control_url, {
+                method: "POST", headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({action, query})
+            });
+            if (!response.ok) {
+                const detail = (await response.json()).detail || I18N.refine_note_fail;
+                refineNote.textContent = detail;
+                button.disabled = false;
+                return;
+            }
+            if (action === "refine") {
+                refinement.value = "";
+                refineNote.textContent = I18N.refine_note_sent;
+            } else if (action === "pause") {
+                setControlsState("paused");
+            } else if (action === "resume") {
+                setControlsState("running");
+            } else if (action === "cancel") {
+                setControlsState("cancel-requested");
+            }
+        } catch (error) {
+            refineNote.textContent = String(error.message || error);
+        } finally {
+            button.textContent = original;
+            if (action === "refine") button.disabled = false;
+        }
     });
 })();
 </script>

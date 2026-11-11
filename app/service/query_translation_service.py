@@ -64,6 +64,25 @@ LEGAL_TERMS: dict[str, str] = {
     "居住条件": "habitability",
     "买卖合同": "agreement of purchase and sale",
     "房产": "real property",
+    "房屋买卖": "real estate sale",
+    "购买房产": "real estate purchase",
+    "卖方": "seller",
+    "房产中介": "real estate agent",
+    "中介": "broker",
+    "重大失实陈述": "material misrepresentation",
+    "欺诈": "fraudulent misrepresentation",
+    "披露": "disclosure",
+    "隐瞒": "concealment",
+    "隐蔽瑕疵": "latent defect",
+    "种过大麻": "cannabis grow operation",
+    "种植大麻": "cannabis grow operation",
+    "儿童情色录像": "child pornography",
+    "儿童色情": "child pornography",
+    "儿童性虐待材料": "child sexual abuse material",
+    "访问相关材料": "accessing material",
+    "浏览或访问": "accessing",
+    "保存或持有": "possession",
+    "存储到个人电脑": "computer file storage",
     "抵押": "mortgage",
     "产权": "title",
     "过户": "transfer of title",
@@ -367,7 +386,8 @@ def translate_query(text: str) -> dict:
         if specific:
             terms = specific
 
-    translated = " ".join(terms)
+    english_terms = re.findall(r"[A-Za-z][A-Za-z0-9'-]*", remaining)
+    translated = " ".join(dict.fromkeys([*terms, *english_terms]))
     return {
         "source_lang": lang,
         "translated": translated,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -345,7 +346,7 @@ def _build_record(payload: CivilTrialRunCreate) -> tuple[list[dict[str, Any]], l
             "expert_field": _clean(item.expert_field),
             "report_title": _clean(item.report_title),
             "status": "waiting",
-            "credibility_score": round(max(0.45, 0.9 - (0.09 * len(item.credibility_risks))), 2),
+            "credibility_score": None,
             "testimony_event_ids": [],
         })
     exhibits: list[dict[str, Any]] = []
@@ -474,6 +475,51 @@ def _rule_exhibit(state: dict[str, Any], exhibit: dict[str, Any], witness: dict[
         })
 
 
+_OBJECTION_START = re.compile(r"^(?:objection\b|i\s+object\b|提出异议|我反对|异议|反对)", re.I)
+_OBJECTION_GROUNDS = {
+    "hearsay": re.compile(r"\bhearsay\b|传闻", re.I),
+    "foundation": re.compile(r"\b(?:foundation|authenticity|authentication)\b|基础|真实性", re.I),
+    "relevance": re.compile(r"\b(?:relevan\w*|irrelevan\w*)\b|关联性|无关", re.I),
+    "leading": re.compile(r"\bleading\b|诱导", re.I),
+    "speculation": re.compile(r"\b(?:speculat\w*|guess\w*)\b|推测|猜测", re.I),
+}
+
+
+def _record_counsel_objection(state: dict[str, Any], task: dict[str, Any], content: str) -> bool:
+    phase = task["phase"]
+    side = state["practice_side"]
+    statement = _clean(content)
+    if phase not in {"plaintiff_evidence", "defendant_evidence", "reply_evidence"}:
+        return False
+    if side not in {"plaintiff", "defendant"} or not _OBJECTION_START.match(statement):
+        return False
+
+    role = f"{side}_counsel"
+    grounds = [ground for ground, pattern in _OBJECTION_GROUNDS.items() if pattern.search(statement)]
+    exhibit_match = re.search(r"\bEX-(?:[PD]-)?\d+\b", statement, re.I)
+    exhibit_id = exhibit_match.group().upper() if exhibit_match else task.get("exhibit_id", "")
+    exhibit = next((item for item in state["exhibits"] if item["exhibit_id"] == exhibit_id), None)
+    exhibit_id = exhibit["exhibit_id"] if exhibit else ""
+    if exhibit and exhibit["status"] in {"excluded", "limited"}:
+        ruling = exhibit["status"]
+        reasons = f"依据现有证物记录维持 {exhibit_id} 的裁定：{exhibit.get('limitation') or '按原裁定处理'}。"
+    else:
+        ruling = "overruled"
+        reasons = "现有记录不足以确认异议依据或改变证物裁定。可补充明确的异议对象与理由。"
+
+    objection_id = f"OBJ-{len(state['objections']) + 1:03d}"
+    _trace(state, role, "raise_objection", notes=[objection_id, *grounds])
+    _event(state, role, "objection", statement[:600], phase=phase, exhibit_id=exhibit_id)
+    _trace(state, "trial_judge", "rule_objection", notes=[objection_id, ruling])
+    _event(state, "trial_judge", "objection_ruling", reasons, phase=phase, exhibit_id=exhibit_id, tags=[ruling])
+    state["objections"].append({
+        "objection_id": objection_id, "session_no": state["sessions"][-1]["session_no"],
+        "raised_by": role, "phase": phase, "exhibit_id": exhibit_id, "text": statement[:600],
+        "grounds": grounds or ["unspecified"], "ruling": ruling, "reasons": reasons,
+    })
+    return True
+
+
 def _execute_task(state: dict[str, Any], task: dict[str, Any], override: str) -> None:
     phase = task["phase"]
     role = task["role"]
@@ -531,6 +577,7 @@ def _execute_task(state: dict[str, Any], task: dict[str, Any], override: str) ->
         _trace(state, witness_role, "answer_question", notes=["cross"])
         answer = f"我承认这一限制：{risk}。我只能确认自己亲历或报告中已经记录的部分。"
         testimony = _event(state, witness_role, "cross_answer", answer, phase=phase, witness_id=witness["witness_id"], tags=["credibility_challenge"])
+        testimony["credibility_risk"] = risk
         witness["testimony_event_ids"].append(testimony["event_id"])
     elif task["task"] == "reexamination":
         witness = _find(state, "witnesses", "witness_id", task["witness_id"])
@@ -591,11 +638,46 @@ def _advocacy_score(state: dict[str, Any], side: str) -> dict[str, Any]:
     return {"side": side, "metrics": metrics, "total": sum(metrics.values()), "corrections": corrections}
 
 
+def _witness_credibility(state: dict[str, Any], witness: dict[str, Any]) -> dict[str, Any]:
+    witness_id = witness["witness_id"]
+    cross_answers = [
+        event for event in state["transcript"]
+        if event.get("witness_id") == witness_id and event.get("event_type") == "cross_answer"
+    ]
+    result = {"witness_id": witness_id, "name": witness["name"], "score": None, "reason": "未接受交叉询问。"}
+    if not cross_answers:
+        return result
+
+    risks = list(dict.fromkeys(
+        _clean(event.get("credibility_risk"))
+        or _clean(event.get("content")).removeprefix("我承认这一限制：").split("。", 1)[0]
+        for event in cross_answers
+    ))
+    risks = [risk for risk in risks if risk]
+    corroboration = [
+        exhibit["exhibit_id"] for exhibit in state["exhibits"]
+        if exhibit.get("foundation_witness_id") == witness_id and exhibit.get("status") == "admitted"
+    ]
+    penalties = [
+        0.18 if re.search(r"矛盾|不一致|未亲历|无亲历|未目睹|利益冲突|contradict|firsthand|conflict of interest", risk, re.I)
+        else 0.06 if re.search(r"细节|时间|记录不全|未记录|detail|timing|incomplete", risk, re.I)
+        else 0.10
+        for risk in risks
+    ]
+    score = round(max(0.25, min(0.95, 0.88 + min(0.08, len(corroboration) * 0.04) - sum(penalties))), 2)
+    reason = "交叉询问确认的限制：" + "；".join(risks) if risks else "交叉询问记录中没有确认具体的可信度限制。"
+    if corroboration:
+        reason += "。相关准入证物：" + "、".join(corroboration)
+    result.update(score=score, reason=reason, cross_exam_limitations=risks, corroborating_exhibit_ids=corroboration)
+    return result
+
+
 def _build_judgment_and_scores(state: dict[str, Any]) -> None:
     _trace(state, "trial_judge", "transcript_read")
     _trace(state, "trial_judge", "authority_read")
     _trace(state, "trial_judge", "build_judgment")
     findings = []
+    credibility_by_id = {witness["witness_id"]: _witness_credibility(state, witness) for witness in state["witnesses"]}
     for issue in state["issues"]:
         support: dict[str, float] = {"plaintiff": 0.0, "defendant": 0.0}
         accepted: list[str] = []
@@ -618,16 +700,15 @@ def _build_judgment_and_scores(state: dict[str, Any]) -> None:
         for witness in state["witnesses"]:
             if issue["issue_id"] not in witness["issue_ids"] or witness["status"] != "completed":
                 continue
-            support[witness["side"]] += witness["credibility_score"]
-            credibility.append({
-                "witness_id": witness["witness_id"], "name": witness["name"],
-                "score": witness["credibility_score"],
-                "reason": "按亲历范围采信" if not witness["credibility_risks"] else "结合交叉询问暴露的限制后部分采信",
-            })
+            assessment = credibility_by_id[witness["witness_id"]]
+            witness["credibility_score"] = assessment["score"]
+            if assessment["score"] is not None:
+                support[witness["side"]] += assessment["score"]
+            credibility.append(assessment)
         burden = issue["burden_side"]
         other = "defendant" if burden == "plaintiff" else "plaintiff"
         met = support[burden] > support[other] and support[burden] >= 1.0
-        burden_witnesses = [item["name"] for item in credibility if _find(state, "witnesses", "witness_id", item["witness_id"])["side"] == burden]
+        burden_witnesses = [item["name"] for item in credibility if item["score"] is not None and _find(state, "witnesses", "witness_id", item["witness_id"])["side"] == burden]
         burden_record = "、".join(accepted_by_side[burden] + burden_witnesses) or "现有口头证言"
         opposing_record = "、".join(accepted_by_side[other]) or "对方口头证言"
         reasons = (
@@ -786,7 +867,8 @@ def perform_civil_trial_action(
                 state["completed_phases"].append(current_phase)
             _adjourn(state, task["reason"])
         else:
-            _execute_task(state, task, payload.content)
+            objection_recorded = _record_counsel_objection(state, task, payload.content)
+            _execute_task(state, task, "" if objection_recorded else payload.content)
             state["agenda_index"] += 1
             next_phase = state["agenda"][state["agenda_index"]]["phase"] if state["agenda_index"] < len(state["agenda"]) else None
             if next_phase != current_phase and current_phase not in state["completed_phases"]:

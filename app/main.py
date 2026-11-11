@@ -70,11 +70,13 @@ def on_startup():
         # PostgreSQL: 使用完整初始化
         ensure_ingestion_tables()
         ensure_user_tables()
+        # 多智能体表先建（module_support 的 ALTER 依赖 agent_runs 存在；
+        # 本地存量库从未暴露该顺序问题，空库首次初始化会炸）。
+        ensure_multi_agent_tables()
         ensure_module_support_tables()
         ensure_legal_data_tables()
         ensure_risk_assessment_tables()
         ensure_vector_tables()
-        ensure_multi_agent_tables()
         ensure_skill_collaboration_tables()
         ensure_hearing_workflow_tables()
         ensure_appeal_workflow_tables()

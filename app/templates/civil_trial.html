@@ -166,7 +166,7 @@
         return {case_title: data.get('case_title'), case_summary: data.get('case_summary'), claim: data.get('claim'), defence: data.get('defence'), requested_relief: data.get('requested_relief'), practice_side: data.get('practice_side'), issues, witnesses, exhibits};
     }
 
-    const statusLabel = (status) => ({active:'进行中',adjourned:'休庭',completed:'已完成',waiting:'待出庭',testifying:'作证中',proposed:'待提交',admitted:'准入',limited:'限缩准入',excluded:'排除'}[status] || status);
+    const statusLabel = (status) => ({active:'进行中',adjourned:'休庭',completed:'已完成',waiting:'待出庭',testifying:'作证中',proposed:'待提交',admitted:'准入',limited:'限缩准入',excluded:'排除',overruled:'驳回',sustained:'异议成立'}[status] || status);
     const taskLabel = (task) => ({call_case:'书记员宣布开庭',opening:'开庭陈述',call_witness:'传唤证人',qualify_expert:'专家资格审查',direct_round:'主询问',cross_round:'交叉询问',reexamination:'复询',release_witness:'证人退庭',side_rests:'举证结束',session_break:'休庭节点',reply_review:'回复证据审查',closing:'结案陈词',reply_closing:'原告有限回复',judgment:'宣判与评分'}[task] || task || '已完成');
 
     function renderPhases(data) {
@@ -184,7 +184,7 @@
     }
 
     function renderSide(data) {
-        document.getElementById('trial-witnesses').innerHTML = data.witnesses.map((item) => `<article><div><strong>${escapeHtml(item.witness_id)} · ${escapeHtml(item.name)}</strong><span class="trial-record-status ${escapeHtml(item.status)}">${statusLabel(item.status)}</span></div><p>${escapeHtml(item.role_description)}</p><small>${item.kind === 'expert' ? `专家：${escapeHtml(item.expert_field)}` : '事实证人'} · 可信性 ${Math.round(item.credibility_score * 100)}</small><small>证言记录 ${item.testimony_event_ids.length} 条</small></article>`).join('');
+        document.getElementById('trial-witnesses').innerHTML = data.witnesses.map((item) => `<article><div><strong>${escapeHtml(item.witness_id)} · ${escapeHtml(item.name)}</strong><span class="trial-record-status ${escapeHtml(item.status)}">${statusLabel(item.status)}</span></div><p>${escapeHtml(item.role_description)}</p><small>${item.kind === 'expert' ? `专家：${escapeHtml(item.expert_field)}` : '事实证人'} · 可信性 ${item.credibility_score == null ? '待评估' : Math.round(item.credibility_score * 100)}</small><small>证言记录 ${item.testimony_event_ids.length} 条</small></article>`).join('');
         document.getElementById('trial-exhibits').innerHTML = data.exhibits.map((item) => `<article><div><strong>${escapeHtml(item.exhibit_id)} · ${escapeHtml(item.title)}</strong><span class="trial-record-status ${escapeHtml(item.status)}">${statusLabel(item.status)}</span></div><p>${escapeHtml(item.description)}</p><small>基础证人 ${escapeHtml(item.foundation_witness_id)} · ${escapeHtml(item.limitation || '未限缩')}</small></article>`).join('');
         document.getElementById('trial-objections').innerHTML = data.objections.map((item) => `<article><strong>${escapeHtml(item.objection_id)} · ${escapeHtml(item.exhibit_id)}</strong><p>${escapeHtml(item.grounds.join('；'))}</p><small>裁定：${statusLabel(item.ruling)} · ${escapeHtml(item.reasons)}</small></article>`).join('') || '<p class="muted">尚无异议裁定。</p>';
         document.getElementById('trial-authorities').innerHTML = data.authorities.map((item) => `<article><strong>${escapeHtml(item.authority_id)} · ${escapeHtml(item.title)}</strong><p>${escapeHtml(item.citation || '引文待核验')}</p><small>${escapeHtml(item.source_status)}</small>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">查看原文</a>` : '<small>没有来源链接</small>'}</article>`).join('');
@@ -232,7 +232,7 @@
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault(); createStatus.hidden = true;
-        try { await request('/api/civil-trial/runs', {method:'POST', body:JSON.stringify(parsePayload())}); workbench.scrollIntoView({behavior:'smooth', block:'start'}); }
+        try { const run = await request('/api/civil-trial/runs', {method:'POST', body:JSON.stringify(parsePayload())}); history.replaceState(history.state, '', `/ontario-civil-trial?run_id=${encodeURIComponent(run.id)}`); workbench.scrollIntoView({behavior:'smooth', block:'start'}); }
         catch (error) { createStatus.textContent = error.message; createStatus.hidden = false; }
     });
     actionForm.addEventListener('submit', async (event) => {

@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.service.agent_service import get_dashboard_metrics, predict_legal_outcome
 from app.service.analysis_service import analyze_sentence_search, enrich_with_deep_analysis
 from app.service.analysis_stream_service import (
+    AnalysisStreamRun,
     apply_analysis_stream_control,
     create_analysis_stream_run,
     get_analysis_stream_run,
@@ -344,42 +345,6 @@ def _fallback_key_facts_clean(item: dict) -> list[str]:
     return cleaned or ["当前需要回到原始案情文本重新提炼关键事实。"]
 
 
-def _fallback_dispute_focus_clean(item: dict) -> list[str]:
-    focus: list[str] = []
-    case_type = repair_text(item.get("case_type"))
-    if case_type and not _is_broken_text(case_type):
-        focus.append(f"{case_type}中的责任边界如何认定")
-    for relation in (item.get("legal_relations") or [])[:2]:
-        value = repair_text(relation)
-        if value and not _is_broken_text(value):
-            focus.append(value)
-    for risk in (item.get("risk_points") or [])[:2]:
-        risk_name = repair_text(risk.get("name"))
-        if risk_name and not _is_broken_text(risk_name):
-            focus.append(f"{risk_name}是否会影响最终判断")
-    rules = item.get("legal_rules") or []
-    if rules:
-        title = repair_text(rules[0].get("title"))
-        if title:
-            focus.append(f"《{title}》如何适用于当前案情")
-    return focus[:5] or ["当前争议焦点需要结合案情原文进一步拆解。"]
-
-
-def _fallback_legal_relations_clean(item: dict) -> list[str]:
-    relations: list[str] = []
-    case_type = repair_text(item.get("case_type"))
-    if case_type and not _is_broken_text(case_type):
-        relations.append(f"{case_type}核心法律关系")
-    for law in (item.get("legal_rules") or [])[:3]:
-        title = repair_text(law.get("title"))
-        if title:
-            relations.append(f"与《{title}》直接相关")
-    prediction_label = repair_text((item.get("prediction") or {}).get("label"))
-    if prediction_label and not _is_broken_text(prediction_label):
-        relations.append(f"当前预测标签：{prediction_label}")
-    return relations[:5]
-
-
 def _fallback_evidence_focus_clean(item: dict) -> list[str]:
     focus: list[str] = []
     risk_points = item.get("risk_points") or []
@@ -494,39 +459,22 @@ def _fallback_key_facts_clean(item: dict) -> list[str]:
 
 
 def _fallback_dispute_focus_clean(item: dict) -> list[str]:
-    focus: list[str] = []
+    for field in ("disputed_issues", "unresolved_issues"):
+        values = [repair_text(value) for value in item.get(field) or []]
+        focus = [value for value in values if value and not _is_broken_text(value)]
+        if focus:
+            return focus[:5]
     case_type = repair_text(item.get("case_type"))
     if case_type and not _is_broken_text(case_type):
-        focus.append(f"{case_type}中的责任边界如何认定")
-    for relation in (item.get("legal_relations") or [])[:2]:
-        value = repair_text(relation)
-        if value and not _is_broken_text(value):
-            focus.append(value)
-    for risk in (item.get("risk_points") or [])[:2]:
-        risk_name = repair_text(risk.get("name"))
-        if risk_name and not _is_broken_text(risk_name):
-            focus.append(f"{risk_name}是否会影响最终判断")
-    rules = item.get("legal_rules") or []
-    if rules:
-        title = repair_text(rules[0].get("title"))
-        if title:
-            focus.append(f"《{title}》如何适用于当前案情")
-    return focus[:5] or ["当前争议焦点需要结合案情原文进一步拆解。"]
+        return [f"{case_type}中的责任边界如何认定"]
+    return ["当前争议焦点需要结合案情原文进一步拆解。"]
 
 
 def _fallback_legal_relations_clean(item: dict) -> list[str]:
-    relations: list[str] = []
     case_type = repair_text(item.get("case_type"))
     if case_type and not _is_broken_text(case_type):
-        relations.append(f"{case_type}案件的核心法律关系")
-    for law in (item.get("legal_rules") or [])[:3]:
-        title = repair_text(law.get("title"))
-        if title:
-            relations.append(f"与《{title}》直接相关")
-    prediction_label = repair_text((item.get("prediction") or {}).get("label"))
-    if prediction_label and not _is_broken_text(prediction_label):
-        relations.append(f"当前预测标签：{prediction_label}")
-    return relations[:5]
+        return [f"{case_type}案件的核心法律关系"]
+    return []
 
 
 def _fallback_evidence_focus_clean(item: dict) -> list[str]:
@@ -1239,6 +1187,22 @@ def _exact_history_display_for_query(*, user_id: int, query_text: str, module_co
     return history_id, _sanitize_history_display(build_history_display_payload(history))
 
 
+def _apply_analysis_overview(item: dict, result: dict, module_code: str) -> dict:
+    if not (result.get("deep_analysis") or result.get("deep_query_plan")):
+        return item
+    overview = build_case_history_payload(
+        query_text=item.get("query_text") or result.get("input_text") or "",
+        analysis_payload=result,
+        prediction_payload={},
+        module_packet={},
+        module_code=module_code,
+    )
+    item["dispute_focus"] = overview["dispute_focus_json"]
+    item["disputed_issues"] = overview["dispute_focus_json"]
+    item["legal_relations"] = overview["result_snapshot"]["legal_relations"]
+    return item
+
+
 def _build_analysis_view_payload(
     *,
     query_text: str,
@@ -1250,7 +1214,7 @@ def _build_analysis_view_payload(
     if history_id and user_id:
         history = get_history(history_id, user_id=int(user_id), admin=False, touch=False)
         if history:
-            return build_history_display_payload(history)
+            return _apply_analysis_overview(build_history_display_payload(history), result_payload, module_code)
 
     synthetic = build_case_history_payload(
         query_text=query_text,
@@ -1535,7 +1499,7 @@ def _build_analysis_payload_from_history(history_item: dict, module_code: str) -
     analysis_snapshot = snapshot.get("analysis", {})
 
     # 构建 module_packet
-    module_packet = _history_module_packet_from_display(history_item, module_code)
+    module_packet = snapshot.get("module_packet") or _history_module_packet_from_display(history_item, module_code)
 
     # 从历史记录获取 supporting_case_groups 和 linked_laws
     supporting_case_groups = history_item.get("supporting_case_groups") or []
@@ -1558,6 +1522,7 @@ def _build_analysis_payload_from_history(history_item: dict, module_code: str) -
     # 构建分析结果
     analysis_result = {
         "input_text": history_item.get("query_text") or "",
+        "module_code": module_code,
         "analysis": {
             "jurisdiction": history_item.get("court_level") or history_item.get("country") or "",
             "summary": history_item.get("analysis_summary") or history_item.get("case_summary") or "",
@@ -1603,8 +1568,20 @@ def _build_analysis_payload_from_history(history_item: dict, module_code: str) -
         "coverage_note": "当前结果基于已有历史记录，不会重复消耗分析时间。",
         "history_reused": True,
         "remote_fetch": {"status": "history_reuse", "message": "当前页面直接复用已保存的历史记录。"},
+        "agentic_research": snapshot.get("agentic_research") or {},
+        "research_trace": snapshot.get("research_trace") or [],
+        "research_trace_meta": snapshot.get("research_trace_meta") or {},
     }
 
+    for field in ("deep_analysis", "deep_query_plan", "deep_analysis_status", "quality_gate", "case_prediction"):
+        if field in snapshot:
+            analysis_result[field] = snapshot[field]
+    if "case_prediction" not in analysis_result and history_item.get("has_prediction"):
+        saved = snapshot.get("prediction") or {}
+        if saved.get("conclusion") and _safe_float(saved.get("confidence")) > 0:
+            analysis_result["case_prediction"] = {
+                "predicted_outcome": saved["conclusion"], "confidence": saved["confidence"],
+            }
     return analysis_result
 
 
@@ -1672,7 +1649,7 @@ def _memo_context_payload(text: str, limit: int, offset: int, source: str, sort:
 def switch_language(request: Request, code: str, next: str = "/home"):
     """Persist the UI language in a cookie and return to the current page."""
     target = (next or "/home").strip()
-    if not target.startswith("/") or target.startswith("//"):
+    if not target.startswith("/") or target.startswith("//") or "\\" in target or any(ord(ch) < 32 for ch in target):
         target = "/home"
     response = RedirectResponse(url=target, status_code=303)
     response.set_cookie(
@@ -1903,6 +1880,52 @@ def results_page(
     return _cache_safe_template("results.html", context)
 
 
+def _analysis_result_context(request: Request, result: dict, history_id: int, *, live: bool = False) -> dict:
+    module_code = normalize_module(result.get("module_code") or "canada")
+    text = result.get("input_text") or ""
+    return {
+        "request": request,
+        "lang": normalize_lang(request.cookies.get(LANG_COOKIE)),
+        "tr": make_translator(normalize_lang(request.cookies.get(LANG_COOKIE))),
+        "page_id": "analysis",
+        "analysis_result": result,
+        "history_id": history_id,
+        "live_analysis": live,
+        "text_input": text,
+        "limit": result.get("limit") or settings.default_search_limit,
+        "offset": result.get("offset") or 0,
+        "source": result.get("source") or "all",
+        "sort": result.get("sort") or "relevance",
+        "module_code": module_code,
+        "module_profile": _presentation_module_profile(module_code),
+        "source_options": _presentation_source_options(module_code),
+        "memo_download_url": (
+            f"/memo/download?history_id={history_id}" if history_id
+            else _memo_download_url(text, settings.default_search_limit, 0, "all", "relevance", module_code)
+        ),
+    }
+
+
+def _render_saved_analysis(request: Request, history_id: int):
+    user = _require_page_user(request, str(request.url.path) + ("?" + request.url.query if request.url.query else ""))
+    if isinstance(user, RedirectResponse):
+        return user
+    history = get_history(history_id, user_id=int(user["id"]), admin=bool(user.get("is_admin")), touch=False)
+    if not history:
+        raise HTTPException(status_code=404, detail="history not found")
+    item = _sanitize_history_display(build_history_display_payload(history))
+    module = normalize_module(item.get("module_code"))
+    result = _build_analysis_payload_from_history(item, module)
+    enrich_with_deep_analysis(result, audit=False, use_llm=False)
+    context = _base_context(request, "analysis")
+    context.update(_analysis_result_context(request, result, history_id))
+    context.update(
+        analysis_view=_sanitize_history_display(_apply_analysis_overview(item, result, module)),
+        saved_analysis=True,
+    )
+    return _cache_safe_template("analyze.html", context)
+
+
 def _render_prediction_page(
     *,
     request: Request,
@@ -1915,6 +1938,8 @@ def _render_prediction_page(
     sort: str,
     module: str,
     refresh: bool,
+    auto_start: bool = False,
+    expired_run: bool = False,
 ):
     active_text = text.strip()
     restore_text = active_text or draft
@@ -1951,6 +1976,8 @@ def _render_prediction_page(
             "module_profile": _presentation_module_profile(module_code),
             "source_options": _presentation_source_options(module_code),
             "refresh": refresh,
+            "auto_start": auto_start and bool(draft.strip()) and not active_text,
+            "expired_run": expired_run,
             "analysis_result": None,
             "analysis_view": None,
             "prediction_result": None,
@@ -1974,14 +2001,12 @@ def _render_prediction_page(
                     analysis_payload = _build_analysis_payload_from_history(
                         existing_history_item, module_code
                     )
-                    enrich_with_deep_analysis(
-                        analysis_payload,
-                        tenant_id=repair_text(page_user.get("tenant_id")),
-                        user_id=int(page_user["id"]),
-                    )
+                    enrich_with_deep_analysis(analysis_payload, audit=False, use_llm=False)
                     context["history_id"] = existing_history_id
                     context["analysis_result"] = analysis_payload
-                    context["analysis_view"] = existing_history_item
+                    context["analysis_view"] = _sanitize_history_display(
+                        _apply_analysis_overview(existing_history_item, analysis_payload, module_code)
+                    )
                     _remember_query(
                         request,
                         query_text=active_text,
@@ -2100,7 +2125,33 @@ def analysis_page(
     sort: str = Query("relevance"),
     module: str = Query("canada"),
     refresh: bool = Query(False),
+    start: bool = Query(False),
+    run: str = Query("", max_length=64),
+    history_id: int | None = Query(None, gt=0),
 ):
+    if history_id:
+        return _render_saved_analysis(request, history_id)
+    if run:
+        user = _require_page_user(request, f"/analysis?run={quote(run)}")
+        if isinstance(user, RedirectResponse):
+            return user
+        try:
+            task = get_analysis_stream_run(run, user_id=int(user["id"]))
+        except ValueError:
+            return _render_prediction_page(
+                request=request, page_id="analysis", text="", draft=draft, limit=limit,
+                offset=offset, source=source, sort=sort, module=module, refresh=False, expired_run=True,
+            )
+        context = _base_context(request, "analysis")
+        request_data = task.request
+        module = normalize_module(request_data.get("module"))
+        context.update(
+            _analysis_result_context(request, {"input_text": request_data.get("text"), "module_code": module,
+                                               **{key: request_data.get(key) for key in ("limit", "offset", "source", "sort")}},
+                                     0, live=True),
+            analysis_result=None, analysis_view=None, resume_run_id=task.run_id, resume_started_at=task.created_at,
+        )
+        return _cache_safe_template("analyze.html", context)
     return _render_prediction_page(
         request=request,
         page_id="analysis",
@@ -2112,6 +2163,7 @@ def analysis_page(
         sort=sort,
         module=module,
         refresh=refresh,
+        auto_start=start,
     )
 
 
@@ -2244,20 +2296,61 @@ def memo_page(
 def memo_download(
     request: Request,
     text: str = Query(""),
+    title: str = Query("", max_length=200),
+    history_id: int | None = Query(None, gt=0),
     limit: int = Query(settings.default_search_limit),
     offset: int = Query(0),
     source: str = Query("all"),
     sort: str = Query("relevance"),
     module: str = Query("canada"),
 ):
-    page_user = _require_page_user(request, _memo_download_url(text, limit, offset, source, sort, module))
+    page_user = _require_page_user(request, str(request.url.path) + ("?" + request.url.query if request.url.query else ""))
     if isinstance(page_user, RedirectResponse):
         return page_user
+    user_id = int(page_user["id"])
+    module_code = normalize_module(module)
+    memo_analysis = None
+    if history_id is None and not text.strip() and title.strip():
+        matches = list_user_histories(user_id=user_id, case_title=title.strip(), limit=2)
+        if not matches:
+            raise HTTPException(status_code=404, detail="Saved analysis title was not found.")
+        if len(matches) > 1:
+            raise HTTPException(status_code=409, detail="More than one saved analysis has this title. Use history_id.")
+        history_id = int(matches[0]["id"])
+    if history_id is not None:
+        history = get_history(history_id, user_id=user_id, admin=False, touch=False)
+        if not history:
+            raise HTTPException(status_code=404, detail="Saved analysis was not found.")
+        memo_analysis = _sanitize_history_display(build_history_display_payload(history))
+        text = memo_analysis["query_text"]
+        module_code = normalize_module(memo_analysis.get("module_code"))
     if not text.strip():
-        raise HTTPException(status_code=400, detail="text is required for memo PDF export.")
+        raise HTTPException(status_code=400, detail="Provide case text or identify a saved analysis.")
 
     context = _base_context(request, "memo")
-    context.update(_memo_context_payload(text, limit, offset, source, sort, normalize_module(module)))
+    context.update(_memo_context_payload(text, limit, offset, source, sort, module_code))
+    if not context["prediction_result"]:
+        if memo_analysis is None:
+            _, memo_analysis = _exact_history_display_for_query(
+                user_id=user_id, query_text=text, module_code=module_code,
+            )
+        if memo_analysis is None:
+            result = analyze_sentence_search(
+                text=text, limit=limit, offset=offset,
+                source=resolve_source_for_module(module_code, source), sort=sort,
+                module=module_code, origin_page="analysis", local_only=True,
+                tenant_id=repair_text(page_user.get("tenant_id")), user_id=user_id,
+            )
+            memo_analysis = _sanitize_history_display(_build_analysis_view_payload(
+                query_text=text, module_code=module_code, result_payload=result,
+            ))
+        if not (memo_analysis.get("result_snapshot") or {}).get("overview_version"):
+            history_result = _build_analysis_payload_from_history(memo_analysis, module_code)
+            enrich_with_deep_analysis(
+                history_result, tenant_id=repair_text(page_user.get("tenant_id")), user_id=user_id,
+            )
+            _apply_analysis_overview(memo_analysis, history_result, module_code)
+        context["memo_analysis"] = memo_analysis
     try:
         pdf_bytes = render_legal_memo_pdf(context)
     except PDFRenderError as exc:
@@ -3015,8 +3108,6 @@ def login_page(request: Request, next: str = Query("/"), message: str = Query(""
 def api_create_analysis_stream_run(request: Request, payload: AnalyzePayload):
     user = require_user(request)
     module_code = normalize_module(payload.module)
-    if module_code != "canada":
-        raise HTTPException(status_code=400, detail="流式案例研究当前仅支持加拿大法律模块。")
     run = create_analysis_stream_run(
         {
             "text": payload.text,
@@ -3063,6 +3154,16 @@ def api_control_analysis_stream_run(request: Request, run_id: str, payload: Anal
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _save_stream_history(request: Request, run: AnalysisStreamRun) -> int:
+    with run.condition:
+        if not run.history_id:
+            run.history_id = _save_case_history_if_possible(
+                request, query_text=repair_text(run.request.get("text")),
+                module_code=normalize_module(run.request.get("module")), result_payload=run.result,
+            )
+        return run.history_id
+
+
 @router.get("/api/analysis-stream/runs/{run_id}/result")
 def api_get_analysis_stream_result(request: Request, run_id: str):
     user = require_user(request)
@@ -3074,13 +3175,31 @@ def api_get_analysis_stream_result(request: Request, run_id: str):
         raise HTTPException(status_code=409, detail="Analysis is still running")
     payload = serialize_analysis_stream_run(run, include_result=True)
     if run.status == "completed" and run.result:
-        payload["history_id"] = _save_case_history_if_possible(
-            request,
-            query_text=repair_text(run.request.get("text")),
-            module_code="canada",
-            result_payload=run.result,
-        )
+        payload["history_id"] = _save_stream_history(request, run)
     return payload
+
+
+@router.get("/api/analysis-stream/runs/{run_id}/view", response_class=HTMLResponse)
+def api_view_analysis_stream_result(request: Request, run_id: str):
+    user = require_user(request)
+    try:
+        run = get_analysis_stream_run(run_id, user_id=int(user["id"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if run.status not in {"completed", "cancelled"} or not run.result:
+        raise HTTPException(status_code=409, detail="Analysis result is unavailable")
+    result = run.result
+    module = normalize_module(run.request.get("module"))
+    history_id = _save_stream_history(request, run) if run.status == "completed" else 0
+    context = _analysis_result_context(request, result, history_id, live=True)
+    context["analysis_view"] = _sanitize_history_display(_build_analysis_view_payload(
+        query_text=context["text_input"], module_code=module, result_payload=result,
+        history_id=history_id, user_id=int(user["id"]),
+    ))
+    response = _cache_safe_template("partials/analysis_result.html", context)
+    if history_id:
+        response.headers["X-Analysis-History-Id"] = str(history_id)
+    return response
 
 
 @router.get("/api/analysis-stream/runs/{run_id}/events")
@@ -3105,8 +3224,9 @@ def api_stream_analysis_events(request: Request, run_id: str, after_seq: int = Q
             for event in events:
                 cursor = int(event["seq"])
                 yield f"id: {cursor}\nevent: progress\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
-            if run.status in {"completed", "failed", "cancelled"} and cursor >= len(run.events):
-                break
+            with run.condition:
+                if run.status in {"completed", "failed", "cancelled"} and cursor >= len(run.events):
+                    break
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive",
@@ -3382,24 +3502,7 @@ def histories_graph_page(
 
 @router.get("/histories/{history_id}", response_class=HTMLResponse)
 def history_detail_page(request: Request, history_id: int):
-    user = _require_page_user(request, f"/histories/{history_id}")
-    if isinstance(user, RedirectResponse):
-        return user
-    history = get_history(history_id, user_id=int(user["id"]), admin=bool(user.get("is_admin")), touch=False)
-    if not history:
-        raise HTTPException(status_code=404, detail="history not found")
-    context = _base_context(request, "history_detail")
-    history_item = _sanitize_history_display(build_history_display_payload(history))
-    module_code = history_item.get("module_code") or ("us_sanctions" if history_item.get("country") == "United States" else "canada")
-    predict_url = f"/predict?draft={quote(history_item.get('query_text') or '')}&module={quote(module_code)}"
-    context.update(
-        {
-            "history_item": history_item,
-            "can_predict": not bool(history_item.get("has_prediction")),
-            "predict_url": predict_url,
-        }
-    )
-    return _cache_safe_template("history_detail.html", context)
+    return _render_saved_analysis(request, history_id)
 
 
 @router.get("/histories/{history_id}/restore")
@@ -3742,7 +3845,7 @@ def api_analyze(request: Request, payload: AnalyzePayload):
             for field in ("deep_query_plan", "deep_analysis", "quality_gate", "deep_analysis_status"):
                 if field in history_payload:
                     existing_history_item[field] = history_payload[field]
-            return existing_history_item
+            return _sanitize_history_display(_apply_analysis_overview(existing_history_item, history_payload, module_code))
     result = analyze_sentence_search(
         text=payload.text,
         limit=payload.limit,

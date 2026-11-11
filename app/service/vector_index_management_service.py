@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import json
 import re
 from typing import Any
@@ -49,6 +51,38 @@ def get_hnsw_build_plan(*, m: int | None = None, ef_construction: int | None = N
     }
 
 
+# [local-patch:ivfflat-compat]
+def _compat_ann_index_state(conn) -> dict[str, Any] | None:
+    """RAG_ANN_COMPAT=ivfflat_bq 时，把 bit 汉明量化索引当作可用 ANN。"""
+    if os.getenv("RAG_ANN_COMPAT", "").strip().lower() != "ivfflat_bq":
+        return None
+    row = conn.execute(
+        text(
+            """
+            SELECT c.relname AS index_name, i.indisvalid, i.indisready,
+                   pg_get_indexdef(c.oid) AS definition
+            FROM pg_class c
+            JOIN pg_index i ON i.indexrelid = c.oid
+            WHERE c.relname IN ('idx_rag_embeddings_ivfflat_bq', 'idx_rag_chunk_embeddings_active_hnsw')
+            ORDER BY CASE WHEN c.relname LIKE '%ivfflat%' THEN 0 ELSE 1 END
+            LIMIT 1
+            """
+        )
+    ).mappings().first()
+    if not row:
+        return None
+    state = dict(row)
+    return {
+        "available": True,
+        "index_name": state["index_name"],
+        "index_type": "ivfflat_bq",
+        "compat": True,
+        "valid": bool(state["indisvalid"]),
+        "ready": bool(state["indisready"]),
+        "definition": state["definition"],
+    }
+
+
 def get_hnsw_index_state() -> dict[str, Any]:
     if is_sqlite():
         return {"available": False, "reason": "pgvector HNSW requires PostgreSQL"}
@@ -66,6 +100,11 @@ def get_hnsw_index_state() -> dict[str, Any]:
             {"index_name": HNSW_INDEX_NAME},
         ).mappings().first()
     if not row:
+        # 原 with 块已关闭连接，这里新开一个
+        with engine.connect() as compat_conn:
+            compat_state = _compat_ann_index_state(compat_conn)
+        if compat_state:
+            return compat_state
         return {"available": False, "index_name": HNSW_INDEX_NAME, "valid": False, "ready": False}
     state = dict(row)
     state.update({

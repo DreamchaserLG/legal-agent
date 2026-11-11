@@ -129,11 +129,27 @@ def _extract_openai_output_text(payload: dict) -> str:
     raise LLMServiceError("Model response did not contain output_text.")
 
 
-def _extract_chat_output_text(payload: dict) -> str:
+def _parse_chat_completion(response: requests.Response) -> tuple[dict, dict]:
     try:
-        return payload["choices"][0]["message"]["content"]
+        payload = response.json()
+    except requests.exceptions.JSONDecodeError as exc:
+        raise LLMServiceError("Model endpoint returned invalid JSON.") from exc
+
+    try:
+        choice = payload["choices"][0]
+        content = choice["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMServiceError("Model response did not contain chat completion content.") from exc
+
+    finish_reason = choice.get("finish_reason")
+    if finish_reason == "length":
+        raise LLMServiceError("Model returned invalid JSON: chat completion was truncated.")
+    if finish_reason == "content_filter":
+        raise LLMServiceError("Model chat completion was blocked by a content filter.")
+    if not isinstance(content, str) or not content.strip():
+        raise LLMServiceError("Model response did not contain chat completion content.")
+
+    return payload, _parse_json_text(content)
 
 
 def _parse_json_text(text: str) -> dict:
@@ -230,9 +246,7 @@ def _create_openai_structured_response(
             f"OpenAI API request failed with status {response.status_code}: {response.text}"
         )
 
-    data = response.json()
-    output_text = _extract_chat_output_text(data)
-    parsed = _parse_json_text(output_text)
+    data, parsed = _parse_chat_completion(response)
 
     return {
         "data": parsed,
@@ -410,6 +424,7 @@ def _create_custom_structured_response(
     max_tokens: int | None = None,
     temperature: float | None = None,
     timeout_seconds: int | None = None,
+    enable_thinking: bool | None = None,
 ) -> dict:
     schema_text = json.dumps(schema, ensure_ascii=False)
     messages = [
@@ -436,6 +451,8 @@ def _create_custom_structured_response(
     }
     if getattr(settings, "custom_strict_json_mode", True):
         payload["response_format"] = {"type": "json_object"}
+    if enable_thinking is not None:
+        payload["enable_thinking"] = enable_thinking
 
     base_url = _get_custom_base_url()
     headers = {
@@ -473,9 +490,7 @@ def _create_custom_structured_response(
             f"Custom model API request failed with status {response.status_code}: {response.text}"
         )
 
-    data = response.json()
-    output_text = _extract_chat_output_text(data)
-    parsed = _parse_json_text(output_text)
+    data, parsed = _parse_chat_completion(response)
 
     return {
         "data": parsed,
@@ -498,6 +513,7 @@ def create_structured_response(
     temperature: float | None = None,
     timeout_seconds: int | None = None,
     bypass_circuit_breaker: bool = False,
+    enable_thinking: bool | None = None,
 ) -> dict:
     if not is_llm_configured():
         provider = get_llm_provider()
@@ -536,6 +552,7 @@ def create_structured_response(
                 max_tokens=max_tokens,
                 temperature=temperature,
                 timeout_seconds=timeout_seconds,
+                enable_thinking=enable_thinking,
             )
         else:
             response = _create_spark_structured_response(

@@ -437,6 +437,25 @@ def _safe_float(value) -> float:
         return 0.0
 
 
+_CASE_EXCERPT_STYLE = re.compile(
+    r"^(.{2,90}?\s+v\.?\s+[^,;\n]{2,100}?)(?=,|;|\s+Collection\s+Decisions\b|"
+    r"\s+(?:19|20)\d{2}\s+[A-Z]{2,}\s+\d+|[\r\n]|$)", re.I,
+)
+
+
+def retrieved_case_name(row: dict) -> str:
+    meta = row.get("raw_json") or {}
+    name = repair_text(row.get("case_name") or meta.get("case_name") or meta.get("canonical_title"))
+    if name:
+        return name
+    title = repair_text(row.get("title"))
+    if title and not re.fullmatch(r"(?:19|20)\d{2}\s+[A-Z]{2,}\s+\d+|(?:case|decision|judgment)\s*[#\d]*", title, re.I):
+        return title
+    excerpt = repair_text(row.get("excerpt") or row.get("raw_text") or row.get("summary"))
+    match = _CASE_EXCERPT_STYLE.match(excerpt[:210])
+    return match.group(1).strip() if match else ""
+
+
 def _case_entry_from_row(row: dict) -> dict:
     meta = row.get("raw_json") or {}
     preview = _row_preview(row)
@@ -453,6 +472,7 @@ def _case_entry_from_row(row: dict) -> dict:
     )
     entry = {
         "id": row.get("id"),
+        "case_name": retrieved_case_name(row),
         "title": repair_text(row.get("title")),
         "title_primary": preview["title_primary"],
         "title_secondary": preview["title_secondary"],

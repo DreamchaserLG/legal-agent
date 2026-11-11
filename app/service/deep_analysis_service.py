@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.service.common_service import repair_text
+from app.service.legal_relevance_service import STOPWORDS
 from app.service.legal_query_planner_service import DisputeIssue, QueryPlan, StructuredFact, build_deep_query_plan
 
 
@@ -132,7 +133,7 @@ def _normalized_rule(law: dict) -> dict | None:
 
 
 def _normalized_case(case: dict) -> dict | None:
-    case_id = case.get("case_id") or case.get("id") or case.get("doc_id") or case.get("chunk_id")
+    case_id = case.get("case_id") or case.get("id") or case.get("doc_id") or case.get("chunk_id") or case.get("evidence_id")
     title = repair_text(case.get("title"))
     if not case_id or not title:
         return None
@@ -141,6 +142,7 @@ def _normalized_case(case: dict) -> dict | None:
         "case_id": str(case_id),
         "title": title,
         "court": repair_text(case.get("court_name") or case.get("court_level")),
+        "citation": repair_text(case.get("citation") or case.get("neutral_citation")),
         "date": repair_text(case.get("judgment_date") or case.get("published_at")),
         "excerpt": repair_text(
             context_bundle.get("text") or case.get("summary") or case.get("facts") or case.get("excerpt")
@@ -151,7 +153,7 @@ def _normalized_case(case: dict) -> dict | None:
 
 
 def _normalized_retrieved_rule(law: dict) -> dict | None:
-    rule_id = law.get("rule_id") or law.get("law_id") or law.get("doc_id") or law.get("chunk_id")
+    rule_id = law.get("rule_id") or law.get("law_id") or law.get("doc_id") or law.get("chunk_id") or law.get("evidence_id")
     title = repair_text(law.get("title"))
     source_url = repair_text(law.get("source_url") or law.get("detail_url"))
     citation = repair_text(law.get("article_no") or law.get("citation"))
@@ -201,15 +203,42 @@ def _authority_sets(module_packet: dict, retrieval_items: list[dict] | None = No
 def _authority_overlap(issue: DisputeIssue, item: dict) -> int:
     issue_text = f"{issue.issue} {issue.legal_domain}".lower()
     item_text = f"{item.get('title', '')} {item.get('excerpt', '')}".lower()
-    english_terms = set(re.findall(r"[a-z][a-z0-9-]{3,}", issue_text))
+    domain = issue.legal_domain
+    if domain.startswith("real estate "):
+        property_context = r"real (?:estate|property)|(?:property|house|home) (?:purchase|sale)|sale of (?:the )?(?:property|house|home)|房产|房屋买卖"
+        disclosure = r"misrepresent|disclos|latent defect|conceal|grow[- ]op|种植大麻|隐瞒|披露|欺诈"
+        if not (re.search(property_context, item_text) and re.search(disclosure, item_text)):
+            return 0
+    if domain.startswith("criminal ") and "child pornography" in domain:
+        if "rule_id" in item:
+            citation = " ".join((item.get("article_no", ""), item.get("source_url", ""), item_text))
+            if "criminal code" not in item.get("title", "").lower() or not re.search(r"\b163[.-]1\b", citation):
+                return 0
+            return 1
+        material = r"child pornography|child sexual abuse|儿童色情|儿童性虐待"
+        conduct = r"access|view|浏览|访问" if "accessing" in domain else r"possess|stor|sav|download|持有|存储"
+        if not (re.search(material, item_text) and re.search(conduct, item_text)):
+            return 0
+    english_terms = set(re.findall(r"[a-z][a-z0-9-]{2,}", issue_text)) - STOPWORDS
+    english_terms -= {"canada", "canadian", "ontario", "civil", "and"}
+    item_words = set(re.findall(r"[a-z][a-z0-9-]{2,}", item_text))
+    matches = sum(
+        term in item_words
+        or term + "s" in item_words
+        or (term.endswith("y") and term[:-1] + "ies" in item_words)
+        for term in english_terms
+    )
     chinese_terms = set(re.findall(r"租赁|租金|维修|驱逐|终止|合同|付款|劳动|解雇|证据|程序|通知|损害|过失", issue_text))
-    return sum(term in item_text for term in english_terms | chinese_terms)
+    return matches + sum(term in item_text for term in chinese_terms)
 
 
 def _issue_authorities(issue: DisputeIssue, rules: list[dict], cases: list[dict]) -> tuple[list[dict], list[dict]]:
-    ranked_rules = sorted(rules, key=lambda item: _authority_overlap(issue, item), reverse=True)
-    ranked_cases = sorted(cases, key=lambda item: _authority_overlap(issue, item), reverse=True)
-    return ranked_rules[:4], ranked_cases[:4]
+    def relevant(items: list[dict]) -> list[dict]:
+        scored = [(_authority_overlap(issue, item), item) for item in items]
+        scored.sort(key=lambda entry: entry[0], reverse=True)
+        return [item for score, item in scored if score > 0][:4]
+
+    return relevant(rules), relevant(cases)
 
 
 def _build_dispute_details(plan: QueryPlan, rules: list[dict], cases: list[dict]) -> list[DisputeDetail]:
@@ -267,9 +296,10 @@ def _risk_item(
     )
 
 
-def _build_risks(plan: QueryPlan, rules: list[dict], cases: list[dict]) -> list[RiskPrediction]:
-    rule_ids = [item["rule_id"] for item in rules[:4]]
-    case_ids = [item["case_id"] for item in cases[:4]]
+def _build_risks(plan: QueryPlan, details: list[DisputeDetail]) -> list[RiskPrediction]:
+    primary = details[0] if details else None
+    rule_ids = [item["rule_id"] for item in primary.legal_basis] if primary else []
+    case_ids = [item["case_id"] for item in primary.case_support] if primary else []
     fact_types = {fact.fact_type for fact in plan.structured_facts}
     issue_name = plan.dispute_issues[0].issue if plan.dispute_issues else "核心实体争议"
     return [
@@ -386,7 +416,7 @@ def _references(rules: list[dict], cases: list[dict]) -> list[dict]:
     for rule in rules:
         result.append({"reference_type": "rule", "reference_id": rule["rule_id"], "title": rule["title"], "citation": rule.get("article_no", ""), "source_url": rule.get("source_url", ""), "verification_status": rule.get("citation_status", "unverified"), "effectiveness_status": rule.get("effectiveness_status", "unknown")})
     for case in cases:
-        result.append({"reference_type": "case", "reference_id": case["case_id"], "title": case["title"], "citation": " ".join(item for item in [case.get("court", ""), case.get("date", "")] if item), "source_url": case.get("source_url", ""), "verification_status": case.get("relation_status", "retrieved_case"), "effectiveness_status": "not_applicable"})
+        result.append({"reference_type": "case", "reference_id": case["case_id"], "title": case["title"], "citation": case.get("citation") or " ".join(item for item in [case.get("court", ""), case.get("date", "")] if item), "source_url": case.get("source_url", ""), "verification_status": case.get("relation_status", "retrieved_case"), "effectiveness_status": "not_applicable"})
     return result
 
 
@@ -398,9 +428,27 @@ def build_deep_analysis(
 ) -> DeepAnalysis:
     packet = module_packet or {}
     rules, cases = _authority_sets(packet, retrieval_items)
+    criminal_issues = [
+        issue for issue in plan.dispute_issues
+        if issue.legal_domain.startswith("criminal ") and "child pornography" in issue.legal_domain
+    ]
+    if plan.filters.get("module") == "canada" and criminal_issues and not any(
+        _authority_overlap(criminal_issues[0], rule) for rule in rules
+    ):
+        rules.insert(0, {
+            "rule_id": "ca-criminal-code-163.1",
+            "title": "Criminal Code",
+            "article_no": "R.S.C. 1985, c. C-46, s. 163.1",
+            "excerpt": "",
+            "citation_status": "official_source_pending_legal_review",
+            "effectiveness_status": "unknown",
+            "source_url": "https://laws-lois.justice.gc.ca/eng/acts/C-46/section-163.1.html",
+        })
     details = _build_dispute_details(plan, rules, cases)
-    risks = _build_risks(plan, rules, cases)
+    risks = _build_risks(plan, details)
     strength = _case_strength(plan, details)
+    linked_rule_ids = {item["rule_id"] for detail in details for item in detail.legal_basis}
+    linked_case_ids = {item["case_id"] for detail in details for item in detail.case_support}
     gaps, materials = _gaps_and_materials(plan, details, risks)
     manual_items = [f"复核风险：{item.description}" for item in risks if item.manual_review_required]
     manual_items.extend(f"补充证据：{gap.description}" for gap in gaps if gap.priority == "high")
@@ -423,7 +471,10 @@ def build_deep_analysis(
             "boundary_note": "置信度只反映当前材料完整性和检索可追溯性，不代表胜诉概率。",
         },
         manual_review_items=manual_items,
-        references=_references(rules, cases),
+        references=_references(
+            [item for item in rules if item["rule_id"] in linked_rule_ids],
+            [item for item in cases if item["case_id"] in linked_case_ids],
+        ),
         disclaimer=DISCLAIMER,
     )
 

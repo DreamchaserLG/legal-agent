@@ -24,7 +24,19 @@ def _fetch_scalar(sql: str, params: dict | None = None) -> int:
 
 
 def get_source_quality_snapshot() -> dict:
-    canlii_total = _fetch_scalar("SELECT COUNT(*) FROM source_items WHERE source_code = 'canlii'")
+    with engine.connect() as conn:
+        source_counts = {
+            code: count
+            for code, count in conn.execute(text(
+                "SELECT COALESCE(NULLIF(source_code, ''), 'unknown'), COUNT(*) "
+                "FROM source_items GROUP BY 1 ORDER BY 1"
+            ))
+        }
+    legislation_sources = {
+        "ca_federal_act", "ca_federal_regulation", "on_statute", "on_regulation",
+        "manual_canada_rule", "url_canada_rule", "laws_lois_xml",
+    }
+    case_sources = {"canlii", "a2aj_case", "legal_case", "manual_canada_case", "url_canada_case"}
     fetch_mode_expr = (
         "COALESCE(json_extract(raw_json, '$.fetch_mode'), '')"
         if is_sqlite()
@@ -54,31 +66,21 @@ def get_source_quality_snapshot() -> dict:
           AND LENGTH(COALESCE(raw_text, '')) >= 3000
         """
     )
-    legislation_total = _fetch_scalar(
-        """
-        SELECT COUNT(*)
-        FROM source_items
-        WHERE source_code IN (
-            'ca_federal_act', 'ca_federal_regulation', 'on_statute', 'on_regulation',
-            'manual_canada_rule', 'url_canada_rule'
-        )
-        """
-    )
     relation_total = _fetch_scalar("SELECT COUNT(*) FROM canada_case_law_links")
     law_total = _fetch_scalar("SELECT COUNT(*) FROM canada_laws")
-    ofac_total = _fetch_scalar("SELECT COUNT(*) FROM source_items WHERE source_code = 'ofac'")
-    total_items = _fetch_scalar("SELECT COUNT(*) FROM source_items")
 
     return {
-        "total_items": total_items,
-        "canlii_total": canlii_total,
+        "total_items": sum(source_counts.values()),
+        "source_counts": source_counts,
+        "case_document_total": sum(source_counts.get(code, 0) for code in case_sources),
+        "canlii_total": source_counts.get("canlii", 0),
         "canlii_api_metadata": canlii_api_metadata,
         "canlii_rss_or_hydrated": canlii_rss,
         "canlii_full_text_like": canlii_full_text_like,
-        "legislation_total": legislation_total,
+        "legislation_total": sum(source_counts.get(code, 0) for code in legislation_sources),
         "canada_law_total": law_total,
         "case_law_relation_total": relation_total,
-        "ofac_total": ofac_total,
+        "ofac_total": source_counts.get("ofac", 0),
     }
 
 
@@ -132,8 +134,8 @@ def build_data_readiness(
     max_confidence = 0.78
 
     if normalized_module == "canada":
-        if snapshot["canlii_total"] < 1000:
-            missing.append("canlii_case_metadata")
+        if snapshot["case_document_total"] < 1000:
+            missing.append("case_metadata")
             actions.append("Set CANLII_API_KEY and run `python canlii_ingest.py api-metadata` to import authorized case metadata.")
         if snapshot["canlii_full_text_like"] < 50:
             missing.append("case_text_or_authorized_summaries")

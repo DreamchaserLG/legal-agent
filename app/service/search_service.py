@@ -25,7 +25,7 @@ from app.service.legal_skill_service import (
     apply_legal_result_verification,
     enhance_legal_retrieval_keywords,
 )
-from app.service.module_service import build_module_packet, get_module_definition, normalize_module, resolve_source_for_module
+from app.service.module_service import build_module_packet, get_module_definition, normalize_module, resolve_source_for_module, retrieved_case_name
 from app.service.ofac_service import OFAC_DISCOVERY_PAGE, OFAC_SEARCH_PORTAL
 
 VALID_SOURCES = {"all", "ofac", "canlii", "canada"}
@@ -1029,6 +1029,8 @@ def _fast_case_entry(
         relation_status = "retrieved_pending_relation"
     return {
         "id": row.get("id"),
+        "case_name": retrieved_case_name(row),
+        "source_uid": row.get("source_uid") or meta.get("source_uid"),
         "case_id": formal_case_id or (row.get("source_id") if row.get("source_table") == "legal_cases" else None),
         "title": repair_text(row.get("title")),
         "title_primary": repair_text(row.get("title")),
@@ -1342,6 +1344,12 @@ def _search_items_fast_rag(
             )
             retrieval_cache_status = "miss"
     except Exception:
+        # fast 路径失败必须留痕：曾因静默 return None 导致检索落到
+        # source_items 全表 LIKE 慢 SQL（statement timeout，任务失败），且无从排查。
+        import logging
+        logging.getLogger("app.search").exception(
+            "fast_rag search failed; falling back to legacy search_items SQL"
+        )
         return None
     rows = all_rows[offset : offset + limit]
     grouped_results = _prepare_cards(rows, query_language)
@@ -1531,21 +1539,21 @@ def search_items(
                 """
             )
         else:
-            # PostgreSQL: 使用 word_similarity
+            # PostgreSQL: WHERE 阶段只用 LIKE（title/summary/raw_text 与 item_keywords.keyword
+            # 均有 lower trgm GIN 索引，可走索引扫描）。word_similarity 是函数条件，
+            # 无法利用 trgm 索引：24 万行 × N 关键词全表计算实测 30s+ 且几乎无额外召回
+            # （超时语句 cancellation 的根因），因此只在下方 score_parts 打分阶段使用，
+            # 对少量候选行计算，不进入 WHERE。
             conditions.append(
                 f"""
                 LOWER(COALESCE(si.title, '')) LIKE :{key}
                 OR LOWER(COALESCE(si.summary, '')) LIKE :{key}
                 OR LOWER(COALESCE(si.raw_text, '')) LIKE :{key}
-                OR word_similarity(LOWER(COALESCE(si.title, '')), :{exact_key}) >= :{sim_key}
                 OR EXISTS (
                     SELECT 1
                     FROM item_keywords ik
                     WHERE ik.item_id = si.id
-                      AND (
-                          LOWER(ik.keyword) LIKE :{key}
-                          OR word_similarity(LOWER(ik.keyword), :{exact_key}) >= :{sim_key}
-                      )
+                      AND LOWER(ik.keyword) LIKE :{key}
                 )
                 """
             )

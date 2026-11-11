@@ -66,7 +66,6 @@
             <div><strong>{{ dashboard.local_material_items or dashboard.external_total_items }}</strong><span>{{ tr('home.stats.records') }}</span></div>
             <div><strong>{{ dashboard.analyzed_case_count }}</strong><span>{{ tr('home.stats.analyses') }}</span></div>
             <div><strong>EN / 中</strong><span>{{ tr('home.stats.bilingual') }}</span></div>
-            <div><strong>100%</strong><span>{{ tr('home.stats.traceable') }}</span></div>
         </div>
     </div>
 </section>
@@ -82,61 +81,68 @@
         </div>
 
         <div class="product-grid">
-            <article class="product-card" data-reveal style="--d:0ms">
+            <a class="product-card" href="/results" data-reveal style="--d:0ms">
                 <div class="product-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4M8 9h6M8 12h4"></path></svg>
                 </div>
-                <span class="product-number">01</span>
                 <h3>{{ tr('home.suite.c1.title') }}</h3>
                 <p>{{ tr('home.suite.c1.desc') }}</p>
                 <dl>
                     <div><dt>{{ tr('home.suite.best_for') }}</dt><dd>{{ tr('home.suite.c1.best') }}</dd></div>
                     <div><dt>{{ tr('home.suite.output') }}</dt><dd>{{ tr('home.suite.c1.out') }}</dd></div>
                 </dl>
-                <a href="/results">{{ tr('home.suite.c1.link') }} <span aria-hidden="true">→</span></a>
-            </article>
+                <span class="product-action">{{ tr('home.suite.c1.link') }} <span aria-hidden="true">→</span></span>
+            </a>
 
-            <article class="product-card" data-reveal style="--d:80ms">
+            <a class="product-card" href="/analysis" data-reveal style="--d:80ms">
                 <div class="product-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"></path><path d="M14 3v4h4M9 11h6M9 15h6"></path></svg>
                 </div>
-                <span class="product-number">02</span>
                 <h3>{{ tr('home.suite.c2.title') }}</h3>
                 <p>{{ tr('home.suite.c2.desc') }}</p>
                 <dl>
                     <div><dt>{{ tr('home.suite.best_for') }}</dt><dd>{{ tr('home.suite.c2.best') }}</dd></div>
                     <div><dt>{{ tr('home.suite.output') }}</dt><dd>{{ tr('home.suite.c2.out') }}</dd></div>
                 </dl>
-                <a href="/analysis">{{ tr('home.suite.c2.link') }} <span aria-hidden="true">→</span></a>
-            </article>
+                <span class="product-action">{{ tr('home.suite.c2.link') }} <span aria-hidden="true">→</span></span>
+            </a>
 
-            <article class="product-card" data-reveal style="--d:160ms">
+            <a class="product-card" href="/hearing" data-reveal style="--d:160ms">
                 <div class="product-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M4 20h16M7 17h10M9 17V9h6v8M6 9h12L12 4z"></path></svg>
                 </div>
-                <span class="product-number">03</span>
                 <h3>{{ tr('home.suite.c3.title') }}</h3>
                 <p>{{ tr('home.suite.c3.desc') }}</p>
                 <dl>
                     <div><dt>{{ tr('home.suite.best_for') }}</dt><dd>{{ tr('home.suite.c3.best') }}</dd></div>
                     <div><dt>{{ tr('home.suite.output') }}</dt><dd>{{ tr('home.suite.c3.out') }}</dd></div>
                 </dl>
-                <a href="/hearing">{{ tr('home.suite.c3.link') }} <span aria-hidden="true">→</span></a>
-            </article>
+                <span class="product-action">{{ tr('home.suite.c3.link') }} <span aria-hidden="true">→</span></span>
+            </a>
 
-            <article class="product-card" data-reveal style="--d:240ms">
+            <a class="product-card" href="/agent-hearing" data-reveal style="--d:240ms">
                 <div class="product-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M12 3 4 7v5c0 5 3.5 8 8 9 4.5-1 8-4 8-9V7z"></path><path d="m9 12 2 2 4-5"></path></svg>
                 </div>
-                <span class="product-number">04</span>
                 <h3>{{ tr('home.suite.c4.title') }}</h3>
                 <p>{{ tr('home.suite.c4.desc') }}</p>
                 <dl>
                     <div><dt>{{ tr('home.suite.best_for') }}</dt><dd>{{ tr('home.suite.c4.best') }}</dd></div>
                     <div><dt>{{ tr('home.suite.output') }}</dt><dd>{{ tr('home.suite.c4.out') }}</dd></div>
                 </dl>
-                <a href="/agent-hearing">{{ tr('home.suite.c4.link') }} <span aria-hidden="true">→</span></a>
-            </article>
+                <span class="product-action">{{ tr('home.suite.c4.link') }} <span aria-hidden="true">→</span></span>
+            </a>
+            {% for href, zh_title, en_title, zh_desc, en_desc in [
+                ('/ontario-civil-trial', '安大略民事审判', 'Ontario civil trial', '推进庭审阶段，审查证人、证物和异议。', 'Work through testimony, exhibits and objections.'),
+                ('/appeal-simulation', '民事上诉模拟', 'Civil appeal simulation', '依据案卷审查上诉理由与争点。', 'Review the record and argue grounds of appeal.'),
+                ('/histories', '案件历史', 'Case history', '打开已保存的案情、检索材料和分析结果。', 'Open saved facts, authorities and analysis.')
+            ] %}
+            <a class="product-card product-card-secondary" href="{{ href }}">
+                <h3>{{ zh_title if lang == 'zh' else en_title }}</h3>
+                <p>{{ zh_desc if lang == 'zh' else en_desc }}</p>
+                <span class="product-action">{{ '打开' if lang == 'zh' else 'Open' }}</span>
+            </a>
+            {% endfor %}
         </div>
     </div>
 </section>
@@ -155,34 +161,12 @@
             </ol>
         </div>
 
-        <div class="product-visual" data-reveal style="--d:120ms" role="img" aria-label="Interface preview showing an authority review workflow">
-            <div class="visual-topbar"><span></span><span></span><span></span><b>{{ tr('home.flow.mock.title') }}</b></div>
-            <div class="visual-body">
-                <aside>
-                    <strong>{{ tr('home.flow.mock.matter') }}</strong>
-                    <span class="selected">{{ tr('home.flow.mock.research') }}</span>
-                    <span>{{ tr('home.flow.mock.issues') }}</span>
-                    <span>{{ tr('home.flow.mock.evidence') }}</span>
-                    <span>{{ tr('home.flow.mock.hearing') }}</span>
-                </aside>
-                <div class="visual-content">
-                    <div class="visual-query"><span>{{ tr('home.flow.mock.query') }}</span><i>{{ tr('home.flow.mock.search') }}</i></div>
-                    <div class="visual-status"><span><i></i> {{ tr('home.flow.mock.verified') }}</span><span>{{ tr('home.flow.mock.mapped') }}</span></div>
-                    <article>
-                        <em>{{ tr('home.flow.mock.case') }}</em>
-                        <strong>{{ tr('home.flow.mock.case_title') }}</strong>
-                        <p>{{ tr('home.flow.mock.case_desc') }}</p>
-                        <footer><span>{{ tr('home.flow.mock.high') }}</span><span>{{ tr('home.flow.mock.open') }} ↗</span></footer>
-                    </article>
-                    <article>
-                        <em>{{ tr('home.flow.mock.leg') }}</em>
-                        <strong>{{ tr('home.flow.mock.leg_title') }}</strong>
-                        <p>{{ tr('home.flow.mock.leg_desc') }}</p>
-                        <footer><span>{{ tr('home.flow.mock.primary') }}</span><span>{{ tr('home.flow.mock.review') }}</span></footer>
-                    </article>
-                </div>
-            </div>
-        </div>
+        <nav class="home-workflow-links" aria-label="{{ '工作流程' if lang == 'zh' else 'Workflow' }}">
+            <a href="/results"><strong>{{ tr('home.suite.c1.title') }}</strong><span>{{ tr('home.suite.c1.desc') }}</span></a>
+            <a href="/analysis"><strong>{{ tr('home.suite.c2.title') }}</strong><span>{{ tr('home.suite.c2.desc') }}</span></a>
+            <a href="/hearing"><strong>{{ tr('home.suite.c3.title') }}</strong><span>{{ tr('home.suite.c3.desc') }}</span></a>
+            <a href="/histories"><strong>{{ tr('nav.history') }}</strong><span>{{ '继续查看已保存案件' if lang == 'zh' else 'Return to a saved case' }}</span></a>
+        </nav>
     </div>
 </section>
 
@@ -215,7 +199,8 @@
             <input type="hidden" name="sort" value="relevance" />
             <input type="hidden" name="limit" value="10" />
             <label for="text">{{ tr('home.cta.label') }}</label>
-            <textarea id="text" name="text" rows="5" placeholder="{{ tr('home.cta.placeholder') }}" required></textarea>
+            <input type="hidden" name="start" value="1" />
+            <textarea id="text" name="draft" rows="5" placeholder="{{ tr('home.cta.placeholder') }}" required></textarea>
             <button type="submit">{{ tr('home.cta.submit') }}</button>
         </form>
     </div>

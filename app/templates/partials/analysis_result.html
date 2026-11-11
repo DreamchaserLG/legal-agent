@@ -1,0 +1,288 @@
+{% if analysis_view %}
+{% set item = analysis_view %}
+<div class="analysis-layout shell">
+    <nav class="analysis-contents" aria-label="{{ '分析目录' if lang == 'zh' else 'Analysis contents' }}">
+        <strong>{{ '分析目录' if lang == 'zh' else 'Contents' }}</strong>
+        {% if live_analysis or analysis_result.get('research_trace') %}
+        <a href="#{{ 'analysis-stream-shell' if live_analysis else 'analysis-trace' }}">{{ '研究进度' if lang == 'zh' else 'Research progress' }}</a>
+        {% endif %}
+        <a href="#analysis-overview">{{ '案情概览' if lang == 'zh' else 'Case overview' }}</a>
+        <a href="#analysis-risks">{{ '争点与风险' if lang == 'zh' else 'Issues and risks' }}</a>
+        <a href="#analysis-authorities">{{ '案例与法规' if lang == 'zh' else 'Cases and legislation' }}</a>
+        <a href="#verdict-conclusion">{{ '结果与置信度' if lang == 'zh' else 'Outcome and confidence' }}</a>
+    </nav>
+    <div class="analysis-document">
+{% set analysis_status = analysis_result.analysis_mode if analysis_result else 'local' %}
+{% set analysis_status_label = tr('analysis.status.history') if analysis_status in ['history_reuse', 'reuse'] else (tr('analysis.status.local') if analysis_status in ['local', 'local_only'] else (tr('analysis.status.done') if analysis_status in ['complete', 'ready'] else analysis_status)) %}
+<section class="band" id="analysis-coverage">
+    <div class="shell">
+        <div class="task-banner">
+            <div class="task-banner-head">
+                <div>
+                    <p class="eyebrow">{{ tr('analysis.banner.eyebrow') }}</p>
+                    <h2>{{ tr('analysis.banner.title') }}</h2>
+                </div>
+                <span class="task-status">{{ analysis_status_label }}</span>
+            </div>
+            <p class="task-copy">{{ analysis_result.coverage_note if analysis_result else '' }}</p>
+            {% if analysis_result and analysis_result.data_readiness %}
+            <div class="chip-row">
+                <span class="chip">{{ tr('analysis.chip.data_status', s=analysis_result.data_readiness.status) }}</span>
+                <span class="chip">{{ tr('analysis.chip.matched_laws', n=analysis_result.data_readiness.evidence.matched_laws) }}</span>
+                <span class="chip">{{ tr('analysis.chip.matched_cases', n=analysis_result.data_readiness.evidence.matched_cases) }}</span>
+                <span class="chip">CanLII {{ analysis_result.data_readiness.corpus.canlii_total }}</span>
+            </div>
+            {% if analysis_result.data_readiness.recommended_actions %}
+            <p class="notice-text">{{ analysis_result.data_readiness.recommended_actions[0] }}</p>
+            {% endif %}
+            {% endif %}
+            {% if analysis_result and analysis_result.history_reused %}
+            <p class="notice-text">{{ tr('analysis.banner.reuse_note') }}</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{% if analysis_result %}
+{% set trace = analysis_result.get('research_trace') or [] %}
+{% if trace and not live_analysis %}
+<section class="band" id="analysis-trace">
+    <div class="shell">
+        <div class="task-banner">
+            <div class="task-banner-head">
+                <div>
+                    <p class="eyebrow">{{ tr('analysis.trace.eyebrow') }}</p>
+                    <h2>{{ tr('analysis.trace.title') }}</h2>
+                </div>
+                <span class="task-status">{{ tr('analysis.trace.steps', n=trace|length) }}{% if analysis_result.get('research_trace_meta', {}).get('duration_seconds') %} · {{ tr('analysis.trace.duration', s=analysis_result.get('research_trace_meta', {}).get('duration_seconds')) }}{% endif %}</span>
+            </div>
+            <ol class="analysis-stream-timeline" tabindex="0">
+                {% for event in trace %}
+                <li class="analysis-stream-step is-done">
+                    <span class="analysis-stream-dot" aria-hidden="true"></span>
+                    <div class="analysis-stream-body">
+                        <strong>{{ tr('analysis.label.' ~ event.event_type) }}</strong>
+                        <p>{{ event.message }}</p>
+                        <small>{{ tr('analysis.trace.progress', p=(event.progress or 0)|int) }}</small>
+                    </div>
+                </li>
+                {% endfor %}
+            </ol>
+        </div>
+    </div>
+</section>
+{% endif %}
+{% include "partials/agentic_research_sections.html" %}
+{% endif %}
+
+{% set deep_analysis = analysis_result.get('deep_analysis') if analysis_result else none %}
+<section class="band band-alt" id="analysis-overview">
+    <div class="shell analysis-report-shell">
+        <div class="analysis-report-head">
+            <div>
+                <p class="eyebrow">{{ tr('analysis.head.current') }}</p>
+                <h2>{{ item.case_title }}</h2>
+            </div>
+            <div class="status-cluster">
+                {% if history_id %}
+                <a class="meta-inline" href="/histories">{{ tr('nav.history') }}</a>
+                {% endif %}
+                <a class="meta-inline" href="/hearing">{{ tr('analysis.form.hearing') }}</a>
+                {% if memo_download_url %}
+                <a class="meta-inline" href="{{ memo_download_url }}">{{ tr('analysis.export_pdf') }}</a>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="analysis-report-grid">
+            <article class="info-panel wide analysis-overview-card">
+                <p class="panel-kicker">{{ tr('analysis.overview.kicker') }}</p>
+                <div class="chip-row">
+                    {% if item.case_type %}<span class="chip">{{ item.case_type }}</span>{% endif %}
+                    {% if item.country %}<span class="chip">{{ item.country }}</span>{% endif %}
+                    {% if item.court_level %}<span class="chip">{{ item.court_level }}</span>{% endif %}
+                    <span class="chip">{{ item.risk_level or tr('analysis.risks.empty') }}</span>
+                </div>
+                <p class="memo-copy">{{ item.case_summary or item.analysis_summary or item.query_text }}</p>
+                <p class="result-copy">{{ item.analysis_summary }}</p>
+                <details>
+                    <summary>{{ tr('analysis.raw_input') }}</summary>
+                    <div class="detail-box">{{ item.query_text }}</div>
+                </details>
+            </article>
+
+            <article class="info-panel">
+                <p class="panel-kicker">{{ tr('analysis.facts.kicker') }}</p>
+                {% if item.key_facts %}
+                <ul class="memo-list">
+                    {% for fact in item.key_facts %}
+                    <li>{{ fact }}</li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="muted">{{ tr('analysis.facts.empty') }}</p>
+                {% endif %}
+            </article>
+
+            <article class="info-panel">
+                <p class="panel-kicker">{{ tr('analysis.focus.kicker') }}</p>
+                {% if item.dispute_focus %}
+                <ul class="memo-list">
+                    {% for focus in item.dispute_focus %}
+                    <li>{{ focus }}</li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="muted">{{ tr('analysis.focus.empty') }}</p>
+                {% endif %}
+            </article>
+
+            <article class="info-panel">
+                <p class="panel-kicker">{{ tr('analysis.relations.kicker') }}</p>
+                {% if item.legal_relations %}
+                <ul class="memo-list">
+                    {% for relation in item.legal_relations %}
+                    <li>{{ relation }}</li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="muted">{{ tr('analysis.relations.empty') }}</p>
+                {% endif %}
+            </article>
+
+            <article class="info-panel">
+                <p class="panel-kicker">{{ tr('analysis.evidence.kicker') }}</p>
+                {% if item.evidence_focus %}
+                <ul class="memo-list">
+                    {% for evidence in item.evidence_focus %}
+                    <li>{{ evidence }}</li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="muted">{{ tr('analysis.evidence.empty') }}</p>
+                {% endif %}
+            </article>
+
+            <article class="info-panel">
+                <p class="panel-kicker">{{ tr('analysis.risks.kicker') }}</p>
+                {% set risks = (analysis_result.get('deep_analysis') or {}).get('risk_predictions') or [] %}
+                {% if risks %}
+                <ul class="memo-list">
+                    {% for risk in risks %}<li>{{ risk.description }}</li>{% endfor %}
+                </ul>
+                <a class="meta-inline" href="#deep-risks-title">{{ '查看触发条件和后果' if lang == 'zh' else 'View triggers and consequences' }}</a>
+                {% elif item.risk_points %}
+                <div class="risk-point-stack">
+                    {% for risk in item.risk_points %}
+                    <div class="risk-point-card" data-risk-level="{{ risk.level }}">
+                        <div class="result-head">
+                            <strong>{{ risk.name }}</strong>
+                            <span class="meta-inline">{{ risk.level }}</span>
+                        </div>
+                        <p class="result-copy">{{ risk.description }}</p>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="muted">{{ tr('analysis.risks.empty') }}</p>
+                {% endif %}
+            </article>
+        </div>
+    </div>
+</section>
+
+{% include "partials/deep_analysis_sections.html" %}
+
+{% set module_packet = analysis_result.get('module_packet', {}) if analysis_result else {} %}
+{% set supporting_case_groups = module_packet.get('case_law_rows') or [] %}
+{% set linked_laws = analysis_result.get('linked_laws') or module_packet.get('relevant_laws') or [] %}
+
+<section class="band" id="analysis-authorities">
+    <div class="shell">
+        <div class="band-head">
+            <div>
+                <p class="eyebrow">{{ tr('analysis.laws.eyebrow') }}</p>
+                <h2>{{ tr('analysis.laws.title') }}</h2>
+            </div>
+        </div>
+
+        {% if not linked_laws and not supporting_case_groups %}
+        <p class="muted">{{ '本次分析未检索到关联案例或法规。' if lang == 'zh' else 'No related cases or legislation were retrieved for this analysis.' }}</p>
+        {% endif %}
+        {% if linked_laws %}
+        <div class="info-panel">
+            <p class="panel-kicker">{{ tr('analysis.laws.linked') }}</p>
+            <div class="legal-rules-grid">
+                {% for law in linked_laws[:6] %}
+                <div class="legal-rule-card">
+                    <div class="result-head">
+                        {% if law.source_url %}<a href="{{ law.source_url }}" target="_blank" rel="noopener noreferrer"><strong>{{ law.title }}</strong></a>{% else %}<strong>{{ law.title }}</strong>{% endif %}
+                        {% if law.article_no %}<span class="meta-inline">{{ law.article_no }}</span>{% endif %}
+                    </div>
+                    {% if law.article_summary %}
+                    <p class="result-copy">{{ law.article_summary[:200] }}{% if law.article_summary|length > 200 %}...{% endif %}</p>
+                    {% endif %}
+                    <div class="chip-row">
+                        {% if law.legal_type %}<span class="chip">{{ law.legal_type }}</span>{% endif %}
+                        {% if law.country %}<span class="chip">{{ law.country }}</span>{% endif %}
+                        {% if law.linked_case_count %}<span class="chip">{{ law.linked_case_count }}</span>{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if supporting_case_groups %}
+        <div class="info-panel">
+            <p class="panel-kicker">{{ tr('analysis.laws.cases') }}</p>
+            {% set analysis_case_cards = supporting_case_groups[:5] %}
+            <div class="case-slider compact" data-case-slider>
+                <div class="case-slider-toolbar">
+                    <span class="case-slider-count">{{ tr('analysis.laws.total', n=analysis_case_cards|length) }}</span>
+                    <div class="case-slider-actions">
+                        <button type="button" class="case-slider-btn" data-slider-prev aria-label="{{ tr('analysis.laws.cases') }}">‹</button>
+                        <span class="case-slider-status" data-slider-status>1 / {{ analysis_case_cards|length }}</span>
+                        <button type="button" class="case-slider-btn" data-slider-next aria-label="{{ tr('analysis.laws.cases') }}">›</button>
+                    </div>
+                </div>
+                <div class="case-groups-grid case-slider-track compact" data-slider-track tabindex="0" aria-label="{{ tr('analysis.laws.cases') }}">
+                {% for case in analysis_case_cards %}
+                <div class="case-group-card">
+                    <div class="result-head">
+                        {% if case.source_url %}<a href="{{ case.source_url }}" target="_blank" rel="noopener noreferrer"><strong>{{ case.case_name or case.title }}</strong></a>{% else %}<strong>{{ case.case_name or case.title }}</strong>{% endif %}
+                        {% if case.court_level %}<span class="meta-inline">{{ case.court_level }}</span>{% endif %}
+                    </div>
+                    {% if case.summary %}
+                    <p class="result-copy">{{ case.summary[:200] }}{% if case.summary|length > 200 %}...{% endif %}</p>
+                    {% endif %}
+                    {% if case.linked_law_titles %}
+                    <div class="chip-row">
+                        {% for law_title in case.linked_law_titles[:2] %}
+                        <span class="chip">{{ law_title }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if case.match_reason %}
+                    <p class="result-copy muted">{{ tr('analysis.laws.match_reason') }}{{ case.match_reason }}</p>
+                    {% endif %}
+                    {% set relevance_item = case %}
+                    {% include "partials/relevance_highlights.html" %}
+                </div>
+                {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</section>
+
+<section class="band analysis-outlook" aria-labelledby="analysis-outlook-heading">
+    <div class="shell">
+        {% include "partials/verdict_conclusion.html" %}
+    </div>
+</section>
+{% include "partials/agent_chat_panel.html" %}
+</div>
+</div>
+{% endif %}

@@ -3,23 +3,23 @@
 <section class="band" aria-labelledby="agentic-research-title">
   <div class="shell analysis-report-shell">
     <div class="analysis-report-head">
-      <div><p class="eyebrow">加拿大法多轮研究</p><h2 id="agentic-research-title">加拿大法争点覆盖、检索迭代与未解决问题</h2></div>
-      <div class="status-cluster"><span class="task-status">{{ research.stop_reason or research.status }}</span><span class="chip">{{ research.rounds|length }} 轮</span><span class="chip">{{ research.evidence|length }} 条证据</span></div>
+      <div><p class="eyebrow">{{ tr('analysis.agentic.eyebrow') }}</p><h2 id="agentic-research-title">{{ tr('analysis.agentic.title') }}</h2></div>
+      <div class="status-cluster"><span class="task-status">{{ research.stop_reason or research.status }}</span><span class="chip">{{ tr('analysis.agentic.rounds_chip', n=(research.rounds or [])|length) }}</span><span class="chip">{{ tr('analysis.agentic.evidence_chip', n=(research.evidence or [])|length) }}</span></div>
     </div>
     {% if research.rounds %}
     <div class="deep-reference-table">
       {% for round in research.rounds %}
-      <div><strong>第 {{ round.round_no }} 轮</strong><small>新增 {{ round.new_evidence_count }} 条 · 累计 {{ round.total_evidence_count }} 条 · 未解决 {{ round.unresolved_gap_count }} 项 · {{ round.duration_ms }} ms</small>
+      <div><strong>{{ tr('analysis.agentic.round_label', n=round.round_no) }}</strong><small>{{ tr('analysis.agentic.round_stats', new=round.new_evidence_count, total=round.total_evidence_count, gaps=round.unresolved_gap_count, ms=round.duration_ms) }}</small>
         <p>{% for query in round.queries %}<span class="chip">{{ query.query }}（{{ query.hits }}）</span>{% endfor %}</p>
       </div>
       {% endfor %}
     </div>
     {% endif %}
     <div class="deep-position-grid">
-      <div><h3>争点覆盖</h3>{% for row in research.coverage %}<p><strong>{{ row.issue }}</strong> <span class="chip">{{ row.status }}</span><br><small>法规 {{ row.law_evidence_ids|length }} · 案例 {{ row.case_evidence_ids|length }}</small></p>{% else %}<p class="muted">尚未形成争点覆盖结果。</p>{% endfor %}</div>
-      <div><h3>未解决问题</h3><ul class="memo-list">{% for gap in research.unresolved_gaps %}<li>{{ gap }}</li>{% else %}<li>当前已检索争点均有法规与案例支持，仍需人工复核适用性。</li>{% endfor %}</ul></div>
+      <div><h3>{{ tr('analysis.agentic.coverage') }}</h3>{% for row in research.coverage %}<p><strong>{{ row.issue }}</strong> <span class="chip">{{ row.status }}</span><br><small>{{ tr('analysis.agentic.law_stat', n=(row.law_evidence_ids or [])|length, m=(row.case_evidence_ids or [])|length) }}</small></p>{% else %}<p class="muted">{{ tr('analysis.agentic.coverage_empty') }}</p>{% endfor %}</div>
+      <div><h3>{{ tr('analysis.agentic.gaps') }}</h3><ul class="memo-list">{% for gap in research.unresolved_gaps %}<li>{{ gap }}</li>{% else %}<li>{{ tr('analysis.agentic.gaps_empty') }}</li>{% endfor %}</ul></div>
     </div>
-    <p class="notice-text">外部检索内容仅作为不可信数据处理，不会被当作系统指令执行。所有结论仍需核对原始来源、适用时间与管辖区。</p>
+    <p class="notice-text">{{ tr('analysis.agentic.notice') }}</p>
   </div>
 </section>
 {% endif %}

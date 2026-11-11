@@ -22,6 +22,7 @@ class AnalysisStreamRun:
     events: list[dict[str, Any]] = field(default_factory=list)
     result: dict[str, Any] | None = None
     error: str = ""
+    history_id: int = 0
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     paused: bool = False
@@ -116,32 +117,52 @@ def _worker(run: AnalysisStreamRun) -> None:
         })
         run.result = analyze_sentence_search(**payload)
         research = (run.result or {}).get("agentic_research") or {}
-        was_cancelled = run.cancelled or research.get("stop_reason") == "cancelled_by_user"
-        if was_cancelled:
-            run.cancelled = True
-            run.status = "cancelled"
-            _emit(run, "run_cancelled", "分析已按用户请求停止，已保留可用的部分结果。", {
-                "result_available": bool(run.result),
-            })
-            return
-        run.status = "completed"
-        _emit(run, "run_completed", "分析已完成，正在打开结构化结果页面。", {
-            "result_summary": {
-                "laws": len(((run.result or {}).get("module_packet") or {}).get("relevant_laws") or []),
-                "cases": len(((run.result or {}).get("module_packet") or {}).get("case_law_rows") or []),
-                "rounds": len(research.get("rounds") or []),
+        # 把 SSE 事件流固化为可回放的"研究过程"轨迹，随结果一起入历史，
+        # 让最终结果页能在结果上方完整展示思考过程。
+        trace_started = run.events[0]["timestamp"] if run.events else time.time()
+        trace_ended = run.events[-1]["timestamp"] if run.events else time.time()
+        run.result["research_trace"] = [
+            {
+                "seq": int(event["seq"]),
+                "event_type": str(event["event_type"]),
+                "message": str(event["message"])[:300],
+                "progress": float(event["progress"]),
+                "timestamp": float(event["timestamp"]),
             }
-        })
-    except Exception as exc:
-        if run.cancelled:
-            run.status = "cancelled"
-            _emit(run, "run_cancelled", "分析已按用户请求停止。", {
-                "error": repair_text(str(exc))[:1000],
+            for event in run.events
+        ]
+        run.result["research_trace_meta"] = {
+            "duration_seconds": round(max(0.0, trace_ended - trace_started), 1),
+            "event_count": len(run.events),
+        }
+        with run.condition:
+            was_cancelled = run.cancelled or research.get("stop_reason") == "cancelled_by_user"
+            if was_cancelled:
+                run.cancelled = True
+                run.status = "cancelled"
+                _emit(run, "run_cancelled", "分析已按用户请求停止，已保留可用的部分结果。", {
+                    "result_available": bool(run.result),
+                })
+                return
+            run.status = "completed"
+            _emit(run, "run_completed", "分析已完成，结果已可查看。", {
+                "result_summary": {
+                    "laws": len(((run.result or {}).get("module_packet") or {}).get("relevant_laws") or []),
+                    "cases": len(((run.result or {}).get("module_packet") or {}).get("case_law_rows") or []),
+                    "rounds": len(research.get("rounds") or []),
+                }
             })
-            return
-        run.status = "failed"
-        run.error = repair_text(str(exc))[:1000]
-        _emit(run, "run_failed", "分析未完成，已保留执行轨迹。", {"error": run.error})
+    except Exception as exc:
+        with run.condition:
+            if run.cancelled:
+                run.status = "cancelled"
+                _emit(run, "run_cancelled", "分析已按用户请求停止。", {
+                    "error": repair_text(str(exc))[:1000],
+                })
+                return
+            run.status = "failed"
+            run.error = repair_text(str(exc))[:1000]
+            _emit(run, "run_failed", "分析未完成，已保留执行轨迹。", {"error": run.error})
 
 
 def create_analysis_stream_run(request_payload: dict[str, Any], *, user_id: int, tenant_id: str) -> dict[str, Any]:

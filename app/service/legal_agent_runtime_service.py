@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import threading
 import time
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.engine import Connection
 
 from app.core.config import settings
 from app.core.database import engine, is_sqlite
@@ -276,8 +280,9 @@ def _append_event(
     stage: str = "",
     round_no: int = 0,
     payload: dict[str, Any] | None = None,
+    connection: Connection | None = None,
 ) -> int:
-    with engine.begin() as conn:
+    with (nullcontext(connection) if connection is not None else engine.begin()) as conn:
         if is_sqlite():
             row = conn.execute(
                 text(
@@ -490,23 +495,38 @@ def enqueue_legal_agent_run(
                     "request": json_text(request_payload),
                 },
             ).mappings().first()
-    run_id = int(row["id"])
-    _append_event(
-        run_id, "run_created", "人机审理任务已创建。", stage="case_intake",
-        payload={"human_side": payload.human_side, "agent_side": agent_side, "max_rounds": payload.max_rounds},
-    )
-    if payload.initial_statement.strip():
-        submit_human_turn(
-            run_id,
-            HumanSubmissionCreate(
-                submission_id=f"initial-{uuid4().hex[:12]}",
-                statement=payload.initial_statement,
-                round_no=1,
-            ),
-            user_id=user_id,
-            tenant_id=tenant,
-            allow_queued=True,
+        run_id = int(row["id"])
+        _append_event(
+            run_id, "run_created", "人机审理任务已创建。", stage="case_intake",
+            payload={"human_side": payload.human_side, "agent_side": agent_side, "max_rounds": payload.max_rounds},
+            connection=conn,
         )
+        initial_statement = repair_text(payload.initial_statement)
+        if initial_statement:
+            submission_id = f"initial-{uuid4().hex[:12]}"
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO multi_agent_human_submissions
+                        (run_id,submission_id,round_no,side,statement,created_by)
+                    VALUES (:run_id,:submission_id,1,:side,:statement,:created_by)
+                    """
+                ),
+                {
+                    "run_id": run_id, "submission_id": submission_id,
+                    "side": payload.human_side, "statement": initial_statement, "created_by": user_id,
+                },
+            )
+            conn.execute(
+                text("UPDATE multi_agent_runs SET current_stage='human_submission_received' WHERE id=:run_id"),
+                {"run_id": run_id},
+            )
+            _append_event(
+                run_id, "human_submission_received", "已收到真人一方第 1 轮提交。",
+                actor_type="human", actor_name=payload.human_side, stage="human_turn", round_no=1,
+                payload={"submission_id": submission_id, "fact_ref_count": 0, "evidence_ref_count": 0},
+                connection=conn,
+            )
     if payload.preference_history_enabled or payload.review_memory_enabled:
         set_preference_tracking(tenant_id=tenant, user_id=user_id, enabled=True)
     return get_legal_agent_run(run_id, user_id=user_id, tenant_id=tenant)
@@ -1430,6 +1450,11 @@ def _claim_next_run(worker_name: str) -> dict[str, Any] | None:
         )
         if result.rowcount != 1:
             return None
+        _append_event(
+            int(row["id"]), "run_started", "Worker 已认领任务并开始处理。",
+            actor_name=worker_name[:80], stage=row.get("current_stage") or "case_intake",
+            round_no=int(row.get("current_round") or 1), connection=conn,
+        )
         claimed = conn.execute(text("SELECT * FROM multi_agent_runs WHERE id=:run_id"), {"run_id": row["id"]}).mappings().first()
     return dict(claimed) if claimed else None
 
@@ -1472,7 +1497,12 @@ def run_legal_agent_worker_forever(
     stop = stop_event or threading.Event()
     wait_seconds = max(0.25, float(poll_seconds or getattr(settings, "agent_worker_poll_seconds", 0.8)))
     while not stop.is_set():
-        if process_next_legal_agent_run(worker_name):
+        try:
+            if process_next_legal_agent_run(worker_name):
+                continue
+        except OperationalError as exc:
+            logging.getLogger(__name__).warning("Legal agent worker database poll failed (%s)", type(exc.orig).__name__)
+            stop.wait(max(wait_seconds, 5.0))
             continue
         stop.wait(wait_seconds)
 

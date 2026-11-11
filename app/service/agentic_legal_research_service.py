@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.service.common_service import repair_text
 from app.service.hybrid_retrieval_service import hybrid_search
 from app.service.legal_query_planner_service import build_deep_query_plan
+from app.service.query_translation_service import translate_query
 
 
 @dataclass
@@ -48,18 +49,28 @@ def _evidence_id(item: dict[str, Any]) -> str:
     )
 
 
+def _citation_link(citation: str) -> str:
+    """远端语料的 source_url 列为空，用标准引文构造 CanLII 检索链接，保证证据可点开。"""
+    clean = repair_text(citation)
+    if not clean:
+        return ""
+    from urllib.parse import quote
+    return f"https://www.canlii.org/en/search.do?q=%22{quote(clean)}%22"
+
+
 def _normalize_evidence(item: dict[str, Any], query: str, round_no: int) -> ResearchEvidence | None:
     evidence_id = _evidence_id(item)
     if evidence_id == "::":
         return None
     metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     bundle = item.get("context_bundle") if isinstance(item.get("context_bundle"), dict) else {}
+    citation = repair_text(item.get("citation") or metadata.get("citation"))
     return ResearchEvidence(
         evidence_id=evidence_id,
         title=repair_text(item.get("title")),
         source_kind=repair_text(item.get("source_kind")),
-        citation=repair_text(item.get("citation") or metadata.get("citation")),
-        source_url=repair_text(item.get("source_url")),
+        citation=citation,
+        source_url=repair_text(item.get("source_url")) or _citation_link(citation),
         excerpt=repair_text(bundle.get("text") or item.get("excerpt"))[:3000],
         score=float(item.get("score") or 0),
         query=query,
@@ -71,7 +82,16 @@ def _normalize_evidence(item: dict[str, Any], query: str, round_no: int) -> Rese
 
 def _initial_queries(plan: Any, query: str, limit: int) -> list[str]:
     issue_queries = [repair_text(f"{issue.issue} {issue.legal_domain}") for issue in plan.dispute_issues]
-    queries = issue_queries + [repair_text(plan.rule_query), repair_text(plan.case_query)]
+    domains = [issue.legal_domain for issue in plan.dispute_issues]
+    authority_queries = []
+    if any(domain.startswith("criminal ") and "child pornography" in domain for domain in domains):
+        authority_queries.append("Criminal Code 163.1")
+    if any(domain.startswith("real estate ") for domain in domains):
+        authority_queries.append("real estate sale latent defect seller disclosure")
+        translated = translate_query(query).get("translated") or query.lower()
+        if "cannabis grow operation" in translated:
+            authority_queries.insert(0, "cannabis grow operation real estate sale")
+    queries = authority_queries + issue_queries + [repair_text(plan.rule_query), repair_text(plan.case_query)]
     return _unique(queries or [query], limit)
 
 
@@ -184,7 +204,14 @@ def run_agentic_legal_research(
     evidence_limit = max(5, min(int(max_evidence or settings.legal_research_max_evidence), 100))
     timeout = max(5, min(int(timeout_seconds or settings.legal_research_timeout_seconds), 300))
     started = time.monotonic()
-    plan = build_deep_query_plan(clean_query, keywords=keywords or [], use_llm=True, load_priors=True)
+    plan = build_deep_query_plan(
+        clean_query,
+        keywords=keywords or [],
+        llm_timeout_seconds=min(
+            max(1, int(settings.deep_analysis_timeout_seconds)),
+            max(1, timeout // 3),
+        ),
+    )
     research_filters = dict(filters or {})
     if not research_filters and any(
         repair_text(value).lower() == "ontario" for value in (getattr(plan, "jurisdictions", []) or [])
@@ -285,6 +312,16 @@ def run_agentic_legal_research(
                         executed.append({"query": search_query, "status": query_status, "hits": len(items)})
                         completed_count += 1
                         failed = query_status.lower() in {"error", "failed", "timeout"}
+                        # 让 SSE 时间线直接可读：附带前几条命中证据的标题与类型。
+                        evidence_preview = [
+                            {
+                                "title": repair_text(item.get("title"))[:160],
+                                "kind": repair_text(item.get("source_kind")),
+                                "score": round(float(item.get("score") or 0), 4),
+                            }
+                            for item in items[:4]
+                            if repair_text(item.get("title"))
+                        ]
                         if event_callback:
                             event_callback(
                                 "research_query_failed" if failed else "research_query_completed",
@@ -296,6 +333,7 @@ def run_agentic_legal_research(
                                     "parallel_retrieval", "evaluate_round_coverage",
                                     round_no=round_no, query=search_query,
                                     status=query_status, hits=len(items),
+                                    evidence_preview=evidence_preview,
                                 ),
                             )
                         for item in items:

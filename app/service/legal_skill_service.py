@@ -76,33 +76,46 @@ COURT_MARKERS = {
     "bcsc": "British Columbia Supreme Court",
 }
 
+_SALE_OF_LAND = re.compile(
+    r"\b(?:vendors?|purchasers?|conveyancing|real estate (?:agents?|brokers?|sales?|transactions?)|"
+    r"(?:property|home|house) (?:purchase|sale)|(?:purchase|sale) of (?:a |the )?(?:property|home|land|house))\b"
+    r"|购买房产|购房|房屋买卖|房产交易|出售房屋|买房|卖房|房产中介",
+    re.I,
+)
+_TENANCY = re.compile(
+    r"\b(?:landlords?|tenants?|tenancy|rent arrears|rental unit|eviction|mould|mold)\b"
+    r"|(?<![A-Za-z0-9])N12(?![A-Za-z0-9])|租务|租赁|租客|承租人|出租人|房东|欠租|驱逐",
+    re.I,
+)
+_SALE_ONLY_KEYWORDS = re.compile(
+    r"\b(?:vendor disclosure|latent defects?|sale of land|conveyancing|land titles|"
+    r"real estate (?:agents?|brokers?|fraud)|property misrepresentation|misrepresentation property)\b",
+    re.I,
+)
+
+
+def is_tenancy_case(text: str) -> bool:
+    return bool(_TENANCY.search(text))
+
+
+def is_sale_of_land_case(text: str) -> bool:
+    return bool(_SALE_OF_LAND.search(text))
+
+
+def guard_case_keywords(case_text: str, keywords: list[str]) -> list[str]:
+    if is_sale_of_land_case(case_text):
+        return keywords
+    return [keyword for keyword in keywords if not _SALE_ONLY_KEYWORDS.search(keyword)]
+
+
 DOMAIN_SKILL_MAP = {
     "real_estate": {
-        "markers": (
-            "real estate",
-            "property",
-            "land",
-            "vendor",
-            "purchaser",
-            "realtor",
-            "broker",
-            "latent defect",
-            "disclosure",
-            "\u623f\u4ea7",
-            "\u5730\u4ea7",
-            "\u4e0d\u52a8\u4ea7",
-            "\u4e70\u5356",
-            "\u62ab\u9732",
-        ),
-        "terms": (
-            "vendor disclosure",
-            "latent defect",
-            "fraudulent misrepresentation",
-            "negligent misrepresentation",
-            "real estate agent duty",
-            "Land Titles Act",
-            "Conveyancing and Law of Property Act",
-        ),
+        "markers": (),
+        "terms": ("latent defect", "real estate misrepresentation", "real estate agent duty"),
+    },
+    "tenancy": {
+        "markers": (),
+        "terms": ("residential tenancy", "landlord obligations", "tenant remedies"),
     },
     "contract": {
         "markers": (
@@ -373,7 +386,13 @@ def _domain_terms(text: str) -> tuple[list[str], list[str]]:
     terms: list[str] = []
     for domain, profile in DOMAIN_SKILL_MAP.items():
         markers = profile.get("markers", ())
-        if any(marker and (marker in text or marker.lower() in lowered) for marker in markers):
+        if domain == "real_estate":
+            matched = is_sale_of_land_case(text)
+        elif domain == "tenancy":
+            matched = is_tenancy_case(text)
+        else:
+            matched = any(marker and (marker in text or marker.lower() in lowered) for marker in markers)
+        if matched:
             matched_domains.append(domain)
             terms.extend(profile.get("terms", ()))
     return _dedupe(matched_domains), _dedupe(terms)
@@ -404,7 +423,7 @@ def enhance_legal_retrieval_keywords(
         if any(token in text.lower() for token in ("ofac", "sdn", "sanction", "blocked")):
             domains.append("sanctions")
 
-    keywords = _dedupe(ordered, limit=max_keywords)
+    keywords = _dedupe(guard_case_keywords(text, ordered), limit=max_keywords)
     weights: dict[str, float] = {}
     for key, value in (keyword_weights or {}).items():
         clean = repair_text(key)

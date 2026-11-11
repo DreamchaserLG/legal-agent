@@ -13,14 +13,15 @@ from app.service.agentic_legal_research_service import run_agentic_legal_researc
 from app.service.bilingual_service import build_bilingual_analysis_pack
 from app.service.common_service import repair_text
 from app.service.data_quality_service import build_data_readiness
-from app.service.deep_analysis_service import build_deep_analysis_payload
+from app.service.deep_analysis_service import build_deep_analysis, build_deep_analysis_payload
+from app.service.legal_query_planner_service import QueryPlan
 from app.service.llm_service import (
     LLMServiceError,
     create_structured_response,
     get_llm_provider,
     is_llm_configured,
 )
-from app.service.legal_skill_service import enhance_legal_retrieval_keywords
+from app.service.legal_skill_service import enhance_legal_retrieval_keywords, guard_case_keywords
 from app.service.module_service import (
     build_module_packet,
     get_module_definition,
@@ -486,11 +487,9 @@ def extract_keywords_with_llm(text: str, max_keywords: int = 8) -> tuple[list[st
                 "required": ["legal_issues", "legal_claims"],
             },
             instructions=(
-                "Analyze this legal case and extract:\n"
-                "1. legal_issues: The specific legal issues in dispute (e.g., 'failure to disclose latent defects', 'breach of fiduciary duty')\n"
-                "2. legal_claims: The legal claims being made (e.g., 'fraudulent misrepresentation', 'negligent misrepresentation', 'breach of warranty')\n"
-                "3. party_roles: The roles of the parties (e.g., 'vendor', 'purchaser', 'real estate agent', 'broker')\n"
-                "Be SPECIFIC to this case. Do NOT use generic terms like 'fraud' alone - use 'real estate fraud', 'vendor disclosure fraud', etc.\n"
+                "Extract the disputed legal issues, claims and party roles actually supported by this case. "
+                "Use the parties' stated roles and do not introduce an unrelated legal domain. "
+                "Use specific multiword issues, such as a disputed termination notice or unpaid contract work. "
                 "For Chinese input, translate to English legal terminology."
             ),
             user_input=cleaned,
@@ -515,14 +514,10 @@ def extract_keywords_with_llm(text: str, max_keywords: int = 8) -> tuple[list[st
                 "required": ["search_terms"],
             },
             instructions=(
-                "Generate search keywords optimized for CanLII (Canadian Legal Information Institute) search.\n"
-                "Return:\n"
-                "1. search_terms: 4-6 English search terms that would find similar cases on CanLII. "
-                "Use terms that appear in case headnotes and legal digests.\n"
-                "2. canlii_tags: Legal topic tags used in CanLII case digests (e.g., 'Property — Real estate — Disclosure obligations', 'Civil liability — Fraud — Misrepresentation')\n"
-                "Example for a real estate fraud case:\n"
-                "- search_terms: ['vendor disclosure', 'latent defect', 'misrepresentation property', 'real estate agent duty']\n"
-                "- canlii_tags: ['Property — Sale of land — Disclosure', 'Civil liability — Fraud — Non-disclosure']"
+                "Generate 4-6 English CanLII search terms and optional digest tags for this case. "
+                "Use its actual dispute, jurisdiction and material facts. Do not default to sale-of-land "
+                "vocabulary for a tenancy, construction, employment or other dispute. "
+                "For Chinese input, translate to English legal terminology."
             ),
             user_input=cleaned,
         )
@@ -545,12 +540,9 @@ def extract_keywords_with_llm(text: str, max_keywords: int = 8) -> tuple[list[st
                 "required": ["statutes"],
             },
             instructions=(
-                "Identify Canadian statutes and regulations relevant to this case.\n"
-                "Return:\n"
-                "1. statutes: Full names of relevant Acts (e.g., 'Real Estate and Business Brokers Act', 'Sale of Goods Act', 'Fraudulent Conveyances Act')\n"
-                "2. regulations: Relevant regulations (e.g., 'Real Estate Council of Ontario')\n"
-                "Be specific. For real estate cases, consider: 'Real Estate and Business Brokers Act', 'Land Titles Act', 'Conveyancing and Law of Property Act', 'Statute of Frauds'.\n"
-                "For fraud cases, consider: 'Criminal Code', 'Fraudulent Conveyances Act'."
+                "Name only statutes or regulations plausibly governing the subject matter and jurisdiction "
+                "stated in the case. Return empty lists if a governing instrument cannot be determined. "
+                "Treat names as retrieval candidates, not legal conclusions."
             ),
             user_input=cleaned,
         )
@@ -565,7 +557,9 @@ def extract_keywords_with_llm(text: str, max_keywords: int = 8) -> tuple[list[st
         return extract_search_keywords(text, max_keywords)
 
     # 去重并限制数量
-    final_keywords = _normalize_string_list(all_keywords, limit=max_keywords + 6)
+    final_keywords = _normalize_string_list(guard_case_keywords(cleaned, all_keywords), limit=max_keywords + 6)
+    if not final_keywords:
+        return extract_search_keywords(text, max_keywords)
     _, weights = _expand_legal_concepts(final_keywords)
     return final_keywords, weights
 
@@ -608,9 +602,9 @@ def rerank_search_results_with_llm(query_text: str, results: list[dict], limit: 
                 "You are a legal research assistant. Given a user's legal question and search results, "
                 "rank the results by relevance to the question.\n\n"
                 "Consider:\n"
-                "1. Does the case involve similar legal issues? (e.g., real estate fraud, disclosure obligations)\n"
-                "2. Does the case involve similar parties? (e.g., vendor, purchaser, agent)\n"
-                "3. Does the case involve similar facts? (e.g., non-disclosure, misrepresentation)\n"
+                "1. Does the case involve the legal issues actually supported by the query?\n"
+                "2. Do the parties have comparable roles in this subject matter?\n"
+                "3. Does the case involve comparable material facts?\n"
                 "4. Is the case from a relevant jurisdiction?\n\n"
                 "Return the indices of results sorted by relevance (most relevant first). "
                 "Only include results that are genuinely relevant to the query. "
@@ -951,12 +945,6 @@ def build_structured_analysis(text: str, module: str = "canada") -> dict:
         if llm_keywords and llm_keywords != fallback.get("search_keywords", []):
             fallback["search_keywords"] = llm_keywords
             fallback["keyword_weights"] = llm_weights
-            fallback["legal_topics"] = _normalize_string_list(
-                llm_keywords[:4] + fallback.get("legal_topics", []), limit=6
-            )
-            fallback["claims"] = _normalize_string_list(
-                llm_keywords[:3] + fallback.get("claims", []), limit=6
-            )
         skill_profile = _apply_retrieval_skills_to_analysis(fallback, cleaned, normalized_module)
         bilingual_context = build_bilingual_analysis_pack(cleaned, fallback, normalized_module)
         return {
@@ -1106,20 +1094,32 @@ def enrich_with_deep_analysis(
     payload: dict,
     *,
     audit: bool = True,
+    use_llm: bool = True,
     tenant_id: str = "",
     user_id: int | None = None,
 ) -> dict:
     if not bool(getattr(settings, "deep_analysis_enabled", False)) or payload.get("deep_analysis"):
         return payload
     try:
-        research_items = (payload.get("agentic_research") or {}).get("evidence") or []
-        retrieval_items = research_items or (payload.get("rag_context") or {}).get("items") or payload.get("results") or []
-        plan, deep_analysis = build_deep_analysis_payload(
-            repair_text(payload.get("input_text")),
-            keywords=payload.get("retrieval_keywords") or payload.get("extracted_keywords") or [],
-            module_packet=payload.get("module_packet") or {},
-            retrieval_items=retrieval_items,
-        )
+        case_text = repair_text(payload.get("input_text"))
+        research = payload.get("agentic_research") or {}
+        retrieval_items = research.get("evidence") or (payload.get("rag_context") or {}).get("items") or payload.get("results") or []
+        module_packet = payload.get("module_packet") or {}
+        research_plan = research.get("query_plan") or {}
+        if not payload.get("history_reused") and research_plan.get("raw_case_text") == case_text[:20000]:
+            plan = QueryPlan.model_validate(research_plan)
+            deep_analysis = build_deep_analysis(plan, module_packet=module_packet, retrieval_items=retrieval_items)
+        else:
+            plan, deep_analysis = build_deep_analysis_payload(
+                case_text,
+                keywords=payload.get("retrieval_keywords") or payload.get("extracted_keywords") or [],
+                module_packet=module_packet,
+                retrieval_items=retrieval_items,
+                use_llm=use_llm,
+                load_priors=use_llm,
+            )
+        payload["deep_query_plan"] = plan.model_dump()
+        payload["deep_analysis"] = deep_analysis.model_dump()
         quality_gate = evaluate_quality_gate(
             deep_analysis,
             input_summary=deep_analysis.case_summary,
@@ -1127,8 +1127,6 @@ def enrich_with_deep_analysis(
             user_id=user_id,
             audit=audit,
         )
-        payload["deep_query_plan"] = plan.model_dump()
-        payload["deep_analysis"] = deep_analysis.model_dump()
         payload["quality_gate"] = quality_gate.model_dump()
         payload["deep_analysis_status"] = "ready" if quality_gate.passed else "downgraded"
     except Exception as exc:
@@ -1180,10 +1178,10 @@ def analyze_sentence_search(
     new_case_target_count = _dynamic_new_case_target_count(limit)
 
     if structured is None:
-        structured = (
-            _reuse_structured_analysis_from_history(cleaned_text, history_rows, normalized_module)
-            or build_structured_analysis(cleaned_text, normalized_module)
-        )
+        if not refresh:
+            structured = _reuse_structured_analysis_from_history(cleaned_text, history_rows, normalized_module)
+        if structured is None:
+            structured = build_structured_analysis(cleaned_text, normalized_module)
         _set_cached_analysis(cache_key, structured)
     emit("case_structured", "已完成关键事实、当事人、时间线和初步争点整理。", {
         "analysis_mode": structured.get("analysis_mode"),
@@ -1195,7 +1193,9 @@ def analyze_sentence_search(
     bilingual_context = structured.get("bilingual_context", {})
     query_language = structured.get("query_language", "zh")
     extracted_keywords = intake_outline.get("keywords", [])
-    retrieval_keywords = structured.get("retrieval_keywords") or extracted_keywords
+    retrieval_keywords = guard_case_keywords(
+        cleaned_text, structured.get("retrieval_keywords") or extracted_keywords,
+    )
 
     if local_only and bool(getattr(settings, "analysis_local_fast_mode", True)):
         emit("baseline_retrieval_started", "开始检索本地加拿大法规与案例。", {})
@@ -1409,6 +1409,27 @@ def analyze_sentence_search(
         "deep_analysis_status": response_payload.get("deep_analysis_status", ""),
         "quality_gate": response_payload.get("quality_gate") or {},
     })
+
+    if (
+        origin_page in {"analysis", "analyze"}
+        and (response_payload.get("quality_gate") or {}).get("passed")
+        and response_payload["data_readiness"].get("can_support_prediction")
+    ):
+        from app.service.agent_service import predict_legal_outcome
+
+        try:
+            assessment = predict_legal_outcome(
+                text=cleaned_text, limit=limit, offset=offset, source=effective_source,
+                sort=sort, module=normalized_module, refresh=refresh, analysis_result=response_payload,
+            ).get("prediction") or {}
+            if assessment.get("evidence_status") == "sufficient" and assessment.get("predicted_outcome"):
+                response_payload["case_prediction"] = {
+                    "predicted_outcome": assessment["predicted_outcome"],
+                    "confidence": assessment.get("confidence"),
+                }
+        except Exception:
+            # The research report and its evidence-based confidence remain available.
+            pass
 
     if (
         analysis_cache_status != "hit"

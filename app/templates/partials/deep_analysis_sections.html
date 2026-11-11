@@ -1,106 +1,102 @@
 {% set deep = analysis_result.get('deep_analysis', {}) %}
 {% set gate = analysis_result.get('quality_gate', {}) %}
-<section class="band band-alt deep-analysis" data-deep-analysis>
+{% set plan = analysis_result.get('deep_query_plan', {}) %}
+<section class="band band-alt deep-analysis" id="analysis-risks" data-deep-analysis>
     <div class="shell analysis-report-shell">
         <div class="analysis-report-head">
             <div>
-                <p class="eyebrow">证据化深度解析</p>
-                <h2>案情焦点、证据边界与风险评估</h2>
+                <h2>{{ '争点与风险' if lang == 'zh' else 'Issues and risks' }}</h2>
             </div>
             <div class="status-cluster">
-                <span class="task-status">{{ '质量门禁通过' if gate.passed else '降级展示' }}</span>
-                {% if history_id %}<a class="meta-inline" href="/histories/{{ history_id }}">查看历史详情</a>{% endif %}
-                <a class="meta-inline" href="/hearing">进入庭审模拟</a>
+                {% if gate %}<span class="task-status">{{ tr('analysis.deep.gate_passed') if gate.passed else tr('analysis.deep.gate_downgraded') }}</span>{% endif %}
+                <a class="meta-inline" href="/hearing">{{ tr('analysis.form.hearing') }}</a>
             </div>
         </div>
 
-        {% if not gate.passed %}
+        {% if gate and not gate.passed %}
         <div class="deep-gate-alert" role="alert">
-            <strong>深度解析未通过质量门禁</strong>
-            <p>{{ gate.downgrade_reason or '当前证据不足以支持完整分析。' }}。以下仅展示可追溯引用、待补事项和人工复核要求。</p>
+            <strong>{{ tr('analysis.deep.gate_failed') }}</strong>
+            <p>{{ gate.downgrade_reason or tr('analysis.deep.gaps_empty') }}</p>
             <div class="chip-row">
-                <span class="chip">引用可追溯率 {{ (gate.citation_traceability * 100)|round|int }}%</span>
-                <span class="chip">证据完整度 {{ (gate.evidence_completeness * 100)|round|int }}%</span>
-                <span class="chip">低置信度 {{ (gate.low_confidence_ratio * 100)|round|int }}%</span>
+                <span class="chip">{{ tr('analysis.deep.references_kicker') }} {{ (gate.citation_traceability * 100)|round|int }}%</span>
+                <span class="chip">{{ tr('analysis.deep.strength_evidence') }} {{ (gate.evidence_completeness * 100)|round|int }}%</span>
+                <span class="chip">{{ '低置信度条目' if lang == 'zh' else 'Low-confidence items' }} {{ (gate.low_confidence_ratio * 100)|round|int }}%</span>
             </div>
         </div>
-        {% else %}
-        <section class="deep-section" aria-labelledby="deep-summary-title">
-            <p class="panel-kicker">案情结构化摘要</p>
-            <h3 id="deep-summary-title">可回链事实形成的案件轮廓</h3>
-            <p class="deep-summary">{{ deep.case_summary }}</p>
-        </section>
+        {% endif %}
 
-        <section class="deep-section" aria-labelledby="deep-disputes-title">
-            <p class="panel-kicker">争议焦点详情</p>
-            <h3 id="deep-disputes-title">需要裁判或进一步核验的问题</h3>
-            <div class="deep-issue-list">
-                {% for issue in deep.dispute_details %}
-                <details class="deep-issue" {% if loop.first %}open{% endif %}>
-                    <summary>
-                        <span>{{ issue.issue }}</span>
-                        <span class="deep-score">强度 {{ (issue.strength_score * 100)|round|int }}%</span>
-                    </summary>
-                    <div class="deep-issue-body">
-                        <div class="deep-position-grid">
-                            <div><small>本方立场</small><p>{{ issue.our_position }}</p></div>
-                            <div><small>可能抗辩</small><p>{{ issue.opposing_position }}</p></div>
-                        </div>
-                        <h4>法律依据</h4>
-                        {% if issue.legal_basis %}
-                        <ul class="deep-reference-list">
-                            {% for rule in issue.legal_basis %}
-                            <li><strong>{{ rule.title }}</strong>{% if rule.article_no %} · {{ rule.article_no }}{% endif %}<span>{{ rule.excerpt or '正式关系已核验，条文摘要待人工确认。' }}</span></li>
-                            {% endfor %}
-                        </ul>
-                        {% else %}<p class="muted">未检索到直接依据</p>{% endif %}
-                        <h4>类案支持</h4>
-                        {% if issue.case_support %}
-                        <ul class="deep-reference-list">
-                            {% for case in issue.case_support %}
-                            <li><strong>{{ case.title }}</strong>{% if case.court or case.date %} · {{ case.court }} {{ case.date }}{% endif %}<span>{{ case.excerpt or '已检索到案例，裁判要点待人工核验。' }}</span></li>
-                            {% endfor %}
-                        </ul>
-                        {% else %}<p class="muted">未检索到可绑定的类案支持</p>{% endif %}
-                        {% if issue.unresolved_gaps %}
-                        <div class="chip-row">{% for gap in issue.unresolved_gaps %}<span class="chip">{{ gap }}</span>{% endfor %}</div>
-                        {% endif %}
-                    </div>
-                </details>
-                {% endfor %}
-            </div>
-        </section>
-
+        {% if not deep.get('risk_predictions') %}
+        <p class="deep-gate-alert" role="status">{{ '当前材料未生成结构化风险评估。可先核对案情概览中的风险和证据缺口。' if lang == 'zh' else 'A structured risk assessment is unavailable. Review the risks and evidence gaps in the case overview.' }}</p>
+        {% endif %}
+        {% if plan and not plan.jurisdictions %}
+        <p class="deep-gate-alert" role="status">{{ tr('analysis.deep.jurisdiction_missing') }}</p>
+        {% endif %}
+        {% if deep %}
         <section class="deep-section" aria-labelledby="deep-risks-title">
-            <p class="panel-kicker">风险预测矩阵</p>
+            <p class="panel-kicker">{{ tr('analysis.deep.risk_kicker') }}</p>
             <div class="deep-section-heading">
-                <h3 id="deep-risks-title">触发条件与潜在后果</h3>
-                <div class="deep-risk-filters" aria-label="风险类型筛选">
-                    <button type="button" class="is-active" data-risk-filter="all">全部</button>
-                    <button type="button" data-risk-filter="substantive">实体</button>
-                    <button type="button" data-risk-filter="procedural">程序</button>
-                    <button type="button" data-risk-filter="evidence">证据</button>
-                    <button type="button" data-risk-filter="enforcement">执行</button>
+                <h3 id="deep-risks-title">{{ tr('analysis.deep.risk_heading') }}</h3>
+                <div class="deep-risk-filters" aria-label="{{ tr('analysis.deep.risk_kicker') }}">
+                    <button type="button" class="is-active" data-risk-filter="all">{{ tr('analysis.deep.risk_all') }}</button>
+                    <button type="button" data-risk-filter="substantive">{{ tr('analysis.deep.risk_substantive') }}</button>
+                    <button type="button" data-risk-filter="procedural">{{ tr('analysis.deep.risk_procedural') }}</button>
+                    <button type="button" data-risk-filter="evidence">{{ tr('analysis.deep.risk_evidence') }}</button>
+                    <button type="button" data-risk-filter="enforcement">{{ tr('analysis.deep.risk_enforcement') }}</button>
                 </div>
             </div>
             <div class="deep-risk-grid">
                 {% for risk in deep.risk_predictions %}
                 <article class="deep-risk" data-risk-item="{{ risk.risk_type }}">
-                    <div class="result-head"><strong>{{ {'substantive':'实体风险','procedural':'程序风险','evidence':'证据风险','enforcement':'执行风险'}[risk.risk_type] }}</strong><span class="meta-inline">{{ (risk.confidence * 100)|round|int }}%</span></div>
+                    <div class="result-head"><strong>{{ {'substantive':tr('analysis.deep.risk_substantive_name'),'procedural':tr('analysis.deep.risk_procedural_name'),'evidence':tr('analysis.deep.risk_evidence_name'),'enforcement':tr('analysis.deep.risk_enforcement_name')}[risk.risk_type] }}</strong><span class="meta-inline">{{ (risk.confidence * 100)|round|int }}%</span></div>
                     <p>{{ risk.description }}</p>
-                    <dl><dt>触发条件</dt><dd>{{ risk.trigger_condition }}</dd><dt>潜在后果</dt><dd>{{ risk.potential_consequence }}</dd></dl>
-                    {% if risk.manual_review_required %}<span class="deep-review-flag">需要人工复核</span>{% endif %}
+                    <dl><dt>{{ tr('analysis.deep.trigger') }}</dt><dd>{{ risk.trigger_condition }}</dd><dt>{{ tr('analysis.deep.consequence') }}</dt><dd>{{ risk.potential_consequence }}</dd></dl>
+                    {% if risk.manual_review_required %}<span class="deep-review-flag">{{ tr('analysis.deep.review_flag') }}</span>{% endif %}
                 </article>
                 {% endfor %}
             </div>
         </section>
 
+        {% endif %}
+        {% if deep and deep.dispute_details %}
+        <section class="deep-section" aria-labelledby="deep-disputes-title">
+            <h3 id="deep-disputes-title">{{ tr('analysis.deep.disputes_heading') }}</h3>
+            <div class="deep-gap-list">
+                {% for dispute in deep.dispute_details %}
+                <article class="deep-gap">
+                    <h4>{{ dispute.issue }}</h4>
+                    <dl>
+                        <dt>{{ tr('analysis.deep.issue_position') }}</dt>
+                        <dd>{{ dispute.our_position }}</dd>
+                        <dt>{{ tr('analysis.deep.issue_opposing') }}</dt>
+                        <dd>{{ dispute.opposing_position }}</dd>
+                    </dl>
+                    {% set authorities = dispute.legal_basis + dispute.case_support %}
+                    {% if authorities %}
+                    <ul class="memo-list">
+                        {% for authority in authorities %}
+                        <li>
+                            {% if authority.source_url %}<a href="{{ authority.source_url }}" target="_blank" rel="noopener noreferrer">{{ authority.title }}</a>{% else %}{{ authority.title }}{% endif %}
+                            {% if authority.get('article_no') or authority.get('citation') %}<small>{{ authority.get('article_no') or authority.get('citation') }}</small>{% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% if dispute.unresolved_gaps %}
+                    <ul class="memo-list">{% for gap in dispute.unresolved_gaps %}<li>{{ gap }}</li>{% endfor %}</ul>
+                    {% endif %}
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+
+        {% if deep.get("case_strength") %}
         <section class="deep-section" aria-labelledby="deep-strength-title">
-            <p class="panel-kicker">案件强弱评分</p>
-            <h3 id="deep-strength-title">基于当前证据状态的规则评分</h3>
+            <p class="panel-kicker">{{ tr('analysis.deep.strength_kicker') }}</p>
+            <h3 id="deep-strength-title">{{ tr('analysis.deep.strength_heading') }}</h3>
             {% set strength = deep.case_strength %}
             <div class="deep-strength-grid">
-                {% for label, value in [('证据完整度', strength.evidence_completeness), ('法律依据充分度', strength.legal_basis_sufficiency), ('类案支持度', strength.case_support), ('程序合规度', strength.procedural_compliance), ('对方抗辩强度', strength.opposing_strength), ('综合状态', strength.overall)] %}
+                {% for label, value in [(tr('analysis.deep.strength_evidence'), strength.evidence_completeness), (tr('analysis.deep.strength_legal'), strength.legal_basis_sufficiency), (tr('analysis.deep.strength_case'), strength.case_support), (tr('analysis.deep.strength_procedure'), strength.procedural_compliance), (tr('analysis.deep.strength_opposing'), strength.opposing_strength), (tr('analysis.deep.strength_overall'), strength.overall)] %}
                 <div class="deep-strength-row"><span>{{ label }}</span><div class="deep-meter"><i style="width: {{ (value * 100)|round|int }}%"></i></div><strong>{{ (value * 100)|round|int }}%</strong></div>
                 {% endfor %}
             </div>
@@ -109,67 +105,65 @@
         {% endif %}
 
         <section class="deep-section" aria-labelledby="deep-gaps-title">
-            <p class="panel-kicker">{{ '未完成事项' if not gate.passed else '证据缺口清单' }}</p>
-            <h3 id="deep-gaps-title">按优先级补齐事实和材料</h3>
+            <p class="panel-kicker">{{ tr('analysis.deep.gaps_kicker') }}</p>
+            <h3 id="deep-gaps-title">{{ tr('analysis.deep.gaps_heading') }}</h3>
             <div class="deep-gap-list">
+                {% if deep and deep.evidence_gaps %}
                 {% for gap in deep.evidence_gaps %}
                 <article class="deep-gap" data-priority="{{ gap.priority }}">
-                    <div class="result-head"><strong>{{ gap.description }}</strong><span class="meta-inline">{{ {'high':'高','medium':'中','low':'低'}[gap.priority] }}优先级</span></div>
-                    <p><b>为什么需要：</b>{{ gap.why_needed }}</p><p><b>补齐后的影响：</b>{{ gap.what_changes_if_filled }}</p>
+                    <div class="result-head"><strong>{{ gap.description }}</strong><span class="meta-inline">{{ {'high':tr('analysis.deep.priority_high'),'medium':tr('analysis.deep.priority_medium'),'low':tr('analysis.deep.priority_low')}[gap.priority] }}</span></div>
+                    <p><b>{{ tr('analysis.deep.gap_why') }}</b>{{ gap.why_needed }}</p><p><b>{{ tr('analysis.deep.gap_change') }}</b>{{ gap.what_changes_if_filled }}</p>
                 </article>
                 {% endfor %}
+                {% else %}
+                <p class="muted">{{ tr('analysis.deep.gaps_empty') }}</p>
+                {% endif %}
             </div>
         </section>
 
-        <section class="deep-section" aria-labelledby="deep-materials-title">
-            <p class="panel-kicker">待补材料</p>
-            <h3 id="deep-materials-title">下一步取证清单</h3>
-            <ul class="deep-material-list">
-                {% for material in deep.missing_materials %}
-                <li><strong>{{ material.material_type }}</strong><span>{{ material.description }}</span><small>{{ material.acquisition_hint }}</small></li>
-                {% endfor %}
-            </ul>
-        </section>
-
+        {% if deep %}
         <section class="deep-section" aria-labelledby="deep-references-title">
-            <p class="panel-kicker">引用清单</p>
-            <h3 id="deep-references-title">已检索法规与类案</h3>
+            <p class="panel-kicker">{{ tr('analysis.deep.references_kicker') }}</p>
+            <h3 id="deep-references-title">{{ tr('analysis.deep.references_heading') }}</h3>
             {% if deep.references %}
             <div class="deep-reference-table">
                 {% for ref in deep.references %}
                 <div>
-                    <span class="chip">{{ '法规' if ref.reference_type == 'rule' else '案例' }}</span>
+                    <span class="chip">{{ tr('analysis.deep.ref_rule') if ref.reference_type == 'rule' else tr('analysis.deep.ref_case') }}</span>
                     {% if ref.source_url %}<a href="{{ ref.source_url }}" target="_blank" rel="noopener noreferrer">{{ ref.title }}</a>{% else %}<strong>{{ ref.title }}</strong>{% endif %}
-                    <small>{{ ref.citation or '暂无标准引文' }} · {{ ref.verification_status }} · {{ ref.effectiveness_status }}</small>
+                    <small>{{ ref.citation or tr('analysis.deep.no_citation') }} · {{ ref.verification_status }} · {{ ref.effectiveness_status }}</small>
                 </div>
                 {% endfor %}
             </div>
-            {% else %}<p class="muted">未检索到可追溯引用，必须由人工完成法律检索。</p>{% endif %}
+            {% else %}<p class="muted">{{ tr('analysis.deep.references_empty') }}</p>{% endif %}
         </section>
 
         <section class="deep-section deep-boundary" aria-labelledby="deep-boundary-title">
-            <p class="panel-kicker">置信度边界与人工复核</p>
-            <h3 id="deep-boundary-title">结论适用范围</h3>
+            <p class="panel-kicker">{{ tr('analysis.deep.boundary_kicker') }}</p>
+            <h3 id="deep-boundary-title">{{ tr('analysis.deep.boundary_heading') }}</h3>
             <p>{{ deep.confidence_boundary.boundary_note }}</p>
-            <div class="chip-row"><span class="chip">整体置信度 {{ (deep.confidence_boundary.overall_confidence * 100)|round|int }}%</span><span class="chip">人工复核 {{ gate.manual_review_items }} 项</span></div>
+            <div class="chip-row"><span class="chip">{{ tr('analysis.deep.overall_confidence', p=(deep.confidence_boundary.overall_confidence * 100)|round|int) }}</span><span class="chip">{{ tr('analysis.deep.review_items', n=gate.get('manual_review_items', deep.manual_review_items|length)) }}</span></div>
             {% if deep.manual_review_items %}<ul class="memo-list">{% for review in deep.manual_review_items %}<li>{{ review }}</li>{% endfor %}</ul>{% endif %}
             <p class="deep-disclaimer">{{ deep.disclaimer }}</p>
         </section>
+        {% endif %}
     </div>
 </section>
 
 <script>
-document.addEventListener("DOMContentLoaded", () => {
-    const root = document.querySelector("[data-deep-analysis]");
-    if (!root) return;
-    root.querySelectorAll("[data-risk-filter]").forEach((button) => {
-        button.addEventListener("click", () => {
-            const filter = button.dataset.riskFilter;
-            root.querySelectorAll("[data-risk-filter]").forEach((item) => item.classList.toggle("is-active", item === button));
-            root.querySelectorAll("[data-risk-item]").forEach((item) => {
-                item.hidden = filter !== "all" && item.dataset.riskItem !== filter;
-            });
+(() => {
+    const root = document.currentScript.previousElementSibling;
+    root.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-risk-filter]");
+        if (!button) return;
+        const filter = button.dataset.riskFilter;
+        root.querySelectorAll("[data-risk-filter]").forEach((item) => {
+            item.classList.toggle("is-active", item === button);
+            item.setAttribute("aria-pressed", String(item === button));
+        });
+        root.querySelectorAll("[data-risk-item]").forEach((item) => {
+            item.hidden = filter !== "all" && item.dataset.riskItem !== filter;
         });
     });
-});
+})();
 </script>

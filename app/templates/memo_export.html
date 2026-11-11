@@ -3,10 +3,48 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{{ app_name }} / 案件预测报告 PDF</title>
+    <title>{{ app_name }} / {{ "案件预测报告" if prediction_result else "案件分析备忘录" }} PDF</title>
     <style>{{ inline_css }}</style>
 </head>
 <body class="page-memo-export">
+{% if prediction_result %}
 {% include "partials/memo_content.html" %}
+{% else %}
+<article class="memo-sheet">
+    <header class="memo-header">
+        <p class="memo-label">{{ app_name }} · {{ memo_date }}</p>
+        <h1>案件分析备忘录</h1>
+        <p class="memo-subtitle">{{ memo_analysis.case_title }}</p>
+    </header>
+    <section class="memo-section">
+        <h2>案情摘要</h2>
+        <p>{{ memo_analysis.case_summary or text_input }}</p>
+        {% if memo_analysis.key_facts %}
+        <ul>{% for item in memo_analysis.key_facts %}<li>{{ item }}</li>{% endfor %}</ul>
+        {% endif %}
+    </section>
+    {% for label, entries in [
+        ("争议焦点", memo_analysis.dispute_focus),
+        ("法律关系", memo_analysis.legal_relations),
+        ("待核对证据", memo_analysis.evidence_focus)
+    ] %}
+    {% if entries %}
+    <section class="memo-section">
+        <h2>{{ label }}</h2>
+        <ul>{% for item in entries %}<li>{{ item }}</li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+    {% endfor %}
+    {% if memo_analysis.legal_rules %}
+    <section class="memo-section">
+        <h2>检索法源（待核验）</h2>
+        <ul>{% for rule in memo_analysis.legal_rules %}
+            <li>{{ rule.title }}{% if rule.article_no %} · {{ rule.article_no }}{% endif %}</li>
+        {% endfor %}</ul>
+    </section>
+    {% endif %}
+    <p class="memo-subtitle">本备忘录用于案件研究。结果评估见庭审模拟。</p>
+</article>
+{% endif %}
 </body>
 </html>

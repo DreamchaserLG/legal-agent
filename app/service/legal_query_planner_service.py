@@ -25,6 +25,22 @@ _JURISDICTION_HINTS = {
     "canada": ["Canada"],
 }
 
+_PROVINCE_NAMES = {
+    "Alberta": ("阿尔伯塔", "亚伯达"),
+    "British Columbia": ("不列颠哥伦比亚", "卑诗"),
+    "Manitoba": ("马尼托巴", "曼尼托巴"),
+    "New Brunswick": ("新不伦瑞克",),
+    "Newfoundland and Labrador": ("纽芬兰和拉布拉多",),
+    "Northwest Territories": ("西北地区",),
+    "Nova Scotia": ("新斯科舍",),
+    "Nunavut": ("努纳武特",),
+    "Ontario": ("安大略", "安省"),
+    "Prince Edward Island": ("爱德华王子岛",),
+    "Quebec": ("魁北克", "Québec"),
+    "Saskatchewan": ("萨斯喀彻温",),
+    "Yukon": ("育空",),
+}
+
 _DOMAIN_HINTS = {
     "tenant": ["residential tenancy", "tenant", "landlord", "lease"],
     "tenancy": ["residential tenancy", "tenant", "landlord", "lease"],
@@ -139,8 +155,11 @@ def _base_plan_parts(query: str, keywords: list[str] | None = None) -> dict:
     law_expansions: list[str] = []
     case_expansions: list[str] = []
 
-    if "安大略" in clean_query or "Ontario" in clean_query:
-        jurisdictions.extend(["Ontario"])
+    for province, aliases in _PROVINCE_NAMES.items():
+        if re.search(rf"\b{re.escape(province)}\b", clean_query, re.I) or any(
+            alias.casefold() in clean_query.casefold() for alias in aliases
+        ):
+            jurisdictions.append(province)
 
     for term in all_terms:
         jurisdictions.extend(_JURISDICTION_HINTS.get(term, []))
@@ -240,7 +259,16 @@ def _rule_extract_facts(case_text: str) -> list[StructuredFact]:
     return facts
 
 
-def _llm_extract_facts(case_text: str) -> list[StructuredFact]:
+_MODEL_DOCUMENT_MENTION = re.compile(
+    r"合同|协议|通知|书面|文件|账单|流水|凭证|收据|发票|邮件|聊天记录|照片|报告|"
+    r"判决书|鉴定|录音|录像|视频|档案|信件|短信|截图|"
+    r"\b(?:contract|agreement|lease|notice|document|bill|statement|receipt|invoice|email|message|"
+    r"photo|report|judgment|recording|video|file|record|letter|screenshot)s?\b",
+    re.I,
+)
+
+
+def _llm_extract_facts(case_text: str, *, timeout_seconds: int | None = None) -> list[StructuredFact]:
     if (
         not case_text
         or int(getattr(settings, "deep_analysis_max_llm_calls", 5)) < 1
@@ -259,52 +287,77 @@ def _llm_extract_facts(case_text: str) -> list[StructuredFact]:
                 "Do not infer laws, outcomes, or missing events."
             ),
             user_input=case_text[:12000],
+            model=settings.deep_analysis_llm_model or None,
+            temperature=0.0 if settings.deep_analysis_llm_model else None,
+            timeout_seconds=min(
+                timeout_seconds if timeout_seconds is not None else settings.deep_analysis_timeout_seconds,
+                settings.deep_analysis_timeout_seconds,
+            ),
+            enable_thinking=False if settings.deep_analysis_llm_non_thinking else None,
         )
         payload = _FactExtractionPayload.model_validate(response.get("data") or {})
     except (LLMServiceError, ValidationError, KeyError, TypeError, ValueError):
         return []
-    return [fact for fact in payload.facts if fact.source_span and fact.source_span in case_text]
+    return [
+        fact for fact in payload.facts
+        if fact.source_span and fact.source_span in case_text
+        and (fact.fact_type != "document" or _MODEL_DOCUMENT_MENTION.search(fact.source_span))
+    ]
 
+
+_TENANCY_PATTERN = r"租客|承租|房东|出租|租房|租赁|\b(?:tenant|tenancy|landlord|lease)s?\b"
+_ONTARIO_N12_PATTERN = r"(?<![A-Za-z0-9])N12(?![A-Za-z0-9])"
+_EVICTION_PATTERN = r"驱逐|腾退|\beviction\b"
+_REAL_ESTATE_PATTERN = r"房产|房屋买卖|购房|卖房|\b(?:real estate|home sale|property purchase)\b"
+_DISCLOSURE_PATTERN = r"欺诈|隐瞒|披露|瑕疵|\b(?:fraud|misrepresentation|disclosure|latent defect)\b"
+_CHILD_ABUSE_MATERIAL_PATTERN = r"儿童(?:情色|色情|性虐待)|未成年人色情|\bchild (?:pornography|sexual abuse material)\b"
 
 _ISSUE_RULES = [
-    (
-        r"租客|承租人|房东|出租人|租房|租赁|tenant|landlord|lease",
-        "安大略省住宅租赁关系及房东法定义务如何适用",
-        "Ontario residential tenancy",
-    ),
-    (
-        r"维修|漏水|霉菌|供暖|适居|repair|mould|leak|habitability|maintenance",
-        "房东维修与适居义务是否违反以及租客可获得何种救济",
-        "Ontario tenancy maintenance and remedies",
-    ),
-    (
-        r"N12|自用|收房|驱逐|终止|报复|eviction|termination|own use|retaliat",
-        "N12自用终止通知是否善意、有效或构成报复性驱逐",
-        "Ontario N12 eviction and bad faith",
-    ),
-    (r"租客|承租|房东|出租|tenant|landlord|lease", "租赁合同义务及出租人法定义务是否履行", "residential tenancy"),
-    (r"劳动|雇主|雇员|解雇|employment|employee|dismissal", "劳动关系终止的正当性及补偿范围", "employment"),
-    (r"受伤|损害|过失|事故|injury|damage|negligence|accident", "注意义务、违反、因果关系及损害是否成立", "tort and negligence"),
-    (r"租客|承租|房东|出租|tenant|landlord|lease", "租赁合同义务及法定出租人义务是否履行", "residential tenancy"),
-    (r"欠租|租金|付款|支付|arrears|rent|payment", "付款义务、欠款范围及抵扣抗辩能否成立", "contract and payment"),
-    (r"维修|漏水|霉菌|供暖|适居|repair|mould|heat|habitability", "维修与适居义务违反是否达到法定救济条件", "housing standards and remedies"),
-    (r"驱逐|腾退|解除|终止|eviction|terminate|termination", "合同终止、占有返还或驱逐程序是否合法有效", "termination and procedure"),
-    (r"合同|协议|违约|contract|agreement|breach", "合同义务的内容、违反及可归责损失如何认定", "contract"),
-    (r"雇主|员工|解雇|劳动|employment|employee|dismissal", "劳动关系终止的正当性及补偿范围如何认定", "employment"),
-    (r"受伤|损害|过失|事故|injury|damage|negligence|accident", "注意义务、因果关系及可赔偿损失是否成立", "tort and negligence"),
+    (_TENANCY_PATTERN, "租赁合同义务及出租人法定义务是否履行", "tenancy and lease obligations"),
+    (r"维修|漏水|霉菌|供暖|适居|\b(?:repairs?|mould|mold|habitability|maintenance)\b", "维修与适居义务违反是否达到救济条件", "housing maintenance and habitability"),
+    (_EVICTION_PATTERN, "终止通知、占有返还或驱逐程序是否有效", "eviction and termination procedure"),
+    (r"劳动|雇主|雇员|员工|解雇|\b(?:employment|employees?|dismissal|dismissed)\b", "劳动关系终止的正当性及补偿范围如何认定", "employment and dismissal"),
+    (r"受伤|损害|过失|事故|\b(?:injury|damages?|negligence|accidents?)\b", "注意义务、因果关系及可赔偿损失是否成立", "tort and negligence"),
+    (r"欠租|租金|付款|支付|\b(?:arrears|rent|payments?)\b", "付款义务、欠款范围及抵扣抗辩能否成立", "contract and payment"),
+    (r"合同|协议|违约|\b(?:contracts?|agreements?|breach)\b", "合同义务的内容、违反及可归责损失如何认定", "contract and breach"),
 ]
 
 
 def _issue_positions(issue_name: str) -> tuple[str, str]:
+    if "房产卖方" in issue_name:
+        return (
+            "逐项核对卖方陈述或披露、对房屋历史的知情情况，以及买方是否因此作出交易决定并产生损失。",
+            "卖方可能争议自己是否知情、是否作过相关陈述、历史用途是否构成重大问题，以及买方有无因此受损。",
+        )
+    if "房产中介" in issue_name:
+        return (
+            "分开审查中介是否知道相关情况、曾如何回应买方要求，以及其角色和文件约定下有哪些核查或披露事项。",
+            "中介可能争议委托范围、实际知情程度、是否有理由发现问题，以及推荐与买方决定之间的联系。",
+        )
+    if "浏览或访问" in issue_name:
+        return (
+            "核对访问经过、材料内容和行为人的知情情况，区分主动访问与误触或自动加载。",
+            "可核对设备和网络记录能否识别操作者，以及记录是否足以反映有意识的访问。",
+        )
+    if "保存或持有" in issue_name:
+        return (
+            "查明文件如何写入、存放位置、行为人是否知情和能否控制文件，区分主动保存与自动缓存。",
+            "可核对是否存在共享设备、自动缓存或同步，以及能否可靠认定文件内容及控制者。",
+        )
     if "维修" in issue_name or "适居" in issue_name:
         return (
             "若维修通知、房屋缺陷及未处理经过得到材料确认，可主张出租人未履行维修和适居义务并请求相应减租或损失救济。",
             "对方可能争议缺陷严重程度、通知是否实际送达、合理维修机会以及损失与缺陷之间的因果关系。",
         )
-    if "终止" in issue_name or "驱逐" in issue_name:
+    if "N12" in issue_name:
         return (
-            "若终止通知紧随维修投诉且缺少独立终止事由，可主张通知要件、动机或程序有效性需要严格审查。",
-            "对方可能主张通知基于独立违约事实，且形式、送达、期限和申请程序均符合法定要求。",
+            "可核验自用事由、通知内容、送达和时间线，并查明哪些材料支持或削弱善意主张。",
+            "对方可能主张确有自用需要，并以原始通知和相关材料说明动机与程序。",
+        )
+    if "驱逐" in issue_name:
+        return (
+            "可结合适用管辖区、终止事由和送达材料，核验通知及程序是否有效。",
+            "对方可能以通知内容、送达记录和程序材料证明其主张。",
         )
     if "付款" in issue_name or "欠款" in issue_name:
         return (
@@ -335,12 +388,36 @@ def _issue_positions(issue_name: str) -> tuple[str, str]:
 def _infer_dispute_issues(case_text: str, facts: list[StructuredFact]) -> list[DisputeIssue]:
     issues: list[DisputeIssue] = []
     fact_contents = [fact.content for fact in facts]
-    for pattern, issue_name, domain in _ISSUE_RULES:
+    rules = _ISSUE_RULES
+    if re.search(_REAL_ESTATE_PATTERN, case_text, re.I) and re.search(_DISCLOSURE_PATTERN, case_text, re.I):
+        rules = [
+            (r"卖方|售房人|\b(?:seller|vendor)\b", "房产卖方是否作出重大失实陈述或应披露而未披露", "real estate seller material misrepresentation disclosure"),
+            (r"中介|经纪|\b(?:realtor|broker|real estate agent)\b", "房产中介的陈述、核查与披露是否涉及独立责任", "real estate broker misrepresentation disclosure"),
+            *rules,
+        ]
+    if re.search(_CHILD_ABUSE_MATERIAL_PATTERN, case_text, re.I):
+        rules = [
+            (r"浏览|观看|访问|\b(?:access|view|browse)\w*\b", "浏览或访问相关材料时的行为及知情情况如何认定", "criminal accessing child pornography"),
+            (r"存储|储存|保存|下载|持有|\b(?:possess|sav|download|stor)\w*\b", "保存或持有相关材料时的知情与控制如何认定", "criminal possession child pornography"),
+            *rules,
+        ]
+    if re.search(_ONTARIO_N12_PATTERN, case_text, re.I):
+        ontario_domains = {
+            "tenancy and lease obligations": "Ontario residential tenancy",
+            "housing maintenance and habitability": "Ontario tenancy maintenance and remedies",
+        }
+        rules = [
+            (_ONTARIO_N12_PATTERN, "N12 自用终止通知的事由、善意与程序是否成立", "Ontario N12 eviction and bad faith"),
+            *(
+                (pattern, issue, ontario_domains.get(domain, domain))
+                for pattern, issue, domain in rules
+                if pattern != _EVICTION_PATTERN
+            ),
+        ]
+    for pattern, issue_name, domain in rules:
         if not re.search(pattern, case_text, re.I):
             continue
         support = [fact.content for fact in facts if re.search(pattern, f"{fact.content} {fact.source_span}", re.I)][:4]
-        if not support:
-            support = fact_contents[:2]
         our_position, opposing_position = _issue_positions(issue_name)
         issues.append(
             DisputeIssue(
@@ -523,6 +600,7 @@ def build_deep_query_plan(
     *,
     use_llm: bool = True,
     load_priors: bool = True,
+    llm_timeout_seconds: int | None = None,
 ) -> QueryPlan:
     clean_query = repair_text(query)
     warnings: list[str] = []
@@ -532,8 +610,10 @@ def build_deep_query_plan(
     legacy = _base_plan_parts(clean_query, keywords)
     if not clean_query:
         return QueryPlan(planning_warnings=["案情为空，无法提取事实或推断争点。"], **legacy)
+    if not legacy["jurisdictions"] and not re.search(_ONTARIO_N12_PATTERN, clean_query, re.I):
+        warnings.append("案情未明确适用管辖区，请补充相关地区及行为时间，再核对适用规则。")
 
-    llm_facts = _llm_extract_facts(clean_query) if use_llm else []
+    llm_facts = _llm_extract_facts(clean_query, timeout_seconds=llm_timeout_seconds) if use_llm else []
     fallback_facts = _rule_extract_facts(clean_query)
     facts = list(llm_facts)
     existing = {_fact_key(item) for item in facts}

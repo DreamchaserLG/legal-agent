@@ -309,5 +309,30 @@ def create_embeddings(texts: list[str]) -> list[list[float]]:
     return [_hash_embedding(text, dimension) for text in cleaned]
 
 
+def _remote_bge_query_embedding(text: str, url: str) -> list[float]:
+    try:
+        response = _HTTP_SESSION.post(url, json={"texts": [text], "batch_size": 1}, timeout=5)
+        response.raise_for_status()
+        vectors = response.json()["embeddings"]
+        if not isinstance(vectors, list) or len(vectors) != 1 or not isinstance(vectors[0], list):
+            raise ValueError("expected one embedding")
+        vector = [float(value) for value in vectors[0]]
+        if len(vector) != _dimension() or not all(math.isfinite(value) for value in vector) or not any(vector):
+            raise ValueError("invalid embedding")
+        return vector
+    except (requests.RequestException, KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise EmbeddingServiceError("Remote BGE-M3 query embedding unavailable.") from exc
+
+
 def create_embedding(text: str) -> list[float]:
+    query_url = settings.embedding_query_bge_url
+    if (
+        query_url
+        and _provider() in {"sentence_transformers", "bge_m3", "bge"}
+        and _model().lower().rsplit("/", 1)[-1] == "bge-m3"
+    ):
+        try:
+            return _remote_bge_query_embedding(repair_text(text), query_url)
+        except EmbeddingServiceError:
+            pass
     return create_embeddings([text])[0]

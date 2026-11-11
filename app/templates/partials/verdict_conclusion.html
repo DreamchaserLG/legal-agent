@@ -1,0 +1,142 @@
+{# 结论卡片：结论中引用真实检索到的法规与类案，全部可点击打开原文。 #}
+{% set deep = analysis_result.get('deep_analysis') or {} %}
+{% set research = analysis_result.get('agentic_research') or {} %}
+{% set trace_meta = analysis_result.get('research_trace_meta') or {} %}
+{% set packet = analysis_result.get('module_packet') or {} %}
+{% set analysis_block = analysis_result.get('analysis') or {} %}
+{# 依据来源：优先深度解析引用清单，其次多轮研究证据，最后资料包 #}
+{% set basis_rules = [] %}
+{% set basis_cases = [] %}
+{% if deep.get('references') %}
+{% for ref in deep.get('references') or [] %}
+{% if ref.reference_type == 'rule' and basis_rules|length < 4 %}{% set _ = basis_rules.append(ref) %}{% endif %}
+{% if ref.reference_type == 'case' and basis_cases|length < 4 %}{% set _ = basis_cases.append(ref) %}{% endif %}
+{% endfor %}
+{% endif %}
+{% if not basis_rules and not basis_cases %}
+{% for ev in (research.get('evidence') or [])[:8] %}
+{% if ev.source_kind and 'law' in ev.source_kind and basis_rules|length < 4 %}{% set _ = basis_rules.append({'title': ev.title, 'citation': ev.citation, 'source_url': ev.source_url}) %}{% endif %}
+{% if (not ev.source_kind) or 'law' not in ev.source_kind %}{% if basis_cases|length < 4 %}{% set _ = basis_cases.append({'title': ev.title, 'citation': ev.citation, 'source_url': ev.source_url}) %}{% endif %}{% endif %}
+{% endfor %}
+{% endif %}
+{% if not basis_rules %}
+{% for law in (packet.get('relevant_laws') or [])[:4] %}{% set _u = law.get('source_url') or law.get('detail_url') or (('https://www.canlii.org/en/search.do?q=%22' ~ (law.get('article_no', '')|urlencode) ~ '%22') if law.get('article_no') else '') %}{% set _ = basis_rules.append({'title': law.get('title', ''), 'citation': law.get('article_no', ''), 'source_url': _u}) %}{% endfor %}
+{% endif %}
+{% if not basis_cases %}
+{% for case in (packet.get('case_law_rows') or [])[:4] %}{% set _c = case.get('citation') or case.get('court_level', '') %}{% set _u = case.get('source_url') or (('https://www.canlii.org/en/search.do?q=%22' ~ (_c|urlencode) ~ '%22') if _c else '') %}{% set _ = basis_cases.append({'title': case.get('title', ''), 'citation': _c, 'source_url': _u}) %}{% endfor %}
+{% endif %}
+{# 检验证据 chips #}
+{% set evidence_rows = research.get('evidence') or [] %}
+{% if not evidence_rows %}
+{% set evidence_rows = [] %}
+{% for case in packet.get('case_law_rows') or [] %}
+{% set _c = case.get('citation') or case.get('court_level', '') %}
+{% set _u = case.get('source_url') or (('https://www.canlii.org/en/search.do?q=%22' ~ (_c|urlencode) ~ '%22') if _c else '') %}
+{% set _ = evidence_rows.append({'title': case.get('title', ''), 'citation': _c, 'source_url': _u, 'source_kind': 'case'}) %}
+{% endfor %}
+{% for law in packet.get('relevant_laws') or [] %}
+{% set _c = law.get('article_no', '') %}
+{% set _u = law.get('source_url') or law.get('detail_url') or (('https://www.canlii.org/en/search.do?q=%22' ~ (_c|urlencode) ~ '%22') if _c else '') %}
+{% set _ = evidence_rows.append({'title': law.get('title', ''), 'citation': _c, 'source_url': _u, 'source_kind': 'law'}) %}
+{% endfor %}
+{% endif %}
+{% set ns = namespace(covered=0) %}
+{% for row in research.get('coverage') or [] %}
+{% if row.status and row.status not in ['missing', 'gap', 'uncovered'] %}{% set ns.covered = ns.covered + 1 %}{% endif %}
+{% endfor %}
+{% set cov_total = (research.get('coverage') or [])|length %}
+{% set case_type_label = item.case_type if item else '' %}
+{% set assessment = analysis_result.get('case_prediction') or {} %}
+{% set gate = analysis_result.get('quality_gate') or {} %}
+{% set boundary = deep.get('confidence_boundary') or {} %}
+{% set show_prediction = assessment.get('predicted_outcome') and (not gate or gate.get('passed')) %}
+{% set confidence = assessment.get('confidence') if show_prediction else boundary.get('overall_confidence') %}
+
+<article class="verdict-card" id="verdict-conclusion">
+    <div class="verdict-outlook-head">
+        <div>
+            <h2 id="analysis-outlook-heading">{{ '预测结果' if lang == 'zh' else 'Outcome assessment' }}</h2>
+            <p>{{ '基于当前已检索的材料' if lang == 'zh' else 'Based on the materials retrieved for this case' }}</p>
+        </div>
+        <div class="verdict-confidence">
+            <span>{{ ('预测置信度' if lang == 'zh' else 'Prediction confidence') if show_prediction else ('分析置信度' if lang == 'zh' else 'Analysis confidence') }}</span>
+            {% if confidence is not none %}
+            <strong>{{ (confidence * 100)|round|int }}%</strong>
+            <meter min="0" max="1" value="{{ confidence }}" aria-label="{{ '置信度' if lang == 'zh' else 'Confidence' }}"></meter>
+            {% else %}
+            <strong>{{ '待评估' if lang == 'zh' else 'Pending' }}</strong>
+            {% endif %}
+        </div>
+    </div>
+    <div class="verdict-card-top">
+        <span class="verdict-tag {{ 'is-criminal' if '刑事' in case_type_label else 'is-civil' }}">{{ tr('analysis.verdict.criminal') if '刑事' in case_type_label else tr('analysis.verdict.civil') }}</span>
+        <span class="verdict-sub">{{ (analysis_block.get('legal_topics') or [tr('analysis.verdict.eyebrow')])[0] }}</span>
+        {% if cov_total %}<span class="verdict-score">{{ tr('analysis.verdict.coverage', covered=ns.covered, total=cov_total) }}</span>{% endif %}
+    </div>
+    <div class="verdict-question">{{ analysis_result.get('input_text') or (item.query_text if item else '') }}</div>
+    <p class="verdict-lead">{{ tr('analysis.verdict.basis') }}</p>
+
+    {# 结论中点名的依据：法规 + 类案，可点击 #}
+    {% if basis_rules or basis_cases %}
+    <div class="verdict-basis">
+        {% if basis_rules %}
+        <div class="verdict-basis-row">
+            <span class="verdict-basis-label">{{ tr('analysis.verdict.legal_basis') }}</span>
+            <span class="verdict-basis-items">
+                {% for rule in basis_rules %}
+                {% if rule.source_url %}<a href="{{ rule.source_url }}" target="_blank" rel="noopener noreferrer">{{ rule.title }}</a>{% else %}<strong>{{ rule.title }}</strong>{% endif %}{% if rule.citation %}<small>{{ rule.citation }}</small>{% endif %}{{ '；' if not loop.last else '' }}
+                {% endfor %}
+            </span>
+        </div>
+        {% endif %}
+        {% if basis_cases %}
+        <div class="verdict-basis-row">
+            <span class="verdict-basis-label">{{ tr('analysis.verdict.case_support') }}</span>
+            <span class="verdict-basis-items">
+                {% for case in basis_cases %}
+                {% if case.source_url %}<a href="{{ case.source_url }}" target="_blank" rel="noopener noreferrer">{{ case.title }}</a>{% else %}<strong>{{ case.title }}</strong>{% endif %}{% if case.citation %}<small>{{ case.citation }}</small>{% endif %}{{ '；' if not loop.last else '' }}
+                {% endfor %}
+            </span>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="verdict-conclusion">
+        {% if show_prediction %}
+        <p>{{ assessment.predicted_outcome }}</p>
+        {% else %}
+        {% if gate.get('passed') %}
+        <strong>{{ '结果待定，未生成可核验的预测' if lang == 'zh' else 'Outcome pending a verifiable assessment' }}</strong>
+        {% else %}
+        <strong>{{ '当前证据不足，结果待定' if lang == 'zh' else 'Outcome undetermined on the available evidence' }}</strong>
+        {% endif %}
+        {% if gate.get('downgrade_reason') %}<p>{{ gate.downgrade_reason }}</p>{% endif %}
+        {% set material_risks = (deep.get('risk_predictions') or []) | selectattr('risk_type', 'equalto', 'substantive') | list %}
+        {% if material_risks %}
+        <ul class="memo-list">
+            {% for risk in material_risks[:2] %}<li>{{ risk.potential_consequence }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
+        <small>{{ '百分比衡量当前分析的支持程度，不是胜诉概率。' if lang == 'zh' else 'The percentage measures support for the assessment, not the probability of winning.' }}</small>
+    </div>
+
+    {% if evidence_rows %}
+    {% set shown = [8, evidence_rows|length]|min %}
+    <div class="verdict-evidence-head">{{ tr('analysis.verdict.evidence_research', total=research.get('evidence_total', evidence_rows|length), shown=shown) if research else tr('analysis.verdict.evidence_plain', shown=shown) }}</div>
+    <div class="verdict-evidence-row">
+        {% for ref in evidence_rows[:8] %}
+        {% if ref.source_url %}
+        <a class="verdict-evidence-chip" href="{{ ref.source_url }}" target="_blank" rel="noopener noreferrer" title="{{ ref.title }}">{{ ref.citation or ref.title }}</a>
+        {% else %}
+        <span class="verdict-evidence-chip" title="{{ ref.title }}">{{ ref.citation or ref.title }}</span>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="verdict-meta">
+        {% if research %}{{ tr('analysis.verdict.meta_rounds', n=research.get('round_count', (research.get('rounds') or [])|length)) }} · {{ tr('analysis.verdict.meta_evidence', n=research.get('evidence_total', evidence_rows|length)) }}{% if trace_meta.get('duration_seconds') %} · {{ tr('analysis.verdict.meta_duration', s=trace_meta.get('duration_seconds')) }}{% endif %}{% else %}{{ tr('analysis.verdict.meta_local', n=evidence_rows|length) }}{% endif %}
+    </div>
+</article>

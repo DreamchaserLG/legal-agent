@@ -110,6 +110,12 @@ def ensure_rag_tables() -> None:
     global _RAG_TABLES_READY
     if _RAG_TABLES_READY:
         return
+    # [local-patch:corpus-remote] 远端模式：public.rag_chunks 是 legal_corpus 兼容视图，
+    # 不得对其执行 CREATE TABLE（PG 会报 "a view is not a table" 类错误）。
+    import os as _os
+    if _os.getenv("RAG_CORPUS_REMOTE", "").strip().lower() == "true":
+        _RAG_TABLES_READY = True
+        return
     from app.core.database import is_sqlite
     if is_sqlite():
         statements = [

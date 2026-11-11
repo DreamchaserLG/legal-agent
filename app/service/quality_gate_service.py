@@ -137,7 +137,7 @@ def evaluate_quality_gate(
     citation_traceability = _ratio(traceable_details + traceable_risks, total_conclusions)
 
     rules = [rule for detail in details for rule in detail.legal_basis]
-    current_statuses = {"current", "in_force", "active", "relation_verified", "verified_relation"}
+    current_statuses = {"current", "in_force", "active"}
     current_rules = sum(
         repair_text(rule.get("effectiveness_status") or rule.get("citation_status")).lower() in current_statuses
         for rule in rules
